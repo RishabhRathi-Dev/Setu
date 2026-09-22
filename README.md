@@ -2,9 +2,20 @@
 
 **Setu** is a distributed message broker built from scratch in **Java 25**, inspired by systems such as Kafka.
 
-The project focuses on understanding and implementing the underlying engineering problems behind high-throughput messaging: networking, concurrency, memory management, persistence, partitioning, consumer coordination, failure recovery, and performance.
+The project focuses on the engineering problems behind high-throughput messaging systems:
 
-Setu is intentionally designed as a systems project rather than a CRUD application.
+* Networking
+* Concurrency
+* Persistent storage
+* Memory management
+* Partitioning
+* Consumer coordination
+* Backpressure
+* Failure recovery
+* Security
+* Performance benchmarking
+
+The goal is not to reproduce Kafka feature-for-feature, but to understand and implement the core mechanisms behind a production-style messaging system.
 
 ---
 
@@ -15,21 +26,41 @@ Setu aims to provide:
 * High-throughput message ingestion
 * High concurrent connection handling
 * Low-latency message consumption
-* Partitioned message streams
+* Topics and partitions
 * Concurrent producers and consumers
 * Consumer groups and offsets
 * Persistent append-only logs
-* Efficient off-heap / memory-mapped access using the **Foreign Function & Memory API (FFM)**
+* Efficient file-backed access using Java FFM / `MemorySegment`
 * Crash and partial-write recovery
 * Backpressure under slow persistence
 * Configurable acknowledgement semantics
 * Segment rotation and retention
-* Performance benchmarking
-* Observable system behavior
+* TLS / mTLS secured communication
+* Authentication and authorization
+* Client quotas and rate limiting
+* Secure credential and certificate lifecycle
+* Observability and metrics
+* Performance and failure benchmarking
 
-The primary goal is to understand the trade-offs between:
+The project is primarily concerned with the trade-offs between:
 
-**networking → concurrency → memory → persistence → durability → throughput → latency**
+```text
+Networking
+    ↓
+Concurrency
+    ↓
+Memory
+    ↓
+Persistence
+    ↓
+Durability
+    ↓
+Throughput
+    ↓
+Latency
+    ↓
+Failure Recovery
+```
 
 ---
 
@@ -40,16 +71,30 @@ The primary goal is to understand the trade-offs between:
                          │     Producer     │
                          └────────┬─────────┘
                                   │
-                                  │ TCP
+                             TCP + TLS
+                                  │
                                   ▼
                          ┌──────────────────┐
                          │   Setu Server    │
-                         │  Network Layer   │
+                         │                  │
+                         │ Connection Mgmt  │
+                         │ Protocol Codec   │
+                         │ Request Dispatch │
                          └────────┬─────────┘
                                   │
                                   ▼
                          ┌──────────────────┐
-                         │   Setu Core      │
+                         │    Security      │
+                         │                  │
+                         │ Authentication   │
+                         │ Authorization    │
+                         │ Rate Limiting    │
+                         │ Protocol Checks  │
+                         └────────┬─────────┘
+                                  │
+                                  ▼
+                         ┌──────────────────┐
+                         │    Setu Core     │
                          │                  │
                          │ Topics           │
                          │ Partitions       │
@@ -61,10 +106,11 @@ The primary goal is to understand the trade-offs between:
                                   │
                                   ▼
                          ┌──────────────────┐
-                         │  Log Manager     │
+                         │   Log Manager    │
                          │                  │
-                         │ Offset → Segment │
-                         │ Append / Fetch   │
+                         │ Append           │
+                         │ Fetch            │
+                         │ Offset Mapping   │
                          │ Rotation         │
                          │ Recovery         │
                          └────────┬─────────┘
@@ -73,15 +119,17 @@ The primary goal is to understand the trade-offs between:
                      │                         │
                      ▼                         ▼
              ┌──────────────┐          ┌──────────────┐
-             │ Memory / FFM  │          │ Segment File │
-             │ MemorySegment │◄────────►│   Log Store  │
+             │ FFM /        │          │ Append-only  │
+             │ MemorySegment│◄────────►│ Segment File │
              └──────────────┘          └──────────────┘
                      │
                      ▼
                  Consumers
 
+
         ┌────────────────────────────────────┐
         │           PostgreSQL               │
+        │          Control Plane             │
         │                                    │
         │ Topics                             │
         │ Partitions                         │
@@ -91,15 +139,15 @@ The primary goal is to understand the trade-offs between:
         └────────────────────────────────────┘
 ```
 
-### Important architectural distinction
+---
 
-**PostgreSQL does not store message payloads.**
+# 3. Core Storage Principle
 
-PostgreSQL is the **control plane / metadata store**.
+Setu has two distinct planes.
 
-The messaging data path is handled by Setu's log subsystem.
+### Data Plane
 
-The intended storage model is:
+Contains the actual message payloads.
 
 ```text
 Producer
@@ -108,27 +156,76 @@ Producer
 Setu Broker
    │
    ▼
-In-memory active region
-   │
-   │ FFM / MemorySegment
-   ▼
-Append-only segment
+Partition
    │
    ▼
-Durable log file
+Append-only Log
+   │
+   ▼
+Segment Files
 ```
 
-FFM is the mechanism used to efficiently work with the memory/file-backed representation. It is **not the persistence layer itself**.
+### Control Plane
 
-The log remains the durable source of message data.
+Contains metadata required to operate the broker.
+
+```text
+PostgreSQL
+   │
+   ├── Topics
+   ├── Partitions
+   ├── Consumer Groups
+   ├── Consumer Offsets
+   └── Broker Metadata
+```
+
+**Message payloads are not stored in PostgreSQL.**
+
+PostgreSQL is the control-plane metadata store.
+
+The append-only log files are the durable source of truth for message data.
 
 ---
 
-# 3. Core Concepts
+# 4. FFM / MemorySegment
 
-## Topics
+Setu uses Java's **Foreign Function & Memory API (FFM)** for efficient interaction with file-backed and off-heap memory.
+
+FFM is an access mechanism, not the persistence layer.
+
+Conceptually:
+
+```text
+                    Setu Storage
+                         │
+                         ▼
+                  Segment File
+                         │
+                         │ file mapping / access
+                         ▼
+                 MemorySegment
+                         │
+                         ▼
+                Message Records
+```
+
+This provides a path for efficient:
+
+* File-backed memory access
+* Off-heap memory usage
+* Large buffer management
+* Reduced heap copying
+* Sequential log access
+
+The project should benchmark whether this approach provides measurable improvements rather than assuming that FFM is automatically faster.
+
+---
+
+# 5. Topics
 
 A topic represents a logical stream of messages.
+
+Example:
 
 ```text
 orders
@@ -139,74 +236,89 @@ events
 
 A topic can contain multiple partitions.
 
+```text
+orders
+
+├── partition-0
+├── partition-1
+├── partition-2
+└── partition-3
+```
+
 ---
 
-## Partitions
+# 6. Partitions
 
-Partitions provide:
-
-* Parallelism
-* Ordering within a partition
-* Independent append streams
-* Distribution of workload
+Partitions provide independent append streams and parallelism.
 
 Example:
 
 ```text
 orders
 
-partition-0
-partition-1
-partition-2
-partition-3
+partition-0 ─────► consumer
+partition-1 ─────► consumer
+partition-2 ─────► consumer
+partition-3 ─────► consumer
 ```
 
-Ordering is guaranteed within a partition rather than globally across a topic.
+Ordering is guaranteed **within a partition**.
+
+Setu does not attempt to provide global ordering across all partitions.
 
 ---
 
-## Message Offset
+# 7. Message Offsets
 
-Each message receives a monotonically increasing offset within its partition.
+Every message receives a monotonically increasing offset within its partition.
 
 ```text
 partition-0
 
-offset 100
-offset 101
-offset 102
-offset 103
+offset 100 → message A
+offset 101 → message B
+offset 102 → message C
+offset 103 → message D
 ```
 
-Consumers use offsets to track their position.
+Consumers use offsets to determine their position in a partition.
 
 ---
 
-# 4. Message Lifecycle
+# 8. Message Lifecycle
 
-A simplified producer flow:
+Producer flow:
 
 ```text
 Producer
    │
-   │ SEND(topic, partition, payload)
+   │ PRODUCE
    ▼
-Network Layer
+TCP Server
    │
    ▼
-Broker
+Authentication
+   │
+   ▼
+Authorization
+   │
+   ▼
+Setu Core
    │
    ▼
 Partition
    │
    ▼
-Append / Memory Region
+Log Manager
    │
    ▼
-FFM MemorySegment
+FFM / MemorySegment
    │
    ▼
-Persistent Segment
+Append-only Segment
+   │
+   ▼
+Durability Boundary
    │
    ▼
 ACK
@@ -219,14 +331,23 @@ Consumer
    │
    │ FETCH(topic, partition, offset)
    ▼
-Broker
+TCP Server
+   │
+   ▼
+Authentication
+   │
+   ▼
+Authorization
+   │
+   ▼
+Setu Core
    │
    ▼
 Log Manager
    │
-   ├── Find segment
-   ├── Resolve offset
-   └── Read message
+   ├── Resolve segment
+   ├── Resolve file position
+   └── Read record
    │
    ▼
 MemorySegment / File-backed region
@@ -235,15 +356,15 @@ MemorySegment / File-backed region
 Consumer
 ```
 
-The consumer should **not know how segments or MemorySegments work**.
+Consumers do not directly interact with `MemorySegment` or segment files.
 
-It asks the broker for a message at a logical offset.
+They operate on logical topics, partitions, and offsets.
 
 ---
 
-# 5. Storage Architecture
+# 9. Persistent Log
 
-Setu uses segmented append-only logs.
+Setu stores messages using append-only segmented files.
 
 Example:
 
@@ -260,121 +381,203 @@ data/
         └── 000000000001.log
 ```
 
-Each segment contains sequential messages.
+Each segment contains sequential records.
 
 ```text
-┌─────────────────────────────────────┐
-│ Segment                              │
-│                                     │
-│ offset 0    → message               │
-│ offset 1    → message               │
-│ offset 2    → message               │
-│ offset 3    → message               │
-│ ...                                 │
-└─────────────────────────────────────┘
+┌───────────────────────────────────────┐
+│ Segment                               │
+│                                       │
+│ offset 0   → record                   │
+│ offset 1   → record                   │
+│ offset 2   → record                   │
+│ offset 3   → record                   │
+│ ...                                   │
+└───────────────────────────────────────┘
 ```
 
-Segments are rotated according to configurable conditions such as:
+---
 
-* Maximum size
-* Maximum age
+# 10. Segment Lifecycle
+
+Each partition has an active segment.
+
+```text
+             ┌──────────────┐
+             │    ACTIVE    │
+             └──────┬───────┘
+                    │
+                 rotate
+                    │
+                    ▼
+             ┌──────────────┐
+             │    SEALED    │
+             └──────┬───────┘
+                    │
+                    ▼
+             Retained / Expired
+```
+
+Segment rotation can be triggered by:
+
+* Maximum segment size
+* Maximum segment age
 * Retention policy
 
----
-
-# 6. Active and Sealed Segments
-
-A partition maintains an active segment.
+Example:
 
 ```text
-Partition
+partition-0/
 
-Active
-  │
-  ├── append
-  ├── append
-  └── append
-
-Sealed
-  │
-  ├── segment-001
-  ├── segment-002
-  └── segment-003
+000000000000.log  ← sealed
+000000000001.log  ← sealed
+000000000002.log  ← active
 ```
-
-The active region is optimized for writes.
-
-Once a segment reaches its configured limit:
-
-```text
-ACTIVE
-   │
-   ▼
-SEAL
-   │
-   ▼
-SEALED
-   │
-   ▼
-PERSIST / RETAIN
-```
-
-This provides a bounded working set while preserving durable message history.
 
 ---
 
-# 7. FFM / MemorySegment
+# 11. Offset → Storage Mapping
 
-Setu uses Java's **Foreign Function & Memory API** to work with off-heap and file-backed memory efficiently.
-
-The intention is not to use FFM simply because it is a modern Java API.
-
-It solves concrete problems around:
-
-* Large message buffers
-* Off-heap memory
-* Memory-mapped files
-* Reducing unnecessary heap copies
-* Efficient sequential access
-* Explicit memory lifetime management
-
-Conceptually:
+The storage layer owns the mapping between logical offsets and physical storage.
 
 ```text
-Java Heap
+Consumer
    │
-   │ metadata / control structures
+   │ FETCH offset=105
    ▼
-
-FFM MemorySegment
-   │
-   ▼
-
-File-backed / mapped log region
+Log Manager
    │
    ▼
-
-Segment File
+Segment Index
+   │
+   ├── segment-0002
+   └── position=18432
+   │
+   ▼
+MemorySegment
+   │
+   ▼
+Record
 ```
 
-The benchmark suite should compare different storage/access strategies and measure whether the FFM implementation actually provides useful benefits.
+This responsibility must remain inside the storage layer.
+
+The core messaging layer should not understand physical file offsets or memory mappings.
 
 ---
 
-# 8. PostgreSQL
+# 12. Backpressure
 
-PostgreSQL is deliberately limited to metadata.
+Persistence can become slower than incoming traffic.
 
-Potential tables:
+Example:
 
 ```text
-topics
-partitions
-consumer_groups
-consumer_offsets
-brokers
-segment_metadata
+Producer rate     = 100 MB/s
+Persistence rate  = 60 MB/s
 ```
+
+Without backpressure:
+
+```text
+Producer
+   │
+   ▼
+Unbounded Buffer
+   │
+   ▼
+Memory ↑
+   │
+   ▼
+OOM
+```
+
+Setu should use bounded buffering:
+
+```text
+Producer
+   │
+   ▼
+Bounded Buffer
+   │
+   ├── capacity available
+   │       │
+   │       ▼
+   │    accept
+   │
+   └── capacity exhausted
+           │
+           ▼
+       throttle /
+       block /
+       reject
+```
+
+The behavior should be configurable.
+
+Metrics should expose:
+
+* Queue depth
+* Buffer utilization
+* Producer throttling
+* Rejected requests
+* Persistence latency
+
+---
+
+# 13. Acknowledgement Semantics
+
+Setu should make acknowledgement semantics explicit.
+
+Potential modes:
+
+```text
+ACK_AFTER_APPEND
+ACK_AFTER_PERSIST
+```
+
+`ACK_AFTER_APPEND` means the broker has successfully appended the message to its active storage path.
+
+`ACK_AFTER_PERSIST` represents a stronger durability guarantee.
+
+The implementation must define the exact durability boundary.
+
+Writing into the operating-system page cache should not automatically be described as surviving a machine crash.
+
+Where strong durability is required, the storage implementation should use the appropriate file synchronization mechanism.
+
+---
+
+# 14. Consumer Groups
+
+Consumer groups allow multiple consumers to process partitions cooperatively.
+
+Example:
+
+```text
+Topic: orders
+
+Partition 0 ─────► Consumer A
+Partition 1 ─────► Consumer B
+Partition 2 ─────► Consumer C
+Partition 3 ─────► Consumer A
+```
+
+The broker must handle:
+
+* Consumer registration
+* Partition assignment
+* Offset commits
+* Consumer heartbeats
+* Consumer failure
+* Rebalancing
+* Duplicate processing
+* Consumer recovery
+
+---
+
+# 15. Consumer Offset Storage
+
+Offsets are control-plane state.
 
 Example:
 
@@ -388,131 +591,333 @@ offset
 updated_at
 ```
 
-Message payloads should not be stored in PostgreSQL.
+Conceptually:
 
-This separation keeps the hot messaging path independent from relational database throughput.
+```text
+Consumer
+   │
+   ▼
+Process message
+   │
+   ▼
+Commit offset
+   │
+   ▼
+PostgreSQL
+```
+
+The exact commit semantics should be designed around the desired delivery guarantee.
 
 ---
 
-# 9. Consumer Groups
+# 16. Security
 
-A consumer group allows multiple consumers to process partitions cooperatively.
+Security is a first-class Setu subsystem.
+
+Setu must secure both:
 
 ```text
-Topic: orders
-
-Partition 0 ─────► Consumer A
-Partition 1 ─────► Consumer B
-Partition 2 ─────► Consumer C
-Partition 3 ─────► Consumer A
+Who can connect?
 ```
 
-The system needs to handle:
+and:
 
-* Consumer registration
-* Partition assignment
-* Offset tracking
-* Consumer departure
-* Rebalancing
-* Duplicate processing
-* Consumer recovery
+```text
+What can they do?
+```
+
+The security architecture consists of:
+
+* TLS
+* mTLS
+* Authentication
+* Authorization
+* Topic-level access control
+* Administrative permissions
+* Rate limiting
+* Client quotas
+* Certificate lifecycle
+* Credential management
+* Protocol validation
 
 ---
 
-# 10. Acknowledgement Semantics
+# 17. TLS / mTLS
 
-Setu should distinguish between acknowledgement and actual durability.
-
-Possible semantics:
-
-```text
-ACK_AFTER_APPEND
-ACK_AFTER_PERSIST
-```
-
-For a durable acknowledgement, Setu must define exactly what "durable" means.
-
-Writing data to the operating-system page cache is not equivalent to guaranteeing persistence after a machine failure.
-
-The implementation should therefore make the durability boundary explicit, potentially using file synchronization mechanisms where required.
-
----
-
-# 11. Backpressure
-
-A high-throughput producer must not be allowed to grow memory without bounds.
-
-Example:
-
-```text
-Producer rate
-      │
-      ▼
-   100 MB/s
-
-Persistence
-      │
-      ▼
-    60 MB/s
-```
-
-Without backpressure:
-
-```text
-Memory
-  ↑
-  ↑
-  ↑
-  ↑
-OOM
-```
-
-Setu should instead implement bounded buffering:
+Client-to-broker communication should support TLS.
 
 ```text
 Producer
    │
+   │ TLS
    ▼
-Bounded Buffer
-   │
-   ├── capacity available → accept
-   │
-   └── capacity exhausted → block / reject / throttle
+Setu Broker
 ```
 
-Backpressure behavior should be configurable and measurable.
+For trusted service-to-service environments, mTLS can be enabled:
+
+```text
+Producer / Service
+       │
+       │ mTLS
+       ▼
+  Setu Broker
+```
+
+With mTLS, both sides authenticate using certificates.
+
+```text
+Client Certificate
+        │
+        ▼
+       CA
+        │
+        ▼
+Setu Trust Store
+```
+
+Certificate identity can be associated with a Setu principal.
 
 ---
 
-# 12. Crash Recovery
+# 18. Authentication
 
-Setu must be able to restart without corrupting the logical message stream.
+Setu should support multiple authentication mechanisms through an abstraction.
 
-Recovery involves:
+Conceptually:
 
 ```text
-Broker restart
-      │
-      ▼
-Discover segments
-      │
-      ▼
-Read segment metadata
-      │
-      ▼
-Identify active segment
-      │
-      ▼
-Validate records
-      │
-      ▼
-Detect incomplete tail
-      │
-      ▼
-Recover valid records
-      │
-      ▼
-Resume append
+AuthenticationProvider
+        │
+        ├── ApiKeyAuthenticator
+        ├── JwtAuthenticator
+        └── MtlsAuthenticator
+```
+
+This prevents authentication logic from being embedded into the broker protocol.
+
+The initial implementation can start with one mechanism and add others as the system matures.
+
+---
+
+# 19. Authorization
+
+Authentication answers:
+
+```text
+Who are you?
+```
+
+Authorization answers:
+
+```text
+What are you allowed to do?
+```
+
+Setu should support permissions such as:
+
+```text
+READ
+WRITE
+CREATE_TOPIC
+DELETE_TOPIC
+VIEW_METADATA
+MANAGE_CONSUMER_GROUP
+ADMIN
+```
+
+Example:
+
+```text
+Principal: payment-service
+
+orders:
+    READ
+    WRITE
+
+payments:
+    WRITE
+
+admin:
+    none
+```
+
+A possible authorization model:
+
+```text
+Principal
+   │
+   ▼
+Role
+   │
+   ▼
+Permissions
+   │
+   ▼
+Resource
+```
+
+Resources may include:
+
+```text
+topic
+partition
+consumer-group
+broker
+```
+
+---
+
+# 20. Administrative Security
+
+Administrative operations must be separated from normal producer/consumer operations.
+
+Examples:
+
+```text
+CREATE_TOPIC
+DELETE_TOPIC
+ALTER_TOPIC
+VIEW_BROKER_METADATA
+MANAGE_CONSUMER_GROUP
+UPDATE_CONFIGURATION
+```
+
+These operations require elevated permissions.
+
+The normal producer path must never implicitly grant administrative access.
+
+---
+
+# 21. Rate Limiting and Quotas
+
+Security also includes protection against resource exhaustion.
+
+Setu should support configurable client quotas such as:
+
+```text
+maximum messages/sec
+maximum bytes/sec
+maximum connections
+maximum request size
+maximum outstanding requests
+```
+
+Example:
+
+```text
+Client
+  │
+  ▼
+Authentication
+  │
+  ▼
+Authorization
+  │
+  ▼
+Quota Check
+  │
+  ├── allowed → process
+  │
+  └── exceeded → throttle / reject
+```
+
+This works together with the storage backpressure mechanism.
+
+---
+
+# 22. Protocol Validation
+
+The broker must not trust incoming network data.
+
+Requests should be validated for:
+
+* Frame size
+* Message size
+* Topic name
+* Partition
+* Offset
+* Command type
+* Payload length
+* Request structure
+* Authentication state
+
+Malformed requests should be rejected without allowing them to destabilize the broker.
+
+---
+
+# 23. Credential and Certificate Lifecycle
+
+Security credentials should follow a lifecycle:
+
+```text
+Generate
+   │
+   ▼
+Provision
+   │
+   ▼
+Validate
+   │
+   ▼
+Rotate
+   │
+   ▼
+Revoke
+```
+
+Development certificates can be generated using a local CA.
+
+Example:
+
+```text
+certs/
+├── ca.crt
+├── ca.key
+├── broker.crt
+├── broker.key
+├── client.crt
+└── client.key
+```
+
+Private keys must never be committed to source control.
+
+For containerized deployments, credentials should be provided through secure external configuration mechanisms such as Kubernetes Secrets.
+
+---
+
+# 24. Crash Recovery
+
+Setu must recover correctly after broker failure.
+
+Recovery flow:
+
+```text
+Broker Crash
+     │
+     ▼
+Restart
+     │
+     ▼
+Discover Log Segments
+     │
+     ▼
+Read Segment Metadata
+     │
+     ▼
+Identify Active Segment
+     │
+     ▼
+Validate Records
+     │
+     ▼
+Detect Partial Tail
+     │
+     ▼
+Recover Valid Records
+     │
+     ▼
+Resume Append
 ```
 
 Potential failure cases:
@@ -520,58 +925,16 @@ Potential failure cases:
 * Process crash during append
 * Partial record
 * Truncated segment
-* Broker restart
 * Interrupted segment rotation
+* Broker restart
 * Corrupted metadata
 * Consumer restart
 
 ---
 
-# 13. Network Protocol
+# 25. Concurrency Model
 
-The initial implementation should use TCP.
-
-Conceptually:
-
-```text
-┌─────────────┐
-│ TCP Server  │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│ Frame Codec │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│ Command     │
-│ Dispatcher  │
-└──────┬──────┘
-       │
-       ▼
- Setu Core
-```
-
-Possible commands:
-
-```text
-PRODUCE
-FETCH
-COMMIT_OFFSET
-JOIN_GROUP
-LEAVE_GROUP
-HEARTBEAT
-METADATA
-```
-
-The protocol should use explicit framing rather than relying on TCP packet boundaries.
-
----
-
-# 14. Concurrency Model
-
-Important concurrent components include:
+Setu contains several concurrent workloads:
 
 * Network connections
 * Producers
@@ -583,9 +946,7 @@ Important concurrent components include:
 * Offset commits
 * Recovery
 
-The implementation should explicitly document synchronization decisions.
-
-Potential primitives:
+Potential Java primitives include:
 
 * `ExecutorService`
 * Virtual threads where appropriate
@@ -593,54 +954,136 @@ Potential primitives:
 * `StampedLock`
 * `Atomic*`
 * Concurrent collections
-* Lock-free structures where justified
 * Bounded queues
 
-The objective is not to eliminate locks everywhere.
+The goal is not to eliminate every lock.
 
-The objective is to understand **where contention exists and why a particular concurrency strategy is appropriate**.
+The goal is to understand:
+
+```text
+Where is contention?
+Why does it exist?
+What synchronization is required?
+What does it cost?
+```
+
+Concurrency decisions should be validated using benchmarks and profiling.
 
 ---
 
-# 15. Observability
+# 26. Network Protocol
 
-Setu should expose metrics such as:
+The initial Setu protocol uses TCP.
+
+Conceptually:
+
+```text
+┌──────────────┐
+│ TCP Server   │
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Frame Codec  │
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Authentication
+│ / Security   │
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Dispatcher   │
+└──────┬───────┘
+       │
+       ▼
+   Setu Core
+```
+
+Potential commands:
+
+```text
+PRODUCE
+FETCH
+COMMIT_OFFSET
+JOIN_GROUP
+LEAVE_GROUP
+HEARTBEAT
+METADATA
+CREATE_TOPIC
+```
+
+TCP packet boundaries must not be treated as message boundaries.
+
+Setu therefore needs an explicit framing protocol.
+
+---
+
+# 27. Observability
+
+Setu should expose metrics including:
 
 ```text
 messages/sec
 bytes/sec
+
 producer latency
 consumer latency
+
 p50
 p95
 p99
+
 active connections
 active partitions
+
 queue depth
 buffer utilization
+
 segment count
-append failures
+segment rotation rate
+
 consumer lag
+
+append failures
+recovery time
+
+authentication failures
+authorization failures
+rate-limit events
+
+heap usage
+off-heap usage
 GC activity
-memory usage
+CPU usage
 ```
 
-This is important because the project's claims should come from benchmarks rather than theoretical numbers.
+Security metrics should include:
+
+```text
+authentication failures
+authorization failures
+TLS failures
+rejected requests
+rate-limit violations
+```
 
 ---
 
-# 16. Benchmarking
+# 28. Benchmarking
 
-The benchmark module should test:
+The benchmark module should measure actual system behavior.
 
-### Throughput
+## Throughput
 
 ```text
 messages/sec
 MB/sec
 ```
 
-### Latency
+## Latency
 
 ```text
 p50
@@ -648,7 +1091,7 @@ p95
 p99
 ```
 
-### Concurrency
+## Connection Scalability
 
 ```text
 100 connections
@@ -656,17 +1099,7 @@ p99
 10,000 connections
 ```
 
-### Storage
-
-Compare:
-
-```text
-heap-based buffering
-vs
-FFM / MemorySegment
-```
-
-### Message sizes
+## Message Size
 
 ```text
 128 B
@@ -675,26 +1108,60 @@ FFM / MemorySegment
 100 KB
 ```
 
-### Failure
+## Storage
 
-Measure recovery time after:
+Compare relevant implementations such as:
+
+```text
+heap-based buffering
+vs
+FFM / MemorySegment
+```
+
+Measure:
+
+```text
+throughput
+latency
+allocation
+GC
+CPU
+memory
+```
+
+## Failure
+
+Measure:
 
 ```text
 broker crash
 consumer crash
 producer disconnect
 partial append
+segment recovery
 ```
+
+## Security
+
+Measure the overhead of:
+
+```text
+TLS
+mTLS
+authentication
+authorization
+```
+
+The objective is to understand the performance/security trade-off rather than simply claiming that security exists.
 
 ---
 
-# 17. Project Structure
+# 29. Project Structure
 
 ```text
 setu/
 │
 ├── pom.xml
-│
 ├── README.md
 │
 ├── setu-core/
@@ -710,6 +1177,7 @@ setu/
 │       │       ├── group/
 │       │       ├── offset/
 │       │       └── protocol/
+│       │
 │       └── test/java/
 │
 ├── setu-storage/
@@ -725,6 +1193,42 @@ setu/
 │       │       ├── recovery/
 │       │       ├── retention/
 │       │       └── persistence/
+│       │
+│       └── test/java/
+│
+├── setu-security/
+│   ├── pom.xml
+│   └── src/
+│       ├── main/java/
+│       │   └── io/setu/security/
+│       │       ├── authentication/
+│       │       │   ├── AuthenticationProvider.java
+│       │       │   ├── ApiKeyAuthenticator.java
+│       │       │   ├── JwtAuthenticator.java
+│       │       │   └── MtlsAuthenticator.java
+│       │       │
+│       │       ├── authorization/
+│       │       │   ├── Authorizer.java
+│       │       │   ├── Permission.java
+│       │       │   ├── Role.java
+│       │       │   └── AccessPolicy.java
+│       │       │
+│       │       ├── tls/
+│       │       │   ├── TlsConfiguration.java
+│       │       │   ├── KeyManagerFactory.java
+│       │       │   └── TrustManagerFactory.java
+│       │       │
+│       │       ├── certificates/
+│       │       │   ├── CertificateValidator.java
+│       │       │   └── CertificateIdentity.java
+│       │       │
+│       │       ├── credentials/
+│       │       │   └── CredentialProvider.java
+│       │       │
+│       │       └── quota/
+│       │           ├── RateLimiter.java
+│       │           └── QuotaManager.java
+│       │
 │       └── test/java/
 │
 ├── setu-server/
@@ -736,6 +1240,7 @@ setu/
 │       │       ├── codec/
 │       │       ├── connection/
 │       │       └── dispatcher/
+│       │
 │       └── test/java/
 │
 ├── setu-client/
@@ -747,6 +1252,7 @@ setu/
 │       │       ├── consumer/
 │       │       ├── protocol/
 │       │       └── connection/
+│       │
 │       └── test/java/
 │
 ├── setu-benchmark/
@@ -758,13 +1264,19 @@ setu/
 │       │       ├── latency/
 │       │       ├── concurrency/
 │       │       ├── storage/
+│       │       ├── security/
 │       │       └── recovery/
+│       │
 │       └── resources/
 │
 ├── config/
 │   └── setu.yaml
 │
+├── certs/
+│   └── .gitkeep
+│
 ├── scripts/
+│   ├── generate-certs.sh
 │   ├── start-broker.sh
 │   ├── stop-broker.sh
 │   └── benchmark.sh
@@ -772,71 +1284,150 @@ setu/
 ├── docker/
 │   └── Dockerfile
 │
+├── deploy/
+│   └── kubernetes/
+│       ├── broker/
+│       ├── config/
+│       └── secrets/
+│
 └── data/
     └── .gitkeep
 ```
 
 ---
 
-# 18. Module Responsibilities
+# 30. Module Responsibilities
 
 | Module           | Responsibility                                                     |
 | ---------------- | ------------------------------------------------------------------ |
 | `setu-core`      | Broker semantics, topics, partitions, producers, consumers, groups |
-| `setu-storage`   | Log segments, FFM, persistence, indexes, recovery                  |
-| `setu-server`    | TCP server and network protocol                                    |
-| `setu-client`    | Producer/consumer client APIs                                      |
-| `setu-benchmark` | Performance and failure benchmarking                               |
+| `setu-storage`   | Log segments, FFM, persistence, indexes, recovery, retention       |
+| `setu-security`  | TLS, mTLS, authentication, authorization, quotas                   |
+| `setu-server`    | TCP server, connections, framing, request dispatch                 |
+| `setu-client`    | Producer and consumer client APIs                                  |
+| `setu-benchmark` | Performance, scalability, security and failure benchmarks          |
 
-The important dependency direction is:
+Dependency direction:
 
 ```text
-setu-server
-     │
-     ▼
-setu-core
-     │
-     ▼
-setu-storage
+                   setu-server
+                       │
+                       ├──────────────► setu-security
+                       │
+                       ▼
+                   setu-core
+                       │
+                       ▼
+                  setu-storage
 ```
 
-The consumer does not directly manipulate storage internals.
+The client communicates with the broker through the server protocol.
+
+Security should be exposed as interfaces so that the core broker does not become tightly coupled to a particular authentication implementation.
 
 ---
 
-# 19. Technology Stack
+# 31. Technology Stack
 
-* Java 25
-* Maven
+* **Java 25**
+* **Maven**
 * Java NIO
-* Foreign Function & Memory API
-* TCP / Java networking
+* Java Foreign Function & Memory API
+* `MemorySegment`
+* TCP
+* TLS / mTLS
+* X.509 certificates
 * PostgreSQL
 * Docker
 * Kubernetes
 * JUnit
-* Benchmarking tooling
+* Benchmarking / profiling tools
 
 ---
 
-# 20. Success Criteria
+# 32. Deployment
+
+Initial local deployment:
+
+```text
+Setu
+ │
+ ├── PostgreSQL
+ │
+ └── Local filesystem
+```
+
+Containerized deployment:
+
+```text
+┌─────────────────────┐
+│ Kubernetes / Docker │
+│                     │
+│ Setu Broker         │
+│ PostgreSQL          │
+│ Persistent Storage  │
+│ TLS Secrets         │
+└─────────────────────┘
+```
+
+The message log must use persistent storage rather than ephemeral container storage.
+
+---
+
+# 33. Success Criteria
 
 Setu is successful when it can demonstrate:
 
-* High concurrent connection handling
+### Messaging
+
 * High-throughput message ingestion
-* Low-latency consumption
+* Low-latency message consumption
+* Concurrent producers and consumers
 * Partition-level ordering
-* Persistent messages across broker restarts
-* Correct consumer offset recovery
+* Consumer groups
+* Offset tracking
+
+### Storage
+
+* Persistent append-only logs
+* FFM / `MemorySegment` based access
+* Segment rotation
+* Retention
+* Crash recovery
 * Partial-write recovery
+
+### Reliability
+
 * Bounded memory usage
-* Backpressure under slow persistence
-* Reliable segment rotation
-* Measured p95/p99 latency
+* Backpressure
+* Consumer recovery
+* Producer failure handling
+* Broker restart recovery
+
+### Security
+
+* TLS
+* mTLS
+* Authentication
+* Topic-level authorization
+* Administrative authorization
+* Client quotas
+* Rate limiting
+* Secure certificate/credential lifecycle
+* Protocol validation
+
+### Performance
+
 * Measured throughput
-* Meaningful FFM vs heap/access-path benchmarks
+* Measured p50/p95/p99 latency
+* Connection scalability
+* Memory usage
+* GC behavior
+* Storage performance
+* Security overhead
 
-### Core Principle
+---
 
-> **Build the transport and storage layer yourself — then measure the trade-offs.**
+# 34. Core Principle
+
+> **Build the transport and storage layer yourself — secure it, make it recoverable, then measure the trade-offs.**

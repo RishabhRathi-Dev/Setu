@@ -11,6 +11,7 @@
         <module name="setu-server" />
         <module name="setu-storage" />
         <module name="setu-core" />
+        <module name="setu-security" />
       </profile>
     </annotationProcessing>
   </component>
