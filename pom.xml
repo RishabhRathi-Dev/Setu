@@ -12,6 +12,7 @@
         <module>setu-server</module>
         <module>setu-client</module>
         <module>setu-benchmark</module>
+        <module>setu-security</module>
     </modules>
 
     <groupId>org.rishabh</groupId>
