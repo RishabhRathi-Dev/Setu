@@ -1197,39 +1197,44 @@ setu/
 │       └── test/java/
 │
 ├── setu-security/
-│   ├── pom.xml
-│   └── src/
-│       ├── main/java/
-│       │   └── io/setu/security/
-│       │       ├── authentication/
-│       │       │   ├── AuthenticationProvider.java
-│       │       │   ├── ApiKeyAuthenticator.java
-│       │       │   ├── JwtAuthenticator.java
-│       │       │   └── MtlsAuthenticator.java
-│       │       │
-│       │       ├── authorization/
-│       │       │   ├── Authorizer.java
-│       │       │   ├── Permission.java
-│       │       │   ├── Role.java
-│       │       │   └── AccessPolicy.java
-│       │       │
-│       │       ├── tls/
-│       │       │   ├── TlsConfiguration.java
-│       │       │   ├── KeyManagerFactory.java
-│       │       │   └── TrustManagerFactory.java
-│       │       │
-│       │       ├── certificates/
-│       │       │   ├── CertificateValidator.java
-│       │       │   └── CertificateIdentity.java
-│       │       │
-│       │       ├── credentials/
-│       │       │   └── CredentialProvider.java
-│       │       │
-│       │       └── quota/
-│       │           ├── RateLimiter.java
-│       │           └── QuotaManager.java
-│       │
-│       └── test/java/
+    ├── pom.xml
+    └── src/
+        ├── main/java/io/setu/security/
+        │
+        ├── authentication/
+        │   ├── AuthenticationProvider.java
+        │   ├── AuthenticationRequest.java
+        │   ├── AuthenticationResult.java
+        │   ├── AuthenticationMethod.java
+        │   ├── AuthenticationException.java
+        │   └── MtlsAuthenticator.java
+        │
+        ├── authorization/
+        │   ├── Authorizer.java
+        │   ├── AuthorizationContext.java
+        │   ├── AccessPolicy.java
+        │   ├── Permission.java
+        │   └── Role.java
+        │
+        ├── tls/
+        │   ├── TlsConfiguration.java
+        │   ├── KeyManagerFactory.java
+        │   └── TrustManagerFactory.java
+        │
+        ├── certificates/
+        │   ├── CertificateValidator.java
+        │   └── CertificateIdentity.java
+        │
+        ├── credentials/
+        │   ├── CredentialProvider.java
+        │   └── Credential.java
+        │
+        └── quota/
+            ├── RateLimiter.java
+            ├── QuotaManager.java
+            └── QuotaPolicy.java
+        │
+        └── test/java/
 │
 ├── setu-server/
 │   ├── pom.xml
