@@ -11,51 +11,36 @@ import java.security.cert.X509Certificate;
 import java.util.Map;
 
 @Slf4j
-public final class MtlsAuthenticator
-        implements AuthenticationProvider {
+public final class MtlsAuthenticator implements AuthenticationProvider {
 
-    private static final AuthenticationMethod METHOD =
-            AuthenticationMethod.MTLS;
+    private static final AuthenticationMethod METHOD = AuthenticationMethod.MTLS;
 
     private final CertificateValidator certificateValidator;
 
-    public MtlsAuthenticator(
-            CertificateValidator certificateValidator) {
-
+    public MtlsAuthenticator(CertificateValidator certificateValidator) {
         this.certificateValidator = certificateValidator;
     }
 
     @Override
-    public AuthenticationResult authenticate(
-            AuthenticationRequest request) {
+    public AuthenticationResult authenticate(AuthenticationRequest request) {
 
         if (request == null || request.sslSession() == null) {
-            throw new AuthenticationException(
-                    "SSL session is required for mTLS authentication"
-            );
+            throw new AuthenticationException("SSL session is required for mTLS authentication");
         }
 
         SSLSession sslSession = request.sslSession();
 
-        log.debug(
-                "Authenticating client using TLS protocol {}",
-                sslSession.getProtocol()
-        );
+        log.debug("Authenticating client using TLS protocol {}", sslSession.getProtocol());
 
-        X509Certificate certificate =
-                extractClientCertificate(sslSession);
+        X509Certificate certificate = extractClientCertificate(sslSession);
 
         // Setu-specific certificate validation.
         certificateValidator.validate(certificate);
 
         // Convert X.509 identity into Setu identity.
-        CertificateIdentity identity =
-                CertificateIdentity.from(certificate);
+        CertificateIdentity identity = CertificateIdentity.from(certificate);
 
-        log.info(
-                "mTLS authentication successful for principal={}",
-                identity.principal()
-        );
+        log.info("mTLS authentication successful for principal={}", identity.principal());
 
         return new AuthenticationResult(
                 identity.principal(),
@@ -68,30 +53,22 @@ public final class MtlsAuthenticator
             SSLSession sslSession) {
 
         try {
-            Certificate[] certificates =
-                    sslSession.getPeerCertificates();
+            Certificate[] certificates = sslSession.getPeerCertificates();
 
             if (certificates.length == 0) {
-                throw new AuthenticationException(
-                        "Client certificate not found"
-                );
+                throw new AuthenticationException("Client certificate not found");
             }
 
             Certificate certificate = certificates[0];
 
             if (!(certificate instanceof X509Certificate x509Certificate)) {
-                throw new AuthenticationException(
-                        "Client certificate is not an X509 certificate"
-                );
+                throw new AuthenticationException("Client certificate is not an X509 certificate");
             }
 
             return x509Certificate;
 
         } catch (SSLPeerUnverifiedException e) {
-            throw new AuthenticationException(
-                    "Unable to retrieve verified client certificate",
-                    e
-            );
+            throw new AuthenticationException("Unable to retrieve verified client certificate", e);
         }
     }
 

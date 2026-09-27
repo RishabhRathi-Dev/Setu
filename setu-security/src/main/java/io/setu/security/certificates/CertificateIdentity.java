@@ -19,13 +19,10 @@ public record CertificateIdentity(
 
     private static String extractPrincipal(X509Certificate certificate) {
         try {
-            Collection<List<?>> subjectAlternativeNames =
-                    certificate.getSubjectAlternativeNames();
+            Collection<List<?>> subjectAlternativeNames = certificate.getSubjectAlternativeNames();
 
             if (subjectAlternativeNames == null) {
-                throw new CertificateValidationException(
-                        "Certificate does not contain a subject alternative name"
-                );
+                throw new CertificateValidationException("Certificate does not contain a subject alternative name");
             }
 
             for (List<?> san : subjectAlternativeNames) {
@@ -43,16 +40,9 @@ public record CertificateIdentity(
                     }
                 }
             }
-
-            throw new CertificateValidationException(
-                    "Certificate does not contain a valid DNS SAN"
-            );
-
+            throw new CertificateValidationException("Certificate does not contain a valid DNS SAN");
         } catch (CertificateParsingException e) {
-            throw new CertificateValidationException(
-                    "Unable to parse certificate identity",
-                    e
-            );
+            throw new CertificateValidationException("Unable to parse certificate identity", e);
         }
     }
 }
