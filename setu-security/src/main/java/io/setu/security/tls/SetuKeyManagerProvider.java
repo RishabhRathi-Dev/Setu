@@ -1,6 +1,7 @@
 package io.setu.security.tls;
 
 import javax.net.ssl.KeyManager;
+import javax.net.ssl.KeyManagerFactory;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,14 +20,9 @@ public final class SetuKeyManagerProvider {
                 keyStore.load(inputStream, configuration.keyStorePassword().toCharArray());
             }
 
-            javax.net.ssl.KeyManagerFactory factory =
-                    javax.net.ssl.KeyManagerFactory
-                            .getInstance(
-                                    javax.net.ssl.KeyManagerFactory
-                                            .getDefaultAlgorithm()
-                            );
-
+            KeyManagerFactory factory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
             factory.init(keyStore, configuration.keyStorePassword().toCharArray());
+
             return factory.getKeyManagers();
         } catch (Exception e) {
             throw new TlsConfigurationException("Unable to initialize TLS key managers", e);
