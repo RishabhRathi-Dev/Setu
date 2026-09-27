@@ -1,4 +1,6 @@
 package io.setu.security.authentication;
 
-public record AuthenticationRequest() {
+import javax.net.ssl.SSLSession;
+
+public record AuthenticationRequest(SSLSession sslSession) {
 }
