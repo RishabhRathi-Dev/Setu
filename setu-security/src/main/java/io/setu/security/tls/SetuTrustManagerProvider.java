@@ -6,7 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
 
-public final class TrustManagerFactory {
+public final class SetuTrustManagerProvider {
 
     public TrustManager[] create(TlsConfiguration configuration) {
 

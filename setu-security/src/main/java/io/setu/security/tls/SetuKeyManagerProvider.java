@@ -6,7 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
 
-public final class KeyManagerFactory {
+public final class SetuKeyManagerProvider {
 
     public KeyManager[] create(TlsConfiguration configuration) {
 
