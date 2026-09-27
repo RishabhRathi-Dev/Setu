@@ -139,3 +139,4 @@ modules.xml
 *.ipr
 
 # End of https://www.toptal.com/developers/gitignore/api/intellij+iml
+/.idea/material_theme_project_new.xml

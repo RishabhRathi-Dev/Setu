@@ -243,16 +243,6 @@ AuthenticationProvider
         └── MtlsAuthenticator
 ```
 
-Later:
-
-```text
-AuthenticationProvider
-        │
-        ├── MtlsAuthenticator
-        ├── JwtAuthenticator
-        └── ApiKeyAuthenticator
-```
-
 The authorization layer remains unchanged.
 
 ---
@@ -356,14 +346,6 @@ public enum AuthenticationMethod {
 ```
 
 The enum can later expand without changing `AuthenticationResult`.
-
-Possible future values:
-
-```text
-MTLS
-JWT
-API_KEY
-```
 
 ---
 

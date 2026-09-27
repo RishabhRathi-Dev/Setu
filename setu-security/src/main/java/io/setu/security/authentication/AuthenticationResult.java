@@ -1,4 +1,10 @@
 package io.setu.security.authentication;
 
-public record AuthenticationResult() {
+import java.util.Map;
+
+public record AuthenticationResult(
+        String principal,
+        AuthenticationMethod method,
+        Map<String, Object> attributes
+) {
 }
