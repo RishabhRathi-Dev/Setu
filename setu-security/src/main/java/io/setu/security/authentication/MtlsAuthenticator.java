@@ -49,8 +49,7 @@ public final class MtlsAuthenticator implements AuthenticationProvider {
         );
     }
 
-    private X509Certificate extractClientCertificate(
-            SSLSession sslSession) {
+    private X509Certificate extractClientCertificate(SSLSession sslSession) {
 
         try {
             Certificate[] certificates = sslSession.getPeerCertificates();
