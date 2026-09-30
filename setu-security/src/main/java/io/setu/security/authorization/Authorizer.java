@@ -1,4 +1,8 @@
 package io.setu.security.authorization;
 
-public class Authorizer {
+import io.setu.security.authentication.AuthenticationResult;
+
+public interface Authorizer {
+
+    AuthorizationDecision authorize(AuthenticationResult identity, AuthorizationContext context);
 }
