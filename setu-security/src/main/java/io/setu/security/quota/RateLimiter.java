@@ -1,4 +1,10 @@
 package io.setu.security.quota;
 
-public class RateLimiter {
+public interface RateLimiter {
+
+    boolean tryAcquire(
+            String principal,
+            long messageCount,
+            long byteCount
+    );
 }
