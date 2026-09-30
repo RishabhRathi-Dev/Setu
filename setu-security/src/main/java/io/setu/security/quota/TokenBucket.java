@@ -8,9 +8,7 @@ public final class TokenBucket {
     private double tokens;
     private long lastRefillTime;
 
-    public TokenBucket(
-            long capacity,
-            long refillRatePerSecond) {
+    public TokenBucket(long capacity, long refillRatePerSecond) {
 
         if (capacity <= 0) {
             throw new IllegalArgumentException("Capacity must be positive");
