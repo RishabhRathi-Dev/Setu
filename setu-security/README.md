@@ -8,6 +8,19 @@ The central design principle is:
 
 > **Authentication establishes identity. Authorization establishes permissions. Quotas control resource consumption.**
 
+## Implementation status
+
+This is a security library module, not yet a security feature integrated into the broker. The current implementation contains:
+
+* `TlsConfiguration`, keystore/truststore-backed JSSE manager providers, and an `SSLContext` factory. The caller still owns socket setup; configured protocol lists, cipher suites, `keyAlias`, and `clientAuthenticationRequired` are not applied by the factory.
+* `CertificateValidator`, which checks certificate validity and requires the TLS client-auth extended key usage. Trust-chain validation is expected to have happened during the TLS handshake; this validator does not build or verify chains.
+* `CertificateIdentity`, which uses the first nonblank DNS subject alternative name as the principal. It does not currently support URI SANs or subject common names.
+* `MtlsAuthenticator`, which reads the peer certificate from an established `SSLSession`, validates it, and returns that principal.
+* Permission/role value types and interfaces for `AccessPolicy` and `Authorizer`. There is no concrete policy store or authorizer implementation yet.
+* A per-principal token-bucket limiter for message and byte counts, plus `QuotaManager`. Quotas are not resource-specific, distributed, or connected to the broker request path.
+
+There are no credential-provider classes in the source tree. Certificate issuing, revocation, policy persistence, server/client socket integration, and end-to-end TLS tests remain future work. Sections below that describe such capabilities are design guidance, not claims about shipped behavior.
+
 ---
 
 ## Goals
@@ -163,21 +176,23 @@ setu-security/
     │
     ├── tls/
     │   ├── TlsConfiguration.java
-    │   ├── KeyManagerFactory.java
-    │   └── TrustManagerFactory.java
+    │   ├── SetuKeyManagerProvider.java
+    │   ├── SetuTrustManagerProvider.java
+    │   ├── TlsContextFactory.java
+    │   └── TlsConfigurationException.java
     │
     ├── certificates/
     │   ├── CertificateValidator.java
-    │   └── CertificateIdentity.java
-    │
-    ├── credentials/
-    │   ├── CredentialProvider.java
-    │   └── Credential.java
+    │   ├── CertificateIdentity.java
+    │   └── CertificateValidationException.java
     │
     └── quota/
         ├── RateLimiter.java
         ├── QuotaManager.java
-        └── QuotaPolicy.java
+        ├── QuotaPolicy.java
+        ├── QuotaDecision.java
+        ├── TokenBucket.java
+        └── TokenBucketRateLimiter.java
     │
     └── test/java/
 ```
@@ -572,18 +587,16 @@ This is separate from the lower-level TLS configuration.
 
 Perform Setu-specific certificate validation beyond basic TLS setup where required.
 
-Potential checks include:
+Checks performed by the current implementation:
 
 ```text
 Certificate exists
         ↓
-Certificate chain is valid
+TLS handshake has verified the certificate chain
         ↓
 Certificate is within validity period
         ↓
-Certificate is issued by trusted CA
-        ↓
-Required key usage / extended key usage
+TLS client-auth extended key usage is present
         ↓
 Required identity fields are present
 ```
@@ -943,13 +956,15 @@ Manage quotas at a higher level than the raw rate limiter.
 Can this operation proceed now?
 ```
 
-`QuotaManager` answers:
+The current `QuotaManager` delegates principal/message/byte counts to a configured `RateLimiter`; it does not select a quota by resource.
+
+The future resource-aware design could answer:
 
 ```text
 Which quota applies to this principal/resource?
 ```
 
-Example:
+Possible future configuration:
 
 ```text
 producer-A
@@ -999,15 +1014,15 @@ This allows different limits for different topics or client classes.
 
 ---
 
-# 24. Credentials
+# 24. Credential-provider roadmap
 
-The credentials package provides an abstraction around sensitive authentication material.
+Credential providers are not implemented.
 
 It intentionally does not dictate where credentials come from.
 
 ---
 
-# 25. `CredentialProvider.java`
+# 25. CredentialProvider roadmap
 
 ### Goal
 
@@ -1037,7 +1052,7 @@ CredentialProvider
 
 ---
 
-# 26. `Credential.java`
+# 26. Credential model roadmap
 
 ### Goal
 
@@ -1428,13 +1443,7 @@ Invalid identity
 Test:
 
 ```text
-Principal + permission + resource → ALLOW
-
-Principal + unauthorized permission → DENY
-
-Principal + unauthorized topic → DENY
-
-Unknown principal → DENY
+Role-to-permission behavior and authorization-context validation are unit tested. Allow/deny policy behavior awaits a concrete authorizer implementation.
 ```
 
 ## Quota tests
@@ -1450,7 +1459,7 @@ Over limit → THROTTLE/REJECT
 
 Different principals → independent limits
 
-Different resources → independent limits
+Resource-specific limits are not implemented.
 ```
 
 ## TLS tests
@@ -1458,12 +1467,7 @@ Different resources → independent limits
 Test:
 
 ```text
-Valid server certificate
-Valid client certificate
-Unknown CA
-Expired certificate
-Client certificate required
-Unsupported protocol
+Keystore and truststore loading and SSLContext initialization are unit tested. Handshake behavior, client-certificate enforcement, protocol/cipher configuration, and trust-chain rejection need socket-level integration tests and socket configuration support.
 ```
 
 Integration tests should eventually establish an actual TLS connection between a Setu client and broker rather than testing only mocks.

@@ -62,6 +62,19 @@ Latency
 Failure Recovery
 ```
 
+## Build and test
+
+The root `pom.xml` is the Maven reactor for all modules. Use the checked-in Maven Wrapper from the repository root, with a Java 25 JDK installed:
+
+```powershell
+.\mvnw.cmd test
+.\mvnw.cmd -pl setu-security test
+```
+
+On macOS/Linux, use `bash ./mvnw test` (or `./mvnw test` when the checkout marks the script executable).
+
+The first invocation downloads the pinned Maven distribution. The wrapper supplies Maven; it does not install Java.
+
 ---
 
 # 2. High-Level Architecture
@@ -613,6 +626,8 @@ The exact commit semantics should be designed around the desired delivery guaran
 # 16. Security
 
 Security is a first-class Setu subsystem.
+
+The code currently provides a standalone `setu-security` library, but `setu-server` does not yet wire it into connection setup or request dispatch. The flows in this section describe the intended broker behavior; see `setu-security/README.md` for the implemented scope and outstanding security integration work.
 
 Setu must secure both:
 
