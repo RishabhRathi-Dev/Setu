@@ -10,6 +10,8 @@ public enum Permission {
 
     CONSUMER_GROUP_CREATE,
     CONSUMER_GROUP_READ,
+    CONSUMER_GROUP_WRITE,
+    VIEW_METADATA,
 
     ACL_READ,
     ACL_WRITE

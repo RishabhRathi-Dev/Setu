@@ -11,7 +11,10 @@ public enum Role {
 
     CONSUMER(
             Permission.CONSUME,
-            Permission.CONSUMER_GROUP_READ
+            Permission.CONSUMER_GROUP_READ,
+            Permission.CONSUMER_GROUP_CREATE,
+            Permission.CONSUMER_GROUP_WRITE,
+            Permission.VIEW_METADATA
     ),
 
     OPERATOR(
@@ -20,7 +23,9 @@ public enum Role {
             Permission.PRODUCE,
             Permission.CONSUME,
             Permission.CONSUMER_GROUP_CREATE,
-            Permission.CONSUMER_GROUP_READ
+            Permission.CONSUMER_GROUP_READ,
+            Permission.CONSUMER_GROUP_WRITE,
+            Permission.VIEW_METADATA
     ),
 
     ADMIN(

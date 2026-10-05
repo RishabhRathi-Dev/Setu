@@ -10,16 +10,24 @@ The central design principle is:
 
 ## Implementation status
 
-This is a security library module, not yet a security feature integrated into the broker. The current implementation contains:
+The module provides security interfaces and implementations that are integrated by `setu-server` at the TLS connection and request-processing boundaries. The server includes a protocol metadata resolver and this module provides a default-deny in-memory ACL authorizer. There is no persistent policy store, wildcard ACL matching, dynamic reload, or cluster-wide policy replication. The current implementation contains:
 
-* `TlsConfiguration`, keystore/truststore-backed JSSE manager providers, and an `SSLContext` factory. The caller still owns socket setup; configured protocol lists, cipher suites, `keyAlias`, and `clientAuthenticationRequired` are not applied by the factory.
+* `TlsConfiguration`, keystore/truststore-backed JSSE manager providers, and an `SSLContext` factory. The factory initializes the managers and context; `setu-server` owns socket setup and applies protocol/cipher settings and required client authentication. `keyAlias` is not currently selected by the key-manager provider.
 * `CertificateValidator`, which checks certificate validity and requires the TLS client-auth extended key usage. Trust-chain validation is expected to have happened during the TLS handshake; this validator does not build or verify chains.
 * `CertificateIdentity`, which uses the first nonblank DNS subject alternative name as the principal. It does not currently support URI SANs or subject common names.
 * `MtlsAuthenticator`, which reads the peer certificate from an established `SSLSession`, validates it, and returns that principal.
-* Permission/role value types and interfaces for `AccessPolicy` and `Authorizer`. There is no concrete policy store or authorizer implementation yet.
-* A per-principal token-bucket limiter for message and byte counts, plus `QuotaManager`. Quotas are not resource-specific, distributed, or connected to the broker request path.
+* Permission/role value types and interfaces for `AccessPolicy` and `Authorizer`, plus `InMemoryAuthorizer`, which stores exact principal/resource/permission grants and denies by default. Grants are process-local.
+* A per-principal token-bucket limiter for message and byte counts, plus `QuotaManager`. The server checks quotas after authorization and before broker dispatch. Quotas are not resource-specific or distributed.
 
-There are no credential-provider classes in the source tree. Certificate issuing, revocation, policy persistence, server/client socket integration, and end-to-end TLS tests remain future work. Sections below that describe such capabilities are design guidance, not claims about shipped behavior.
+There are no credential-provider classes in the source tree. Certificate issuing, revocation, persistent policy management, and distributed quotas remain future work. `setu-server` owns socket configuration, server-side TLS integration, and the TLS-enabled client path; an end-to-end mTLS broker test exercises certificate identity, produce/fetch dispatch, and authorization denial. Sections below that describe other capabilities are design guidance, not claims about shipped behavior.
+
+## Server integration
+
+On the secure server path, TLS completes before any protocol frame is read. The TLS socket requires a client certificate; the configured truststore validates its trust chain, and `MtlsAuthenticator` validates the client-auth EKU and extracts the first DNS SAN as the principal. The Setu request path then validates the v1 protocol body, resolves its resource and permission, calls `Authorizer`, checks the principal's message/byte quota, and finally dispatches to the broker. A failed authentication prevents the protocol session from starting; authorization and quota denials are encoded as protocol error responses and do not reach the broker operation.
+
+`InMemoryAuthorizer` is the built-in implementation. It matches grants by the exact `(principal, resource, permission)` tuple, rejects identity/context principal mismatches, and denies all ungranted operations. For example, grant `orders-service` the permission `PRODUCE` on `topic/orders` and `VIEW_METADATA` on `broker`. Grants are local to one process, and role values are not automatically expanded into ACL grants.
+
+The server-side `ProtocolRequestAuthorizationMetadataResolver` owns the v1 command mapping. This keeps broker command parsing out of `setu-security`; the security module consumes the resulting identity, resource, permission, and usage counts through its interfaces.
 
 ---
 
@@ -827,6 +835,8 @@ public enum Permission {
 
     CONSUMER_GROUP_CREATE,
     CONSUMER_GROUP_READ,
+    CONSUMER_GROUP_WRITE,
+    VIEW_METADATA,
 
     ACL_READ,
     ACL_WRITE
@@ -1443,7 +1453,7 @@ Invalid identity
 Test:
 
 ```text
-Role-to-permission behavior and authorization-context validation are unit tested. Allow/deny policy behavior awaits a concrete authorizer implementation.
+Role-to-permission behavior, authorization-context validation, and `InMemoryAuthorizer` exact-grant/default-deny behavior are unit tested. The server TLS integration test also exercises an authenticated allow path and a structured authorization denial.
 ```
 
 ## Quota tests
@@ -1467,10 +1477,10 @@ Resource-specific limits are not implemented.
 Test:
 
 ```text
-Keystore and truststore loading and SSLContext initialization are unit tested. Handshake behavior, client-certificate enforcement, protocol/cipher configuration, and trust-chain rejection need socket-level integration tests and socket configuration support.
+Keystore and truststore loading and SSLContext initialization are unit tested. A server/client mTLS integration test uses temporary keytool-generated certificates and exercises client identity, broker produce/fetch, and authorization denial. Additional cases for invalid trust chains, absent client certificates, and protocol/cipher rejection remain to be added.
 ```
 
-Integration tests should eventually establish an actual TLS connection between a Setu client and broker rather than testing only mocks.
+The selector-based plaintext transport does not use these TLS components; TLS currently uses the virtual-thread server transport.
 
 ---
 
