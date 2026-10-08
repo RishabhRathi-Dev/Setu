@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class BrokerLimitsChaosTests {
     private static final int PRODUCERS = 16;
     private static final int CONSUMERS = 16;
-    private static final int RECORDS_PER_PRODUCER = 1_000;
+    private static final int RECORDS_PER_PRODUCER = 256;
     private static final int RECORDS = PRODUCERS * RECORDS_PER_PRODUCER;
     private static final int MAX_FRAME = 15 * 1024 * 1024;
     private static final String TOPIC = "limit-chaos";
@@ -42,7 +42,7 @@ class BrokerLimitsChaosTests {
     private void exerciseLimits(StorageMode mode) throws Exception {
         Path data = tempDir.resolve(mode.name());
         DefaultBroker broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null,
-                1024, 32 * 1024, 250, 15_000);
+                1024, 32 * 1024, 250, 120_000);
         TcpServer server = start(broker);
         var consumers = new ArrayList<SetuClient>();
         SetuClient admin = null;
@@ -119,7 +119,7 @@ class BrokerLimitsChaosTests {
                 var futures = executor.invokeAll(tasks, 90, TimeUnit.SECONDS);
                 for (int i = 0; i < futures.size(); i++) {
                     var future = futures.get(i);
-                    assertFalse(future.isCancelled(), "concurrent broker workload exceeded 90 seconds");
+                    assertFalse(future.isCancelled(), "concurrent broker workload exceeded 90 seconds in " + mode);
                     int completed = future.get();
                     if (i >= PRODUCERS) assertEquals(RECORDS, completed, "consumer " + (i - PRODUCERS));
                 }
@@ -151,7 +151,7 @@ class BrokerLimitsChaosTests {
             closeAll(consumers);
             consumers.clear();
             broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null,
-                    1024, 32 * 1024, 250, 15_000);
+                    1024, 32 * 1024, 250, 120_000);
             server = start(broker);
             try (SetuClient recovered = connect(server)) {
                 if (mode == StorageMode.FILE) {

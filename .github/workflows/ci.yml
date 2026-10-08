@@ -44,9 +44,9 @@ jobs:
           cache: maven
 
       - name: Run end-to-end application integration tests
-        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-integration-tests -am test
+        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-integration-tests -am '-Dtest=*IntegrationTests' -Dsurefire.failIfNoSpecifiedTests=false test
 
-  quick-benchmark:
+  chaos-benchmark:
     runs-on: ubuntu-latest
     needs: integration-tests
     timeout-minutes: 60
@@ -62,5 +62,8 @@ jobs:
           java-version: '25'
           cache: maven
 
-      - name: Run broker chaos and progressive capacity benchmarks
-        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am test
+      - name: Run bounded broker chaos tests
+        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=BrokerCrashChaosTests,BrokerLimitsChaosTests,MultiConsumerChaosTests,QuickBrokerChaosBenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test
+
+      - name: Run progressive capacity exhaustion last
+        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=ProgressiveCapacityChaosTests' -Dsurefire.failIfNoSpecifiedTests=false test

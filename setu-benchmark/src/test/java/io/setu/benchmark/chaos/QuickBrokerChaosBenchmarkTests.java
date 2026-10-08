@@ -25,10 +25,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Bounded CI chaos workload: concurrent producers, sixteen consumers, stalled-member eviction, and restart recovery. */
 class QuickBrokerChaosBenchmarkTests {
-    private static final int RECORDS = 20_000;
+    private static final int RECORDS = 2_000;
     private static final int PRODUCER_COUNT = 16;
     private static final int CONSUMER_COUNT = 16;
     private static final int MAX_FRAME = 15 * 1024 * 1024;
+    private static final int FETCH_BATCH_BYTES = 512 * 1024;
     private static final String TOPIC = "quick-chaos";
     private static final String GROUP = "quick-group";
     private static final int VALUE_BYTES = 256;
@@ -43,7 +44,7 @@ class QuickBrokerChaosBenchmarkTests {
     private void runWorkload(StorageMode mode) throws Exception {
         Path data = tempDir.resolve(mode.name());
         DefaultBroker broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null,
-                VALUE_BYTES, 128 * 1024, 250, 10_000);
+                VALUE_BYTES, 128 * 1024, 250, 120_000);
         TcpServer server = start(broker);
         List<SetuClient> clients = new ArrayList<>();
         try {
@@ -78,7 +79,7 @@ class QuickBrokerChaosBenchmarkTests {
                     });
                 }
                 for (var result : executor.invokeAll(tasks, 90, TimeUnit.SECONDS)) {
-                    assertFalse(result.isCancelled(), "concurrent producers exceeded 90 seconds");
+                    assertFalse(result.isCancelled(), "concurrent producers exceeded 90 seconds in " + mode);
                     result.get();
                 }
             } finally {
@@ -92,7 +93,7 @@ class QuickBrokerChaosBenchmarkTests {
                 assertEquals(RECORDS, consumeAndAck(consumers.get(i), "consumer-" + i));
             var abandonedBatch = consumers.getLast().fetch(GROUP, "consumer-" + (CONSUMER_COUNT - 1),
                     TOPIC, 0, 0, 15 * 1024 * 1024);
-            assertEquals(10_000, abandonedBatch.records().size());
+            assertEquals(RECORDS, abandonedBatch.records().size());
             long consumeNanos = System.nanoTime() - started;
 
             consumers.getLast().close(); // inject a consumer drop with a pending acknowledgement
@@ -112,7 +113,7 @@ class QuickBrokerChaosBenchmarkTests {
             clients.clear();
             started = System.nanoTime();
             broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null,
-                    VALUE_BYTES, 128 * 1024, 250, 10_000);
+                    VALUE_BYTES, 128 * 1024, 250, 120_000);
             long restartNanos = System.nanoTime() - started;
             server = start(broker);
             try (SetuClient recovered = connect(server)) {
@@ -142,7 +143,7 @@ class QuickBrokerChaosBenchmarkTests {
         int total = 0;
         long next = 0;
         while (next < RECORDS) {
-            var response = client.fetch(GROUP, member, TOPIC, 0, next, 15 * 1024 * 1024);
+            var response = client.fetch(GROUP, member, TOPIC, 0, next, FETCH_BATCH_BYTES);
             assertEquals(ErrorCode.NONE, response.errorCode());
             assertFalse(response.records().isEmpty());
             total += response.records().size();

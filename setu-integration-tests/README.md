@@ -5,7 +5,7 @@ This module verifies application requirements through public client and server A
 Run it from the repository root with Java 25:
 
 ```powershell
-.\mvnw.cmd -pl setu-integration-tests -am test
+.\mvnw.cmd -pl setu-integration-tests -am '-Dtest=*IntegrationTests' -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 The mTLS test creates short-lived PKCS#12 stores and certificates under JUnit's temporary directory, starts a broker and server on an ephemeral port, and verifies authenticated produce/fetch plus authorization denial. It leaves no certificate material in the repository. Failure injection, broker crashes, stress, and capacity exhaustion live in `setu-benchmark/src/test/java/io/setu/benchmark/chaos`.
