@@ -43,12 +43,17 @@ public final class ProtocolCodec {
                 out.writeInt(request.partition());
                 out.writeLong(request.offset());
                 out.writeInt(request.maxBytes());
+                if (request.groupId() != null) {
+                    writeString(out, request.groupId());
+                    writeString(out, request.memberId());
+                }
             }
             case COMMIT_OFFSET -> {
                 writeString(out, request.groupId());
                 writeString(out, request.topic());
                 out.writeInt(request.partition());
                 out.writeLong(request.offset());
+                if (request.memberId() != null) writeString(out, request.memberId());
             }
             case JOIN_GROUP -> {
                 writeString(out, request.groupId());
@@ -77,8 +82,7 @@ public final class ProtocolCodec {
             BrokerRequest request = switch (header.command) {
                 case PRODUCE -> new BrokerRequest(correlation, header.command, readString(in), in.readInt(),
                         -1, -1, readBytes(in), 0, null, null);
-                case FETCH -> new BrokerRequest(correlation, header.command, readString(in), in.readInt(),
-                        in.readLong(), in.readInt(), null, 0, null, null);
+                case FETCH -> decodeFetch(in, correlation);
                 case COMMIT_OFFSET -> decodeCommit(in, correlation);
                 case JOIN_GROUP -> decodeJoin(in, correlation);
                 case LEAVE_GROUP, HEARTBEAT -> new BrokerRequest(correlation, header.command, null, -1, -1, -1,
@@ -105,8 +109,24 @@ public final class ProtocolCodec {
         String topic = readString(in);
         int partition = in.readInt();
         long offset = in.readLong();
+        String member = in.available() > 0 ? readString(in) : null;
         return new BrokerRequest(correlation, Command.COMMIT_OFFSET, topic, partition, offset,
-                0, null, 0, group, null);
+                0, null, 0, group, member);
+    }
+
+    private static BrokerRequest decodeFetch(DataInputStream in, int correlation) throws IOException {
+        String topic = readString(in);
+        int partition = in.readInt();
+        long offset = in.readLong();
+        int maxBytes = in.readInt();
+        String group = null;
+        String member = null;
+        if (in.available() > 0) {
+            group = readString(in);
+            member = readString(in);
+        }
+        return new BrokerRequest(correlation, Command.FETCH, topic, partition,
+                offset, maxBytes, null, 0, group, member);
     }
 
     private static BrokerRequest decodeJoin(DataInputStream in, int correlation) throws IOException {
@@ -129,6 +149,13 @@ public final class ProtocolCodec {
                         || request.maxBytes() > MAX_FETCH_BYTES)
                     throw bad("partition/offset must be non-negative and maxBytes must be 0.." + MAX_FETCH_BYTES,
                             request.correlationId());
+                if ((request.groupId() == null) != (request.memberId() == null))
+                    throw bad("groupId and memberId must both be provided for grouped fetch",
+                            request.correlationId());
+                if (request.groupId() != null) {
+                    requireString(request.groupId(), "groupId", request.correlationId());
+                    requireString(request.memberId(), "memberId", request.correlationId());
+                }
             }
             case CREATE_TOPIC -> {
                 requireTopic(request.topic());
@@ -140,6 +167,8 @@ public final class ProtocolCodec {
                 requireString(request.groupId(), "groupId", request.correlationId());
                 if (request.partition() < 0 || request.offset() < 0)
                     throw bad("partition and offset must be non-negative", request.correlationId());
+                if (request.memberId() != null)
+                    requireString(request.memberId(), "memberId", request.correlationId());
             }
             case JOIN_GROUP -> {
                 requireTopic(request.topic());

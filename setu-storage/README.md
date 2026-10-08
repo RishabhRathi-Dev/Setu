@@ -1,12 +1,15 @@
 # setu-storage
 
-`setu-storage` currently provides the append-only log abstraction used by `setu-core` and a file-backed implementation for one partition. It owns record offsets and physical file positions; the broker works with logical offsets and does not interpret the on-disk layout. Project-wide implementation status is summarized in the [parent README](../README.md#current-implementation-snapshot).
+`setu-storage` provides the append-only log abstraction used by `setu-core`, with both in-memory and file-backed implementations for one partition. It owns record offsets and physical file positions; the broker works with logical offsets and does not interpret the on-disk layout. Project-wide implementation status is summarized in the [parent README](../README.md#current-implementation-snapshot).
 
 ## Implemented
 
 - `MessageLog` exposes append, sequential read from an offset, next-offset lookup, and close operations.
 - `LogRecord` carries a zero-based offset and defensively copies its byte value.
 - `FileMessageLog` stores records in one file, maintains an in-memory offset-to-position list, and serializes operations with synchronized methods.
+- `InMemoryMessageLog` stores defensive copies of records in process memory and implements the same offset and read-budget behavior.
+- In-memory logs retain their original logical offsets while removing acknowledged prefixes with `discardBefore`; `firstOffset` reports the retained boundary.
+- `MessageLogs` opens a log for `StorageMode.IN_MEMORY` or `StorageMode.FILE`.
 - Each record is encoded as a four-byte signed length followed by the payload bytes.
 - Appends synchronize the file with `FileChannel.force(true)` before returning an offset. If an append operation reports an I/O failure, it attempts to truncate back to the prior file size.
 - Startup recovery scans valid records, rebuilds the in-memory index, and truncates an invalid or partial tail to the end of the last valid record.
@@ -36,7 +39,9 @@ try (MessageLog log = new FileMessageLog(path, 1024 * 1024)) {
 }
 ```
 
-`maxRecordBytes` is enforced by `FileMessageLog`. A zero-byte read budget returns no records. If the first record is larger than the read budget, `read` returns an empty list; the caller must use a larger limit. The budget counts payload bytes and excludes per-record length headers.
+For ephemeral storage, use `new InMemoryMessageLog(maxRecordBytes)`. In-memory offsets start at zero and remain monotonic as acknowledged prefixes are reclaimed. `DefaultBroker(maxRecordBytes)` selects this mode; the existing `DefaultBroker(dataDirectory, maxRecordBytes)` constructor continues to select file storage. The three-argument broker constructor accepts an explicit `StorageMode`.
+
+`maxRecordBytes` is enforced by both implementations. A zero-byte read budget returns no records. If the first record is larger than the read budget, `read` returns an empty list; the caller must use a larger limit. The budget counts payload bytes and excludes per-record length headers.
 
 ## Durability and recovery boundaries
 

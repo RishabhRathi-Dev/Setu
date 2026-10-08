@@ -7,7 +7,7 @@
 - Plain TCP and TLS connection factories with configurable connect/read timeouts and maximum frame size.
 - TLS protocol/cipher configuration, client-certificate support via the supplied `SSLContext` or `TlsConfiguration`/`TlsContextFactory`, and HTTPS endpoint identification for broker hostname verification.
 - Synchronous request/response exchange with per-instance serialization, incrementing correlation IDs, response command/correlation validation, and structured `BrokerResponse` results.
-- Convenience methods for `createTopic`, `produce`, `fetch`, and `metadata`; other protocol commands can be sent through `request(BrokerRequest)`.
+- Convenience methods for `createTopic`, `produce`, `fetch`, `joinGroup`, `heartbeat`, `acknowledge`, `leaveGroup`, and `metadata`; other protocol commands can be sent through `request(BrokerRequest)`.
 - `AutoCloseable` connection lifecycle.
 
 ## Example
@@ -32,11 +32,11 @@ Use `connectTls(...)` for a TLS listener. The client must be configured with a t
 
 Each call writes one length-prefixed request body, reads one response body, decodes it, and verifies that the response command and correlation ID match. A broker-side protocol or application failure is returned as a `BrokerResponse` with an `ErrorCode`; it is not automatically thrown as an exception. Socket, framing, decoding, timeout, or correlation failures throw `IOException` (or a validation exception where applicable). The client does not reconnect after transport failure.
 
-Calls on one client object are serialized. There is no pipelining or concurrent in-flight request support. The synchronous client is suitable for protocol integration and simple use, not yet a high-throughput producer/consumer API.
+Calls on one client object are serialized. There is no pipelining or concurrent in-flight request support. The synchronous client is suitable for protocol integration and simple use, not yet a high-throughput producer/consumer API. Group-aware `fetch` identifies the member, and `acknowledge` sends the next offset after records have been processed; in-memory storage uses these acknowledgements to reclaim records safely. Send `HEARTBEAT` while the member is active; the broker removes members that exceed its acknowledgement or inactivity deadline.
 
 ## Not implemented
 
-- Dedicated producer and consumer APIs, consumer-group lifecycle methods, callbacks, futures, or reactive/async I/O.
+- Dedicated high-level producer and consumer APIs, callbacks, futures, or reactive/async I/O.
 - Retry policy, idempotent produce, delivery guarantees, batching, compression, partition selection, and backpressure.
 - Connection pooling, reconnect, failover, metadata refresh, authentication besides TLS client certificates, and metrics.
 - Client-side protocol negotiation or compatibility with versions other than protocol v1.

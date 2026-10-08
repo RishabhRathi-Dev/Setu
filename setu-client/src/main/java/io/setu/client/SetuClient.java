@@ -120,6 +120,35 @@ public final class SetuClient implements AutoCloseable {
                 maxBytes, null, 0, null, null));
     }
 
+    /** Fetches as a joined group member so an in-memory broker can track this member's read progress. */
+    public BrokerResponse fetch(String groupId, String memberId, String topic, int partition,
+                                long offset, int maxBytes) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.FETCH, topic, partition, offset,
+                maxBytes, null, 0, groupId, memberId));
+    }
+
+    public BrokerResponse joinGroup(String groupId, String topic, String memberId) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.JOIN_GROUP, topic, -1, -1,
+                -1, null, 0, groupId, memberId));
+    }
+
+    public BrokerResponse heartbeat(String groupId, String memberId) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.HEARTBEAT, null, -1, -1,
+                -1, null, 0, groupId, memberId));
+    }
+
+    public BrokerResponse leaveGroup(String groupId, String memberId) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.LEAVE_GROUP, null, -1, -1,
+                -1, null, 0, groupId, memberId));
+    }
+
+    /** Acknowledges the next offset to consume; in-memory storage reclaims through this offset. */
+    public BrokerResponse acknowledge(String groupId, String memberId, String topic,
+                                      int partition, long nextOffset) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.COMMIT_OFFSET, topic, partition, nextOffset,
+                0, null, 0, groupId, memberId));
+    }
+
     public BrokerResponse metadata() throws IOException {
         return request(new BrokerRequest(nextId(), Command.METADATA, null, -1, -1,
                 -1, null, 0, null, null));

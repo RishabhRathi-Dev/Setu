@@ -11,6 +11,12 @@ public interface MessageLog extends AutoCloseable {
 
     long nextOffset();
 
+    /** Lowest offset still retained; persistent implementations may always return zero. */
+    default long firstOffset() { return 0; }
+
+    /** Discard records strictly before the supplied offset when this backend supports reclamation. */
+    default void discardBefore(long offset) throws IOException { }
+
     @Override
     void close() throws IOException;
 }

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ProtocolCodecTests {
     @Test
@@ -32,5 +33,26 @@ class ProtocolCodecTests {
         byte[] malformed = java.util.Arrays.copyOf(valid, valid.length + 1);
         org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
                 () -> ProtocolCodec.decodeRequest(malformed));
+    }
+
+    @Test
+    void roundTripsMemberAwareFetchAndAcknowledgementWhilePreservingLegacyBodies() throws Exception {
+        BrokerRequest groupedFetch = new BrokerRequest(2, Command.FETCH, "orders", 1,
+                7, 4096, null, 0, "workers", "member-a");
+        BrokerRequest decodedFetch = ProtocolCodec.decodeRequest(ProtocolCodec.encodeRequest(groupedFetch));
+        assertEquals("workers", decodedFetch.groupId());
+        assertEquals("member-a", decodedFetch.memberId());
+
+        BrokerRequest acknowledgement = new BrokerRequest(3, Command.COMMIT_OFFSET, "orders", 1,
+                9, 0, null, 0, "workers", "member-a");
+        BrokerRequest decodedAck = ProtocolCodec.decodeRequest(ProtocolCodec.encodeRequest(acknowledgement));
+        assertEquals(9, decodedAck.offset());
+        assertEquals("member-a", decodedAck.memberId());
+
+        BrokerRequest legacyFetch = new BrokerRequest(4, Command.FETCH, "orders", 0,
+                0, 1024, null, 0, null, null);
+        BrokerRequest decodedLegacy = ProtocolCodec.decodeRequest(ProtocolCodec.encodeRequest(legacyFetch));
+        assertNull(decodedLegacy.groupId());
+        assertNull(decodedLegacy.memberId());
     }
 }

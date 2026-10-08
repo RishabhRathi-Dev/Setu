@@ -1337,8 +1337,8 @@ This section distinguishes the first integrated vertical slice from the broader 
 | --- | --- | --- |
 | Protocol and transport | Version 1 commands, framed TCP, strict request decoding, correlation IDs, structured errors, TLS/mTLS blocking transport, plaintext selector multiplexing | Selector TLS, asynchronous/pipelined client API, protocol compatibility negotiation |
 | Security | mTLS identity, command/resource authorization mapping, exact default-deny in-memory ACLs, per-principal token-bucket quota checks | Persistent/cluster ACLs, wildcard policy, credential issuance/rotation, distributed quotas |
-| Broker | Topic creation, metadata, produce/fetch, basic group join/leave/heartbeat, offset commit | Partition assignment/rebalance, group expiry, durable metadata/offsets, replication |
-| Storage | One length-prefixed file per partition, sequential offsets, startup tail recovery, append synchronization | FFM, segment rotation/retention, checksums, persisted indexes, configurable ack modes, bounded buffering/backpressure |
+| Broker | Topic creation, metadata, produce/fetch, basic group join/leave/heartbeat, offset commit, member expiry | Partition assignment/rebalance, durable metadata/offsets, replication |
+| Storage | In-memory and file-backed partition logs, per-member acknowledgements, in-memory reclamation after all current topic consumers acknowledge, expiry for stalled/inactive consumers, file startup tail recovery | FFM, segment rotation/retention, checksums, persisted indexes, configurable ack modes, bounded buffering/backpressure |
 | Client | Synchronous plaintext and TLS/mTLS request/response client with timeout and hostname verification | High-level producer/consumer/group APIs, retries, batching, async I/O |
 | Operations | Configurable connection cap/backlog and read/idle timeout; tests for core protocol/log/ACL/selector/TLS path | Metrics, benchmarks, deployment configuration, load/failure testing |
 

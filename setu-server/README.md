@@ -1,6 +1,6 @@
 # Setu Server
 
-`setu-server` implements Setu's first broker network path. It accepts TCP connections, applies framing and protocol validation, optionally establishes TLS/mTLS, enforces authorization and quotas, and dispatches operations to `setu-core`. `setu-core` uses the append-only file log in `setu-storage`; `setu-client` shares the protocol codec.
+`setu-server` implements Setu's first broker network path. It accepts TCP connections, applies framing and protocol validation, optionally establishes TLS/mTLS, enforces authorization and quotas, and dispatches operations to `setu-core`. `setu-core` can use either in-memory or file-backed append-only logs from `setu-storage`; `setu-client` shares the protocol codec.
 
 ## Current implementation status
 
@@ -22,7 +22,7 @@
 
 - Selector-based TLS transport. The selector implementation handles plaintext channels; TLS currently uses blocking socket I/O on virtual threads.
 - Durable control-plane metadata: ACL grants, committed offsets, and group membership are process-local. PostgreSQL is not wired.
-- Full consumer-group coordination, partition assignment/rebalancing, and membership expiry.
+- Full consumer-group coordination and partition assignment/rebalancing.
 - Segment rotation, retention, checksums, and a persisted offset index. Each partition currently uses one log file and reconstructs its offset index at startup.
 - A protocol-level response if the TLS handshake fails before a protocol connection exists. Malformed frame lengths also close the connection because no trustworthy request ID is available yet.
 - Production policy administration, ACL persistence/reload, and distributed quotas.
@@ -145,8 +145,8 @@ Strings use a signed 32-bit byte length followed by UTF-8 bytes, limited to 4,09
 | Command | ID | Request body fields |
 | --- | ---: | --- |
 | `PRODUCE` | 1 | topic, partition `int32`, value bytes |
-| `FETCH` | 2 | topic, partition `int32`, offset `int64`, max bytes `int32` |
-| `COMMIT_OFFSET` | 3 | group ID, topic, partition `int32`, offset `int64` |
+| `FETCH` | 2 | topic, partition `int32`, offset `int64`, max bytes `int32`, optional group ID + member ID |
+| `COMMIT_OFFSET` | 3 | group ID, topic, partition `int32`, next offset `int64`, optional member ID (acknowledgement) |
 | `JOIN_GROUP` | 4 | group ID, topic, member ID |
 | `LEAVE_GROUP` | 5 | group ID, member ID |
 | `HEARTBEAT` | 6 | group ID, member ID |
@@ -157,7 +157,7 @@ Responses repeat the command and correlation ID, then include a 16-bit error cod
 
 Defined error IDs are `NONE=0`, `BAD_REQUEST=1`, `UNSUPPORTED_VERSION=2`, `UNKNOWN_COMMAND=3`, `UNKNOWN_TOPIC=4`, `UNKNOWN_PARTITION=5`, `AUTHENTICATION_FAILED=6`, `AUTHORIZATION_DENIED=7`, `QUOTA_EXCEEDED=8`, `INTERNAL_ERROR=9`, `OFFSET_OUT_OF_RANGE=10`, `UNSUPPORTED_OPERATION=11`, and `TOPIC_ALREADY_EXISTS=12`.
 
-`ProtocolCodec` validates message kind, magic, version, command, lengths, UTF-8, command-specific required fields, and trailing bytes. `SetuClient` verifies that the response command and correlation ID match the request. Protocol v1 is the initial wire contract; compatibility guarantees and version negotiation beyond rejecting unsupported versions are not implemented.
+`ProtocolCodec` validates message kind, magic, version, command, lengths, UTF-8, command-specific required fields, and trailing bytes. Group-aware fetch and member acknowledgements append optional fields to their command bodies; legacy v1 bodies without those fields remain valid. `SetuClient` verifies that the response command and correlation ID match the request. Protocol v1 is the initial wire contract; version negotiation beyond rejecting unsupported versions is not implemented.
 
 ## Plaintext connection path
 
@@ -386,7 +386,7 @@ Remaining server milestones include:
 
 1. Add protocol paging and explicit maximum-record-count controls for fetch/metadata responses.
 2. Persist authorization grants, consumer offsets, and group state in the control plane.
-3. Implement consumer-group partition assignment, rebalance, and member expiry.
+3. Implement consumer-group partition assignment and rebalance.
 4. Add selector-driven TLS using `SSLEngine`, or benchmark the current TLS virtual-thread transport before investing in it.
 5. Add log checksums, segment rotation, retention, and configurable durability/ack modes.
 6. Add metrics for active/rejected connections, request rates, quota denials, and append/fetch latency.
