@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "label": "file capacity",
+  "message": "4,096×4,096 · JVM OOM · peak CPU 100% · 302 MB · p99 17.2s",
+  "color": "red"
+}

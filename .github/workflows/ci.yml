@@ -50,6 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: integration-tests
     timeout-minutes: 60
+    permissions:
+      contents: write
 
     steps:
       - name: Check out repository
@@ -63,7 +65,31 @@ jobs:
           cache: maven
 
       - name: Run bounded broker chaos tests
-        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test
+        shell: bash
+        run: |
+          set -o pipefail
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test 2>&1 | tee -a "$RUNNER_TEMP/setu-benchmark-output.log"
 
       - name: Run progressive capacity exhaustion last
-        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=ProgressiveCapacityChaosTests' -Dsurefire.failIfNoSpecifiedTests=false test
+        shell: bash
+        run: |
+          set -o pipefail
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=ProgressiveCapacityChaosTests' -Dsurefire.failIfNoSpecifiedTests=false test 2>&1 | tee -a "$RUNNER_TEMP/setu-benchmark-output.log"
+
+      - name: Generate badges from the latest capacity metrics
+        if: success() && github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+        run: python3 scripts/update-benchmark-badges.py --log "$RUNNER_TEMP/setu-benchmark-output.log"
+
+      - name: Publish latest benchmark badges
+        if: success() && github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add benchmark-badges/*.json
+          if git diff --cached --quiet; then
+            echo "Benchmark badge metrics are unchanged."
+            exit 0
+          fi
+          git commit -m "Update benchmark metric badges [skip ci]"
+          git push origin HEAD:master
