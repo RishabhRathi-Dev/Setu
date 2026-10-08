@@ -19,7 +19,7 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
-/** Single-process broker implementation backed by one file log per topic partition. */
+/** Single-process broker with selectable in-memory or segmented file partition logs. */
 public final class DefaultBroker implements Broker {
     private static final int MAX_TOPICS = 10_000;
     private static final int MAX_PARTITIONS_PER_TOPIC = 1_024;
@@ -28,6 +28,7 @@ public final class DefaultBroker implements Broker {
     private final Path dataDirectory;
     private final int maxRecordBytes;
     private final StorageMode storageMode;
+    private final long maxSegmentBytes;
     private final long ackTimeoutNanos;
     private final long consumerInactivityTimeoutNanos;
     private final Map<String, TopicState> topics = new ConcurrentHashMap<>();
@@ -59,15 +60,25 @@ public final class DefaultBroker implements Broker {
      */
     public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
                          long ackTimeoutMillis, long consumerInactivityTimeoutMillis) throws IOException {
+        this(storageMode, dataDirectory, maxRecordBytes, MessageLogs.DEFAULT_MAX_SEGMENT_BYTES,
+                ackTimeoutMillis, consumerInactivityTimeoutMillis);
+    }
+
+    /** Creates a broker with explicit file segment size and consumer deadlines. */
+    public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
+                         long maxSegmentBytes, long ackTimeoutMillis,
+                         long consumerInactivityTimeoutMillis) throws IOException {
         this.storageMode = Objects.requireNonNull(storageMode, "storageMode");
         if (storageMode == StorageMode.FILE && dataDirectory == null)
             throw new IllegalArgumentException("dataDirectory is required for file storage");
         this.dataDirectory = dataDirectory == null ? null : dataDirectory.toAbsolutePath().normalize();
         if (maxRecordBytes < 0 || maxRecordBytes > 15 * 1024 * 1024)
             throw new IllegalArgumentException("maxRecordBytes must be between 0 and 15 MiB");
+        if (maxSegmentBytes <= 0) throw new IllegalArgumentException("maxSegmentBytes must be positive");
         if (ackTimeoutMillis <= 0 || consumerInactivityTimeoutMillis <= 0)
             throw new IllegalArgumentException("consumer timeouts must be positive");
         this.maxRecordBytes = maxRecordBytes;
+        this.maxSegmentBytes = maxSegmentBytes;
         this.ackTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(ackTimeoutMillis);
         this.consumerInactivityTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(consumerInactivityTimeoutMillis);
         if (storageMode == StorageMode.FILE) {
@@ -112,7 +123,7 @@ public final class DefaultBroker implements Broker {
                     Files.createDirectories(partitionDir);
                     file = partitionDir.resolve("000000000000.log");
                 }
-                partitions.add(MessageLogs.open(storageMode, file, maxRecordBytes));
+                partitions.add(MessageLogs.open(storageMode, file, maxRecordBytes, maxSegmentBytes));
             }
             topics.put(request.topic(), new TopicState(List.copyOf(partitions)));
         } catch (IOException | RuntimeException failure) {
@@ -300,7 +311,7 @@ public final class DefaultBroker implements Broker {
                         int partitionId = Integer.parseInt(partitionPaths.get(i).getFileName().toString().substring(10));
                         if (partitionId != i) throw new IOException("Partition directories must be contiguous for topic " + name);
                         logs.add(MessageLogs.open(storageMode,
-                                partitionPaths.get(i).resolve("000000000000.log"), maxRecordBytes));
+                                partitionPaths.get(i).resolve("000000000000.log"), maxRecordBytes, maxSegmentBytes));
                     }
                     topics.put(name, new TopicState(List.copyOf(logs)));
                 } catch (IOException | RuntimeException failure) {

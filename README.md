@@ -1,5 +1,9 @@
 # Setu
 
+[![CI](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml/badge.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![Chaos capacity benchmark](https://img.shields.io/github/actions/workflow/status/RishabhRathi-Dev/Setu/ci.yml?branch=master&label=chaos%20capacity)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![Observed chaos capacity: 4096 producers and consumers per mode](https://img.shields.io/badge/observed%20capacity-4%2C096%20each%20%E2%80%A2%20JVM%20OOM-blue?logo=java)](#36-latest-build-progress)
+
 **Setu** is a distributed message broker built from scratch in **Java 25**, inspired by systems such as Kafka.
 
 The project focuses on the engineering problems behind high-throughput messaging systems:
@@ -69,6 +73,8 @@ The root `pom.xml` is the Maven reactor for all modules. Use the checked-in Mave
 ```powershell
 .\mvnw.cmd test
 .\mvnw.cmd -pl setu-security test
+.\mvnw.cmd -pl setu-integration-tests -am test
+.\mvnw.cmd -pl setu-benchmark -am test
 ```
 
 On macOS/Linux, use `bash ./mvnw test` (or `./mvnw test` when the checkout marks the script executable).
@@ -377,7 +383,7 @@ They operate on logical topics, partitions, and offsets.
 
 # 9. Persistent Log (target design)
 
-The target design stores messages using append-only segmented files. The current implementation has one length-prefixed `.log` file per partition and does not rotate segments.
+The target design stores messages using append-only segmented files. File mode now writes one or more length-prefixed `.log` segments per partition and rotates at a configurable size (1 GiB by default). Existing one-file partitions remain readable as the first segment.
 
 Example:
 
@@ -385,9 +391,9 @@ Example:
 data/
 └── orders/
     ├── partition-0/
-    │   ├── 000000000000.log
-    │   ├── 000000000001.log
-    │   └── 000000000002.log
+    │   ├── 000000000000.log  ← starts at offset 0
+    │   ├── 000000000500.log  ← starts at offset 500
+    │   └── 000000001000.log  ← starts at offset 1,000
     │
     └── partition-1/
         ├── 000000000000.log
@@ -430,9 +436,8 @@ Each partition has an active segment.
              Retained / Expired
 ```
 
-Segment rotation can be triggered by:
+The current file backend rotates on maximum segment size. Age-based rotation and retention remain future work:
 
-* Maximum segment size
 * Maximum segment age
 * Retention policy
 
@@ -441,9 +446,9 @@ Example:
 ```text
 partition-0/
 
-000000000000.log  ← sealed
-000000000001.log  ← sealed
-000000000002.log  ← active
+000000000000.log  ← starts at offset 0
+000000000500.log  ← starts at offset 500
+000000001000.log  ← active, starts at offset 1,000
 ```
 
 ---
@@ -1279,17 +1284,19 @@ setu/
 │
 ├── setu-benchmark/
 │   ├── pom.xml
-│   └── src/
-│       ├── main/java/
-│       │   └── io/setu/benchmark/
-│       │       ├── throughput/
-│       │       ├── latency/
-│       │       ├── concurrency/
-│       │       ├── storage/
-│       │       ├── security/
-│       │       └── recovery/
-│       │
-│       └── resources/
+│   └── src/test/java/io/setu/benchmark/chaos/
+│       ├── BrokerCrashChaosTests.java
+│       ├── BrokerCrashWorker.java
+│       ├── BrokerLimitsChaosTests.java
+│       ├── MultiConsumerChaosTests.java
+│       ├── ProgressiveCapacityChaosWorker.java
+│       ├── QuickBrokerChaosBenchmarkTests.java
+│       └── ProgressiveCapacityChaosTests.java
+│
+├── setu-integration-tests/
+│   ├── pom.xml
+│   ├── README.md
+│   └── src/test/java/io/setu/integration/
 │
 ├── config/
 │   └── setu.yaml
@@ -1299,6 +1306,7 @@ setu/
 │
 ├── scripts/
 │   ├── generate-certs.sh
+│   ├── generate-certs.ps1
 │   ├── start-broker.sh
 │   ├── stop-broker.sh
 │   └── benchmark.sh
@@ -1323,28 +1331,35 @@ setu/
 | Module           | Responsibility                                                     |
 | ---------------- | ------------------------------------------------------------------ |
 | `setu-core`      | Current: broker API/implementation and v1 protocol values/codec. Target: full topics, partitions, producers, consumers, groups |
-| `setu-storage`   | Current: one file-backed append-only partition log. Target: segments, FFM, indexes, recovery, retention |
+| `setu-storage`   | Current: in-memory logs and file-backed partition logs with configurable 1 GiB segments, shared logical-offset APIs, and startup recovery. Target: FFM, persisted indexes, retention |
 | `setu-security`  | Current: TLS configuration/authentication, ACL interfaces and in-memory authorizer, quotas |
 | `setu-server`    | Current: TCP/TLS connections, framing, request authorization, dispatch, plaintext selector transport |
 | `setu-client`    | Current: synchronous protocol v1 socket client. Target: producer/consumer APIs |
-| `setu-benchmark` | Performance, scalability, security and failure benchmarks          |
+| `setu-benchmark` | Real-TCP throughput, recovery, expiry, malformed-traffic, concurrency, and progressive capacity exhaustion tests in `src/test/java/io/setu/benchmark/chaos`; doubles producer and consumer counts until CPU saturation, JVM OOM, or a host resource limit |
+| `setu-integration-tests` | Functional cross-module TCP and mTLS requirement tests for both storage modes; no saturation or chaos workloads |
 
 # 31. Current Implementation Snapshot
 
-This section distinguishes the first integrated vertical slice from the broader goals above. The architecture remains layered: the server owns transport and request processing, `setu-security` owns reusable security primitives, `setu-core` owns broker/protocol APIs, and `setu-storage` owns the partition-log abstraction and file implementation. The current broker depends on the storage abstraction; payloads are not stored in PostgreSQL.
+This section distinguishes the current integrated implementation from the broader goals above. The architecture remains layered: the server owns transport and request processing, `setu-security` owns reusable security primitives, `setu-core` owns broker/protocol APIs, and `setu-storage` owns partition-log implementations. The broker selects in-memory or local file storage; message payloads are not stored in PostgreSQL.
 
 | Area | Implemented in this checkout | Not implemented yet |
 | --- | --- | --- |
-| Protocol and transport | Version 1 commands, framed TCP, strict request decoding, correlation IDs, structured errors, TLS/mTLS blocking transport, plaintext selector multiplexing | Selector TLS, asynchronous/pipelined client API, protocol compatibility negotiation |
+| Protocol and transport | Version 1 commands, framed TCP, strict request decoding, correlation IDs, structured errors, optional member-aware fetch/ack fields with legacy-body support, TLS/mTLS blocking transport, plaintext selector multiplexing | Selector TLS, asynchronous/pipelined client API, negotiated protocol compatibility |
 | Security | mTLS identity, command/resource authorization mapping, exact default-deny in-memory ACLs, per-principal token-bucket quota checks | Persistent/cluster ACLs, wildcard policy, credential issuance/rotation, distributed quotas |
-| Broker | Topic creation, metadata, produce/fetch, basic group join/leave/heartbeat, offset commit, member expiry | Partition assignment/rebalance, durable metadata/offsets, replication |
-| Storage | In-memory and file-backed partition logs, per-member acknowledgements, in-memory reclamation after all current topic consumers acknowledge, expiry for stalled/inactive consumers, file startup tail recovery | FFM, segment rotation/retention, checksums, persisted indexes, configurable ack modes, bounded buffering/backpressure |
-| Client | Synchronous plaintext and TLS/mTLS request/response client with timeout and hostname verification | High-level producer/consumer/group APIs, retries, batching, async I/O |
-| Operations | Configurable connection cap/backlog and read/idle timeout; tests for core protocol/log/ACL/selector/TLS path | Metrics, benchmarks, deployment configuration, load/failure testing |
+| Broker | Topic creation, metadata, produce/fetch, group join/leave/heartbeat, per-member offset acknowledgements, acknowledgement and inactivity expiry | Partition assignment/rebalance, durable metadata/offsets, replication |
+| Storage | In-memory logs with acknowledgement-based prefix reclamation; segmented file logs with configurable size, continuous logical offsets, tail recovery, and full-history reads | FFM, file retention, checksums, persisted indexes, configurable file ack modes, bounded buffering/backpressure |
+| Client | Synchronous plaintext and TLS/mTLS requests with timeouts/hostname verification; create, produce, fetch, group join/leave, heartbeat, acknowledgement, and metadata helpers | High-level producer/consumer APIs, retries, batching, async I/O |
+| Operations | Configurable connection cap/backlog and read/idle timeout; functional integration-test module, development certificate script, ordered CI stages, and progressive real-TCP capacity benchmark with per-stage throughput, p99 latency, CPU, and heap reports | Metrics endpoint, deployment configuration, distributed load/failure testing |
 
-The consumer-group membership and committed-offset state in the current broker are in memory and disappear on restart. Topic/partition directories and message records are file-backed. See [setu-core/README.md](setu-core/README.md), [setu-storage/README.md](setu-storage/README.md), [setu-client/README.md](setu-client/README.md), [setu-server/README.md](setu-server/README.md), and [setu-security/README.md](setu-security/README.md) for module-level details.
+Consumer membership and committed offsets remain process-local and disappear on restart. File mode stores topic/partition logs as segments named by base offset under the configured data directory; the default segment size is 1 GiB and can be configured through `DefaultBroker`. Existing single-file partitions remain readable as the first segment. File mode retains complete history and reads from offset zero. In-memory mode creates no data directory, starts new members at join-time offsets, and reclaims acknowledged prefixes while preserving monotonic logical offsets. `DefaultBroker` uses a 30-second acknowledgement deadline and a 60-second inactivity deadline by default in either mode; expired members are removed during broker request processing. See [setu-core/README.md](setu-core/README.md), [setu-storage/README.md](setu-storage/README.md), [setu-client/README.md](setu-client/README.md), [setu-server/README.md](setu-server/README.md), and [setu-security/README.md](setu-security/README.md) for module-level details.
 
 The later numbered sections remain design goals unless the snapshot above or a module README explicitly marks them implemented.
+
+## Integration tests and local certificates
+
+Functional cross-module TCP and mTLS scenarios live in `setu-integration-tests`; the tests create temporary certificates with the JDK `keytool`. For local development certificates, run `bash ./scripts/generate-certs.sh` on macOS/Linux or `./scripts/generate-certs.ps1` in PowerShell (optional output directory; `SETU_CERT_PASSWORD` overrides the development password). Generated material is ignored under `certs/generated/` and must not be used in production. Chaos and capacity workloads are kept under `setu-benchmark/src/test/java/io/setu/benchmark/chaos`.
+
+CI runs three ordered stages: production unit tests, functional end-to-end integration tests, then the broker chaos and capacity benchmark. The normal benchmark measures 20,000 records with sixteen producers and sixteen consumers in each storage mode, plus acknowledgement expiry, file-segment rotation, and broker restart. Other chaos cases exercise record-size limits, fetch paging, truncated TCP frames, concurrent consumer progress, and recovery after a forced broker process kill. The progressive capacity test launches one heap-capped child JVM per storage mode, doubles producer and consumer counts at each stage, and reports records per second, approximate p99 request latency, process CPU, and heap until sustained CPU saturation, JVM OOM, or an OS resource limit. Its output is diagnostic and does not apply machine-sensitive throughput thresholds. The CI badges above track the full ordered workflow, including the capacity stage; the observed-capacity badge summarizes the latest local run.
 
 Dependency direction:
 
@@ -1409,7 +1424,7 @@ Containerized deployment:
 └─────────────────────┘
 ```
 
-The message log must use persistent storage rather than ephemeral container storage.
+File mode must use persistent storage for durable deployments. In-memory mode is ephemeral by design and suits workloads that prioritize fast message handling without retaining old traces.
 
 ---
 
@@ -1470,3 +1485,19 @@ Setu is successful when it can demonstrate:
 # 35. Core Principle
 
 > **Build the transport and storage layer yourself — secure it, make it recoverable, then measure the trade-offs.**
+
+---
+
+# 36. Latest Build Progress
+
+The production-module build and unit tests were run with Java 25 using:
+
+```powershell
+.\mvnw.cmd -pl setu-storage,setu-core,setu-security,setu-client,setu-server -am package
+```
+
+**Production unit stage: BUILD SUCCESS.** Storage, core, security, client, and server passed 39 tests across storage (4), core (11), security (22), and server (2); the client module has no dedicated tests.
+
+**Latest local pipeline state (Java 25):** production unit tests **PASS** (39 tests); functional integration stage **PASS** (39 dependency tests plus all three TCP/mTLS integration tests); broker chaos and benchmark stage **PASS** (39 dependency tests plus seven chaos/benchmark tests). Integration now checks application requirements, while load, broker failure, and capacity exhaustion live in the benchmark module.
+
+The progressive capacity run doubled producer and consumer counts through **4,096 of each** in both storage modes, then recorded **JVM_OOM** inside the isolated 768 MiB heap child. Before exhaustion, the best observed fan-out rate was about **1.51M records/s** in memory mode at 256 consumers and **456K records/s** in file mode at 1,024 consumers; process CPU peaked at 77% and 28%, respectively, on this machine. The separate 20,000-record quick run reported about **80.8K produced / 1.55M consumed records/s** in memory mode and **2.43K / 437K records/s** in file mode, with a 357 ms file-broker restart. These are local measurements, not CI performance thresholds. The CI badges above reflect workflow status; the observed-capacity badge reflects this machine's run.

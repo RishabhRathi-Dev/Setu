@@ -1,0 +1,69 @@
+package io.setu.benchmark.chaos;
+
+import io.setu.storage.log.StorageMode;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.Timeout;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** Runs the unbounded capacity ramp out of process so a measured JVM OOM cannot kill Surefire. */
+class ProgressiveCapacityChaosTests {
+    @TempDir Path tempDir;
+
+    @Test
+    @Timeout(value = 55, unit = TimeUnit.MINUTES)
+    void progressivelyRampsInMemoryProducersAndConsumersUntilTheRuntimeLimit() throws Exception {
+        runIsolatedRamp(StorageMode.IN_MEMORY);
+    }
+
+    @Test
+    @Timeout(value = 55, unit = TimeUnit.MINUTES)
+    void progressivelyRampsFileProducersAndConsumersUntilTheRuntimeLimit() throws Exception {
+        runIsolatedRamp(StorageMode.FILE);
+    }
+
+    private void runIsolatedRamp(StorageMode mode) throws Exception {
+        Path output = tempDir.resolve(mode.name().toLowerCase() + "-capacity.log");
+        String executable = Path.of(System.getProperty("java.home"), "bin",
+                System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java").toString();
+        String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+        Process child = new ProcessBuilder(executable, "-Xms64m", "-Xmx768m", "-XX:MaxDirectMemorySize=128m",
+                "-cp", classpath, ProgressiveCapacityChaosWorker.class.getName(),
+                mode.name(), tempDir.resolve(mode.name().toLowerCase() + "-data").toString())
+                .redirectErrorStream(true).redirectOutput(output.toFile()).start();
+        try {
+            if (!child.waitFor(Duration.ofMinutes(25).toMillis(), TimeUnit.MILLISECONDS)) {
+                child.destroyForcibly();
+                child.waitFor(10, TimeUnit.SECONDS);
+                throw new AssertionError("Capacity ramp exceeded 25 minutes for " + mode + ":\n" + readOutput(output));
+            }
+            String report = readOutput(output);
+            System.out.print(report);
+            assertTrue(report.contains("CAPACITY_STAGE mode=" + mode + " stage=1 producers=1 consumers=1"),
+                    "Capacity ramp did not complete its first load stage:\n" + report);
+            assertTrue(report.contains("CAPACITY_STOP mode=" + mode),
+                    "Child did not report a measured capacity boundary (exit " + child.exitValue() + "):\n" + report);
+            String stopLine = report.lines()
+                    .filter(line -> line.startsWith("CAPACITY_STOP mode=" + mode + " reason="))
+                    .findFirst().orElse("");
+            assertTrue(stopLine.matches(".*reason=(CPU_SATURATION|JVM_OOM|RESOURCE_LIMIT|BROKER_OR_CLIENT_LIMIT|CLIENT_STALL|CONCURRENCY_COUNTER_LIMIT) .*"),
+                    "Child stopped without a recognized capacity boundary:\n" + report);
+            assertTrue(child.exitValue() == 0 || child.exitValue() == 42,
+                    "Capacity worker terminated unexpectedly (exit " + child.exitValue() + "):\n" + report);
+        } finally {
+            if (child.isAlive()) child.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
+        }
+    }
+
+    private static String readOutput(Path output) {
+        try { return Files.exists(output) ? Files.readString(output) : "No capacity-worker output."; }
+        catch (IOException failure) { return "Could not read capacity-worker output: " + failure; }
+    }
+}

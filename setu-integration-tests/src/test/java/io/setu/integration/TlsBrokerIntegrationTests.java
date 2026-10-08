@@ -1,4 +1,4 @@
-package io.setu.server;
+package io.setu.integration;
 
 import io.setu.core.broker.DefaultBroker;
 import io.setu.core.protocol.ErrorCode;
@@ -14,6 +14,7 @@ import io.setu.security.tls.SetuTrustManagerProvider;
 import io.setu.security.tls.TlsConfiguration;
 import io.setu.security.tls.TlsContextFactory;
 import io.setu.server.tcp.TcpServer;
+import io.setu.server.SecureServerFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

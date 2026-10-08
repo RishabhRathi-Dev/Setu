@@ -11,4 +11,32 @@
 
     <artifactId>setu-benchmark</artifactId>
 
+    <dependencies>
+        <dependency>
+            <groupId>org.rishabh</groupId>
+            <artifactId>setu-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.rishabh</groupId>
+            <artifactId>setu-client</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.rishabh</groupId>
+            <artifactId>setu-server</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.rishabh</groupId>
+            <artifactId>setu-storage</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
 </project>

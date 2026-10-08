@@ -1,4 +1,4 @@
-name: Build and test
+name: Build, integration tests, and capacity benchmark
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -24,5 +24,43 @@ jobs:
           java-version: '25'
           cache: maven
 
-      - name: Build and test all modules
-        run: bash ./mvnw --batch-mode --no-transfer-progress test
+      - name: Build and test production modules
+        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-storage,setu-core,setu-security,setu-client,setu-server -am test
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Run end-to-end application integration tests
+        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-integration-tests -am test
+
+  quick-benchmark:
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Run broker chaos and progressive capacity benchmarks
+        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am test

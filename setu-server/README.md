@@ -9,7 +9,7 @@
 - A version 1 binary protocol with command IDs, correlation IDs, strict payload validation, and structured response/error codes.
 - A shared frame codec and protocol codec used by server and client.
 - Broker commands for topic creation, metadata, produce, fetch, consumer-group membership/heartbeat, and offset commits.
-- A file-backed partition log with startup recovery and a broker facade in `setu-core`.
+- A segmented file-backed partition log with startup recovery and a broker facade in `setu-core`.
 - A default-deny, exact-match in-memory ACL authorizer in `setu-security`.
 - A built-in command-to-resource/permission resolver.
 - TLS client and server setup with mTLS, DNS SAN identity authentication, and hostname verification on clients.
@@ -23,7 +23,7 @@
 - Selector-based TLS transport. The selector implementation handles plaintext channels; TLS currently uses blocking socket I/O on virtual threads.
 - Durable control-plane metadata: ACL grants, committed offsets, and group membership are process-local. PostgreSQL is not wired.
 - Full consumer-group coordination and partition assignment/rebalancing.
-- Segment rotation, retention, checksums, and a persisted offset index. Each partition currently uses one log file and reconstructs its offset index at startup.
+- File retention, checksums, and a persisted offset index. Partitions rotate across segment files and rebuild their offset indexes at startup.
 - A protocol-level response if the TLS handshake fails before a protocol connection exists. Malformed frame lengths also close the connection because no trustworthy request ID is available yet.
 - Production policy administration, ACL persistence/reload, and distributed quotas.
 
@@ -301,13 +301,13 @@ All values must be positive, and each burst capacity must be at least its refill
 
 `DefaultBroker` is the first single-process broker implementation. It creates topics with 1 to 1,024 partitions, appends records, fetches by offset, returns topic metadata, and tracks simple group membership and committed offsets.
 
-Each topic partition is stored in:
+Each topic partition stores one or more segments under:
 
 ```text
-<data-directory>/<topic>/partition-<n>/000000000000.log
+<data-directory>/<topic>/partition-<n>/<segment-base-offset>.log
 ```
 
-The current log record is a four-byte signed length followed by the record bytes. Offsets are zero-based record positions. `FileMessageLog` scans the file at startup to rebuild its in-memory offset index, truncates an invalid or partial tail to the last valid record, and calls `FileChannel.force(true)` after each append before `PRODUCE` returns success. There is no record checksum, segment rotation, retention, or secondary offset index yet. Forcing every append favors a clear durability boundary over throughput; measure this before tuning acknowledgement behavior.
+The current log record is a four-byte signed length followed by the record bytes. Offsets are zero-based record positions. `SegmentedFileMessageLog` scans each segment at startup to rebuild its in-memory offset index, truncates an invalid or partial tail in the active segment to the last valid record, and calls `FileChannel.force(true)` after each append before `PRODUCE` returns success. Segment rotation defaults to 1 GiB and can be configured through `DefaultBroker`. There is no record checksum, retention, or persisted offset index. Forcing every append favors a clear durability boundary over throughput; measure this before tuning acknowledgement behavior.
 
 Topics and partition logs survive restart because they are represented on disk. Committed consumer offsets and group membership currently live only in memory and are lost when the broker restarts. PostgreSQL and the control-plane metadata model from the root README are not connected to `DefaultBroker` yet.
 
@@ -367,7 +367,7 @@ Custom request handlers or processors that throw before encoding a response may 
 - `InMemoryAuthorizer` stores exact grants only in the current process. Resource strings are `topic/<topic>`, `consumer-group/<group>`, and `broker`; there are no wildcard grants.
 - `TcpServer` limits accepted active connections and can apply a blocking socket timeout. `SelectorTcpServer` applies its configured timeout as per-connection idle time. The selector transport is plaintext only.
 - Request and response bodies are materialized as byte arrays. The frame limit bounds one frame, not total process memory across all clients.
-- Group state and committed offsets are in-memory only. Partition records are forced to disk, but file logs have no checksum or segment management.
+- Group state and committed offsets are in-memory only. Partition records are forced to disk and rotated by size, but file logs have no checksum or retention.
 
 ## Testing and building
 
@@ -388,6 +388,6 @@ Remaining server milestones include:
 2. Persist authorization grants, consumer offsets, and group state in the control plane.
 3. Implement consumer-group partition assignment and rebalance.
 4. Add selector-driven TLS using `SSLEngine`, or benchmark the current TLS virtual-thread transport before investing in it.
-5. Add log checksums, segment rotation, retention, and configurable durability/ack modes.
+5. Add log checksums, retention, and configurable file durability/ack modes.
 6. Add metrics for active/rejected connections, request rates, quota denials, and append/fetch latency.
 7. Add broader integration tests for invalid client certificates, quota rejection, wire error cases, and server shutdown under load.

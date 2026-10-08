@@ -4,10 +4,12 @@ import io.setu.core.protocol.BrokerRequest;
 import io.setu.core.protocol.BrokerResponse;
 import io.setu.core.protocol.Command;
 import io.setu.core.protocol.ProtocolRecord;
+import io.setu.storage.log.FileMessageLog;
 import io.setu.storage.log.StorageMode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -75,6 +77,45 @@ class DefaultBrokerTests {
             assertEquals(1, records.size());
             assertEquals(0, records.getFirst().offset());
             assertArrayEquals("before-join".getBytes(), records.getFirst().value());
+        }
+    }
+
+    @Test
+    void brokerRotatesFileSegmentsAndRecoversRecordsInOffsetOrder() throws Exception {
+        try (DefaultBroker broker = new DefaultBroker(StorageMode.FILE, tempDir, 1024, 10, 5_000, 5_000)) {
+            createTopic(broker);
+            assertEquals(0, produce(broker, "abc").offset());
+            assertEquals(1, produce(broker, "def").offset());
+        }
+
+        Path partition = tempDir.resolve("orders").resolve("partition-0");
+        assertTrue(Files.exists(partition.resolve("000000000000.log")));
+        assertTrue(Files.exists(partition.resolve("000000000001.log")));
+
+        try (DefaultBroker recovered = new DefaultBroker(StorageMode.FILE, tempDir, 1024, 10, 5_000, 5_000)) {
+            var records = fetch(recovered, null, null, 0).records();
+            assertEquals(2, records.size());
+            assertEquals(0, records.getFirst().offset());
+            assertArrayEquals("abc".getBytes(), records.getFirst().value());
+            assertEquals(1, records.getLast().offset());
+            assertArrayEquals("def".getBytes(), records.getLast().value());
+        }
+    }
+
+    @Test
+    void brokerRecoversLegacySingleFilePartitionsAsFirstSegment() throws Exception {
+        Path partition = tempDir.resolve("orders").resolve("partition-0");
+        Files.createDirectories(partition);
+        try (FileMessageLog legacy = new FileMessageLog(partition.resolve("000000000000.log"), 1024)) {
+            legacy.append("legacy-record".getBytes());
+        }
+
+        try (DefaultBroker broker = new DefaultBroker(tempDir, 1024)) {
+            var records = fetch(broker, null, null, 0).records();
+            assertEquals(1, records.size());
+            assertEquals(0, records.getFirst().offset());
+            assertArrayEquals("legacy-record".getBytes(), records.getFirst().value());
+            assertEquals(1, produce(broker, "next-record").offset());
         }
     }
 
