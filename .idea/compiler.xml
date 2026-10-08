@@ -20,15 +20,6 @@
         <module name="setu-server" />
         <module name="setu-storage" />
         <module name="setu-core" />
-      </profile>
-      <profile name="Annotation profile for setu-security" enabled="true">
-        <sourceOutputDir name="target/generated-sources/annotations" />
-        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
-        <outputRelativeToContentRoot value="true" />
-        <processorPath useClasspath="false">
-          <entry name="$MAVEN_REPOSITORY$/org/projectlombok/lombok/1.18.48/lombok-1.18.48.jar" />
-          <entry name="$MAVEN_REPOSITORY$/org/projectlombok/lombok/1.18.48/lombok-1.18.48.jar" />
-        </processorPath>
         <module name="setu-security" />
       </profile>
     </annotationProcessing>

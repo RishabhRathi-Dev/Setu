@@ -11,4 +11,17 @@
 
     <artifactId>setu-client</artifactId>
 
+    <dependencies>
+        <dependency>
+            <groupId>org.rishabh</groupId>
+            <artifactId>setu-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.rishabh</groupId>
+            <artifactId>setu-security</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
 </project>

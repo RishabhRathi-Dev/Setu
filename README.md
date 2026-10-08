@@ -200,9 +200,9 @@ The append-only log files are the durable source of truth for message data.
 
 ---
 
-# 4. FFM / MemorySegment
+# 4. FFM / MemorySegment (planned)
 
-Setu uses Java's **Foreign Function & Memory API (FFM)** for efficient interaction with file-backed and off-heap memory.
+The target storage design may use Java's **Foreign Function & Memory API (FFM)** for efficient interaction with file-backed and off-heap memory. The current `setu-storage` implementation does not use FFM or `MemorySegment`; it uses `FileChannel` and heap byte arrays.
 
 FFM is an access mechanism, not the persistence layer.
 
@@ -222,7 +222,7 @@ Conceptually:
                 Message Records
 ```
 
-This provides a path for efficient:
+If adopted after benchmarking, this would provide a path for:
 
 * File-backed memory access
 * Off-heap memory usage
@@ -375,9 +375,9 @@ They operate on logical topics, partitions, and offsets.
 
 ---
 
-# 9. Persistent Log
+# 9. Persistent Log (target design)
 
-Setu stores messages using append-only segmented files.
+The target design stores messages using append-only segmented files. The current implementation has one length-prefixed `.log` file per partition and does not rotate segments.
 
 Example:
 
@@ -627,7 +627,7 @@ The exact commit semantics should be designed around the desired delivery guaran
 
 Security is a first-class Setu subsystem.
 
-The code currently provides a standalone `setu-security` library, but `setu-server` does not yet wire it into connection setup or request dispatch. The flows in this section describe the intended broker behavior; see `setu-security/README.md` for the implemented scope and outstanding security integration work.
+`setu-server` integrates TLS/mTLS, per-request authorization and quotas, a versioned protocol, and structured request errors. It uses the default-deny `InMemoryAuthorizer` and protocol metadata resolver from its current security/server packages, plus a file-backed broker path in `setu-core` and `setu-storage`. ACL grants, group membership, and committed offsets are currently process-local; PostgreSQL integration remains future work. See `setu-server/README.md` and `setu-security/README.md` for implementation details and limitations.
 
 Setu must secure both:
 
@@ -1171,7 +1171,9 @@ The objective is to understand the performance/security trade-off rather than si
 
 ---
 
-# 29. Project Structure
+# 29. Target Project Structure
+
+The tree below is the intended long-term layout, not a claim that all listed packages and classes exist today. See the current implementation snapshot in section 31 and each module README for the shipped packages.
 
 ```text
 setu/
@@ -1320,12 +1322,29 @@ setu/
 
 | Module           | Responsibility                                                     |
 | ---------------- | ------------------------------------------------------------------ |
-| `setu-core`      | Broker semantics, topics, partitions, producers, consumers, groups |
-| `setu-storage`   | Log segments, FFM, persistence, indexes, recovery, retention       |
-| `setu-security`  | TLS, mTLS, authentication, authorization, quotas                   |
-| `setu-server`    | TCP server, connections, framing, request dispatch                 |
-| `setu-client`    | Producer and consumer client APIs                                  |
+| `setu-core`      | Current: broker API/implementation and v1 protocol values/codec. Target: full topics, partitions, producers, consumers, groups |
+| `setu-storage`   | Current: one file-backed append-only partition log. Target: segments, FFM, indexes, recovery, retention |
+| `setu-security`  | Current: TLS configuration/authentication, ACL interfaces and in-memory authorizer, quotas |
+| `setu-server`    | Current: TCP/TLS connections, framing, request authorization, dispatch, plaintext selector transport |
+| `setu-client`    | Current: synchronous protocol v1 socket client. Target: producer/consumer APIs |
 | `setu-benchmark` | Performance, scalability, security and failure benchmarks          |
+
+# 31. Current Implementation Snapshot
+
+This section distinguishes the first integrated vertical slice from the broader goals above. The architecture remains layered: the server owns transport and request processing, `setu-security` owns reusable security primitives, `setu-core` owns broker/protocol APIs, and `setu-storage` owns the partition-log abstraction and file implementation. The current broker depends on the storage abstraction; payloads are not stored in PostgreSQL.
+
+| Area | Implemented in this checkout | Not implemented yet |
+| --- | --- | --- |
+| Protocol and transport | Version 1 commands, framed TCP, strict request decoding, correlation IDs, structured errors, TLS/mTLS blocking transport, plaintext selector multiplexing | Selector TLS, asynchronous/pipelined client API, protocol compatibility negotiation |
+| Security | mTLS identity, command/resource authorization mapping, exact default-deny in-memory ACLs, per-principal token-bucket quota checks | Persistent/cluster ACLs, wildcard policy, credential issuance/rotation, distributed quotas |
+| Broker | Topic creation, metadata, produce/fetch, basic group join/leave/heartbeat, offset commit | Partition assignment/rebalance, group expiry, durable metadata/offsets, replication |
+| Storage | One length-prefixed file per partition, sequential offsets, startup tail recovery, append synchronization | FFM, segment rotation/retention, checksums, persisted indexes, configurable ack modes, bounded buffering/backpressure |
+| Client | Synchronous plaintext and TLS/mTLS request/response client with timeout and hostname verification | High-level producer/consumer/group APIs, retries, batching, async I/O |
+| Operations | Configurable connection cap/backlog and read/idle timeout; tests for core protocol/log/ACL/selector/TLS path | Metrics, benchmarks, deployment configuration, load/failure testing |
+
+The consumer-group membership and committed-offset state in the current broker are in memory and disappear on restart. Topic/partition directories and message records are file-backed. See [setu-core/README.md](setu-core/README.md), [setu-storage/README.md](setu-storage/README.md), [setu-client/README.md](setu-client/README.md), [setu-server/README.md](setu-server/README.md), and [setu-security/README.md](setu-security/README.md) for module-level details.
+
+The later numbered sections remain design goals unless the snapshot above or a module README explicitly marks them implemented.
 
 Dependency direction:
 
@@ -1347,7 +1366,7 @@ Security should be exposed as interfaces so that the core broker does not become
 
 ---
 
-# 31. Technology Stack
+# 32. Technology Stack
 
 * **Java 25**
 * **Maven**
@@ -1365,7 +1384,7 @@ Security should be exposed as interfaces so that the core broker does not become
 
 ---
 
-# 32. Deployment
+# 33. Deployment
 
 Initial local deployment:
 
@@ -1394,7 +1413,7 @@ The message log must use persistent storage rather than ephemeral container stor
 
 ---
 
-# 33. Success Criteria
+# 34. Success Criteria
 
 Setu is successful when it can demonstrate:
 
@@ -1448,6 +1467,6 @@ Setu is successful when it can demonstrate:
 
 ---
 
-# 34. Core Principle
+# 35. Core Principle
 
 > **Build the transport and storage layer yourself — secure it, make it recoverable, then measure the trade-offs.**
