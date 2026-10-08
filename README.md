@@ -1,8 +1,8 @@
 # Setu
 
 [![CI](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml/badge.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![In-memory capacity from latest benchmark](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRishabhRathi-Dev%2FSetu%2Fmaster%2Fbenchmark-badges%2Fin-memory-capacity.json&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![In-memory peak rates from latest benchmark](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRishabhRathi-Dev%2FSetu%2Fmaster%2Fbenchmark-badges%2Fin-memory-throughput.json&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-memory capacity from latest benchmark](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRishabhRathi-Dev%2FSetu%2Fmaster%2Fbenchmark-badges%2Fmemory-capacity.json&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-memory peak rates from latest benchmark](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRishabhRathi-Dev%2FSetu%2Fmaster%2Fbenchmark-badges%2Fmemory-throughput.json&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 [![File capacity from latest benchmark](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRishabhRathi-Dev%2FSetu%2Fmaster%2Fbenchmark-badges%2Ffile-capacity.json&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 [![File peak rates from latest benchmark](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRishabhRathi-Dev%2FSetu%2Fmaster%2Fbenchmark-badges%2Ffile-throughput.json&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 
