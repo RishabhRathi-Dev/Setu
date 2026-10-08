@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh README badge endpoints from the latest progressive capacity run."""
+"""Refresh README badges from the latest progressive capacity run."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from urllib.parse import quote, urlencode
 
 
 def parse_fields(line: str, marker: str) -> dict[str, str]:
@@ -68,6 +69,37 @@ def write_badge(directory: Path, filename: str, label: str, message: str, color:
     )
 
 
+def readme_badge(label: str, message: str, color: str, workflow_url: str) -> str:
+    query = urlencode(
+        {
+            "label": label,
+            "cacheSeconds": 300,
+        },
+        quote_via=quote,
+    )
+    alt_text = f"{label.title()} from latest benchmark"
+    badge_message = quote(message, safe="").replace("-", "--")
+    badge_color = quote(color, safe="")
+    image_url = f"https://img.shields.io/badge/{badge_message}-{badge_color}?{query}"
+    return f"[![{alt_text}]({image_url})]({workflow_url})"
+
+
+def update_readme_badges(badges: list[str], readme_path: Path = Path("README.md")) -> None:
+    readme = readme_path.read_text(encoding="utf-8")
+    pattern = re.compile(
+        r"(?s)<!-- benchmark-metrics-badges:start -->.*?<!-- benchmark-metrics-badges:end -->"
+    )
+    if len(pattern.findall(readme)) != 1:
+        raise SystemExit("README must contain exactly one benchmark badge block")
+    block = "\n".join(
+        ["<!-- benchmark-metrics-badges:start -->", *badges, "<!-- benchmark-metrics-badges:end -->"]
+    )
+    updated, replacements = pattern.subn(lambda _: block, readme, count=1)
+    if replacements != 1:
+        raise SystemExit("README benchmark badge block could not be updated")
+    readme_path.write_text(updated, encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", type=Path)
@@ -80,6 +112,7 @@ def main() -> None:
     output = read_benchmark_output(args.log, args.reports)
     stages: dict[str, list[dict[str, str]]] = {"IN_MEMORY": [], "FILE": []}
     stop_reasons: dict[str, str] = {}
+    badges: list[str] = []
 
     for line in output.splitlines():
         if "CAPACITY_STAGE " in line:
@@ -115,6 +148,15 @@ def main() -> None:
             f"{concurrency} · {friendly_reason(reason)} · peak CPU {cpu}% · {heap} MB · p99 {p99}",
             capacity_color,
         )
+        badge_mode = "in-memory" if mode == "IN_MEMORY" else "file"
+        badges.append(
+            readme_badge(
+                f"{badge_mode} capacity",
+                f"{concurrency} · {friendly_reason(reason)} · peak CPU {cpu}% · {heap} MB · p99 {p99}",
+                capacity_color,
+                "https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml",
+            )
+        )
 
         peak_produce = max(float(fields["produce_per_s"]) for fields in values)
         peak_consume = max(float(fields["consume_per_s"]) for fields in values)
@@ -125,7 +167,16 @@ def main() -> None:
             f"{format_rate(peak_produce)} prod/s · {format_rate(peak_consume)} consumed/s",
             "blue",
         )
+        badges.append(
+            readme_badge(
+                f"{badge_mode} peak rates",
+                f"{format_rate(peak_produce)} prod/s · {format_rate(peak_consume)} consumed/s",
+                "blue",
+                "https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml",
+            )
+        )
 
+    update_readme_badges(badges)
     print(f"Updated benchmark badges in {args.output}")
 
 

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "memory capacity",
-  "message": "256×256 · CPU saturation · peak CPU 100% · 170 MB · p99 537ms",
-  "color": "orange"
+  "message": "4,096×4,096 · JVM OOM · peak CPU 21% · 260 MB · p99 4.3s",
+  "color": "red"
 }

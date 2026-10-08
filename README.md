@@ -1,10 +1,12 @@
 # Setu
 
 [![CI](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml/badge.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![In-memory capacity from latest benchmark](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRishabhRathi-Dev%2FSetu%2Fmaster%2Fbenchmark-badges%2Fmemory-capacity.json&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![In-memory peak rates from latest benchmark](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRishabhRathi-Dev%2FSetu%2Fmaster%2Fbenchmark-badges%2Fmemory-throughput.json&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File capacity from latest benchmark](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRishabhRathi-Dev%2FSetu%2Fmaster%2Fbenchmark-badges%2Ffile-capacity.json&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File peak rates from latest benchmark](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FRishabhRathi-Dev%2FSetu%2Fmaster%2Fbenchmark-badges%2Ffile-throughput.json&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+<!-- benchmark-metrics-badges:start -->
+[![In-Memory Capacity from latest benchmark](https://img.shields.io/badge/4%2C096%C3%974%2C096%20%C2%B7%20JVM%20OOM%20%C2%B7%20peak%20CPU%2021%25%20%C2%B7%20260%20MB%20%C2%B7%20p99%204.3s-red?label=in-memory%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-Memory Peak Rates from latest benchmark](https://img.shields.io/badge/38.93K%20prod%2Fs%20%C2%B7%201.47M%20consumed%2Fs-blue?label=in-memory%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![File Capacity from latest benchmark](https://img.shields.io/badge/4%2C096%C3%974%2C096%20%C2%B7%20JVM%20OOM%20%C2%B7%20peak%20CPU%2019%25%20%C2%B7%20334%20MB%20%C2%B7%20p99%202.1s-red?label=file%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![File Peak Rates from latest benchmark](https://img.shields.io/badge/2.49K%20prod%2Fs%20%C2%B7%20493.05K%20consumed%2Fs-blue?label=file%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+<!-- benchmark-metrics-badges:end -->
 
 Benchmark badges show terminal capacity, peak CPU, heap, p99 latency, and peak producer/consumer rates for each storage mode. They are backed by JSON generated from the progressive test output and refreshed after successful master runs.
 
