@@ -11,7 +11,7 @@ public final class ProtocolRequestAuthorizationMetadataResolver implements Reque
     public RequestAuthorizationMetadata resolve(byte[] request) throws java.io.IOException {
         BrokerRequest decoded = ProtocolCodec.decodeRequest(request);
         return switch (decoded.command()) {
-            case PRODUCE -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.PRODUCE);
+            case PRODUCE, PRODUCE_BATCH -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.PRODUCE);
             case FETCH -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.CONSUME);
             case CREATE_TOPIC -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.TOPIC_CREATE);
             case COMMIT_OFFSET -> new RequestAuthorizationMetadata(

@@ -31,6 +31,24 @@ public final class InMemoryMessageLog implements MessageLog {
     }
 
     @Override
+    public synchronized long appendBatch(List<byte[]> values) throws IOException {
+        ensureOpen();
+        Objects.requireNonNull(values, "values");
+        if (values.isEmpty()) throw new IllegalArgumentException("values must not be empty");
+        long first = nextOffset;
+        for (byte[] value : values) {
+            Objects.requireNonNull(value, "value");
+            if (value.length > maxRecordBytes)
+                throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
+        }
+        for (byte[] value : values) {
+            records.add(value.clone());
+            nextOffset++;
+        }
+        return first;
+    }
+
+    @Override
     public synchronized List<LogRecord> read(long firstOffset, int maxBytes) throws IOException {
         ensureOpen();
         if (firstOffset < 0 || maxBytes < 0)

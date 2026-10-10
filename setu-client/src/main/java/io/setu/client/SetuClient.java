@@ -115,6 +115,12 @@ public final class SetuClient implements AutoCloseable {
                 -1, value, 0, null, null));
     }
 
+    /** Writes a contiguous batch; the response offset is the first assigned offset. */
+    public BrokerResponse produceBatch(String topic, int partition, List<byte[]> values) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.PRODUCE_BATCH, topic, partition, -1,
+                -1, null, 0, null, null, values));
+    }
+
     public BrokerResponse fetch(String topic, int partition, long offset, int maxBytes) throws IOException {
         return request(new BrokerRequest(nextId(), Command.FETCH, topic, partition, offset,
                 maxBytes, null, 0, null, null));

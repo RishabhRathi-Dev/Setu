@@ -60,6 +60,43 @@ public final class FileMessageLog implements MessageLog {
     }
 
     @Override
+    public synchronized long appendBatch(List<byte[]> values) throws IOException {
+        ensureOpen();
+        Objects.requireNonNull(values, "values");
+        if (values.isEmpty()) throw new IllegalArgumentException("values must not be empty");
+        long encodedBytes = 0;
+        for (byte[] value : values) {
+            Objects.requireNonNull(value, "value");
+            if (value.length > maxRecordBytes)
+                throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
+            encodedBytes += Integer.BYTES + (long) value.length;
+            if (encodedBytes > Integer.MAX_VALUE) throw new IOException("Append batch is too large");
+        }
+        long position = channel.size();
+        long firstOffset = index.size();
+        ByteBuffer batch = ByteBuffer.allocate((int) encodedBytes);
+        List<RecordPosition> positions = new ArrayList<>(values.size());
+        long cursor = position;
+        for (byte[] value : values) {
+            batch.putInt(value.length).put(value);
+            positions.add(new RecordPosition(cursor + Integer.BYTES, value.length));
+            cursor += Integer.BYTES + (long) value.length;
+        }
+        batch.flip();
+        try {
+            channel.position(position);
+            while (batch.hasRemaining()) channel.write(batch);
+            channel.force(true);
+        } catch (IOException failure) {
+            try { channel.truncate(position); channel.position(position); }
+            catch (IOException rollbackFailure) { failure.addSuppressed(rollbackFailure); }
+            throw failure;
+        }
+        index.addAll(positions);
+        return firstOffset;
+    }
+
+    @Override
     public synchronized List<LogRecord> read(long firstOffset, int maxBytes) throws IOException {
         ensureOpen();
         if (firstOffset < 0 || maxBytes < 0) {

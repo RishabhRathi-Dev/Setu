@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "memory capacity",
-  "message": "4,096×4,096 · JVM OOM · peak CPU 21% · 260 MB · p99 4.3s",
+  "message": "8×8 · JVM OOM · peak CPU 79% · 764 MB · p99 537ms",
   "color": "red"
 }

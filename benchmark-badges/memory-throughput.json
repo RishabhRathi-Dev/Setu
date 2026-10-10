@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "memory peak rates",
-  "message": "38.93K prod/s · 1.47M consumed/s",
+  "message": "926.81K prod/s · 907.36K consumed/s",
   "color": "blue"
 }

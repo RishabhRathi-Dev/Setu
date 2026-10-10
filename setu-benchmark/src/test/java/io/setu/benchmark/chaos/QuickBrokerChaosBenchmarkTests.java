@@ -67,12 +67,19 @@ class QuickBrokerChaosBenchmarkTests {
                     int id = producerId;
                     tasks.add(() -> {
                         try (SetuClient concurrentProducer = connect(producerServer)) {
-                            for (int i = 0; i < RECORDS / PRODUCER_COUNT; i++) {
-                                byte[] value = new byte[VALUE_BYTES];
-                                value[0] = (byte) (id + i);
-                                var result = concurrentProducer.produce(TOPIC, 0, value);
+                            int batchSize = 256;
+                            for (int i = 0; i < RECORDS / PRODUCER_COUNT; i += batchSize) {
+                                var batch = new ArrayList<byte[]>(batchSize);
+                                int count = Math.min(batchSize, RECORDS / PRODUCER_COUNT - i);
+                                for (int j = 0; j < count; j++) {
+                                    byte[] value = new byte[VALUE_BYTES];
+                                    value[0] = (byte) (id + i + j);
+                                    batch.add(value);
+                                }
+                                var result = concurrentProducer.produceBatch(TOPIC, 0, batch);
                                 assertEquals(ErrorCode.NONE, result.errorCode());
-                                assertTrue(offsets.add(result.offset()), "duplicate offset " + result.offset());
+                                for (int j = 0; j < count; j++)
+                                    assertTrue(offsets.add(result.offset() + j), "duplicate offset " + (result.offset() + j));
                             }
                         }
                         return null;

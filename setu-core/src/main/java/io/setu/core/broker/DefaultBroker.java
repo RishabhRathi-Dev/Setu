@@ -25,6 +25,7 @@ public final class DefaultBroker implements Broker {
     private static final int MAX_PARTITIONS_PER_TOPIC = 1_024;
     public static final long DEFAULT_ACK_TIMEOUT_MILLIS = 30_000;
     public static final long DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS = 60_000;
+    private static final long CONSUMER_EXPIRATION_SCAN_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(10);
     private final Path dataDirectory;
     private final int maxRecordBytes;
     private final StorageMode storageMode;
@@ -35,6 +36,7 @@ public final class DefaultBroker implements Broker {
     private final Map<String, Long> committedOffsets = new ConcurrentHashMap<>();
     private final Map<String, Map<String, String>> groupMembers = new ConcurrentHashMap<>();
     private final Map<ConsumerKey, ConsumerState> consumers = new ConcurrentHashMap<>();
+    private volatile long nextConsumerExpirationScan;
     private volatile boolean closed;
 
     public DefaultBroker(Path dataDirectory, int maxRecordBytes) throws IOException {
@@ -94,6 +96,7 @@ public final class DefaultBroker implements Broker {
         return switch (request.command()) {
             case CREATE_TOPIC -> createTopic(request);
             case PRODUCE -> produce(request);
+            case PRODUCE_BATCH -> produceBatch(request);
             case FETCH -> fetch(request);
             case METADATA -> metadata(request);
             case COMMIT_OFFSET -> commitOffset(request);
@@ -140,6 +143,20 @@ public final class DefaultBroker implements Broker {
         long offset = log.append(request.value());
         if (storageMode == StorageMode.IN_MEMORY) reclaimConsumed(request.topic(), request.partition());
         return new BrokerResponse(request.correlationId(), request.command(), ErrorCode.NONE, "", offset, List.of(), Map.of());
+    }
+
+    private BrokerResponse produceBatch(BrokerRequest request) throws IOException {
+        List<byte[]> values = request.values();
+        if (values.isEmpty()) throw new BrokerException(ErrorCode.BAD_REQUEST, "Produce batch must not be empty");
+        for (byte[] value : values) {
+            if (value.length > maxRecordBytes)
+                throw new BrokerException(ErrorCode.BAD_REQUEST, "Record exceeds configured maximum size");
+        }
+        MessageLog log = partition(request.topic(), request.partition());
+        long firstOffset = log.appendBatch(values);
+        if (storageMode == StorageMode.IN_MEMORY) reclaimConsumed(request.topic(), request.partition());
+        return new BrokerResponse(request.correlationId(), request.command(), ErrorCode.NONE, "", firstOffset,
+                List.of(), Map.of());
     }
 
     private BrokerResponse fetch(BrokerRequest request) throws IOException {
@@ -242,20 +259,25 @@ public final class DefaultBroker implements Broker {
         return BrokerResponse.ok(request.correlationId(), request.command());
     }
 
-    private synchronized void expireConsumers(long now) {
-        List<String> changedTopics = new ArrayList<>();
-        for (Map.Entry<ConsumerKey, ConsumerState> entry : consumers.entrySet()) {
-            ConsumerState consumer = entry.getValue();
-            if (!consumer.expired(now, ackTimeoutNanos, consumerInactivityTimeoutNanos)) continue;
-            if (!consumers.remove(entry.getKey(), consumer)) continue;
-            Map<String, String> members = groupMembers.get(entry.getKey().groupId);
-            if (members != null) {
-                members.remove(entry.getKey().memberId);
-                if (members.isEmpty()) groupMembers.remove(entry.getKey().groupId, members);
+    private void expireConsumers(long now) {
+        if (now < nextConsumerExpirationScan) return;
+        synchronized (this) {
+            if (now < nextConsumerExpirationScan) return;
+            nextConsumerExpirationScan = now + CONSUMER_EXPIRATION_SCAN_INTERVAL_NANOS;
+            List<String> changedTopics = new ArrayList<>();
+            for (Map.Entry<ConsumerKey, ConsumerState> entry : consumers.entrySet()) {
+                ConsumerState consumer = entry.getValue();
+                if (!consumer.expired(now, ackTimeoutNanos, consumerInactivityTimeoutNanos)) continue;
+                if (!consumers.remove(entry.getKey(), consumer)) continue;
+                Map<String, String> members = groupMembers.get(entry.getKey().groupId);
+                if (members != null) {
+                    members.remove(entry.getKey().memberId);
+                    if (members.isEmpty()) groupMembers.remove(entry.getKey().groupId, members);
+                }
+                changedTopics.add(consumer.topic);
             }
-            changedTopics.add(consumer.topic);
+            changedTopics.stream().distinct().forEach(this::reclaimTopic);
         }
-        changedTopics.stream().distinct().forEach(this::reclaimTopic);
     }
 
     private synchronized void reclaimConsumed(String topic, int partition) throws IOException {

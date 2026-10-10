@@ -36,6 +36,7 @@ final class ProgressiveCapacityChaosWorker {
     private static final double CPU_SATURATION = 0.92;
     private static final int SATURATED_SAMPLES_TO_STOP = 4;
     private static final byte[] PAYLOAD = new byte[RECORD_BYTES];
+    private static final List<byte[]> PRODUCE_BATCH = java.util.Collections.nCopies(256, PAYLOAD);
     private static final Field CLIENT_SOCKET = clientSocketField();
 
     private ProgressiveCapacityChaosWorker() { }
@@ -228,10 +229,10 @@ final class ProgressiveCapacityChaosWorker {
         try {
             while (running.get()) {
                 long start = System.nanoTime();
-                var response = client.produce(topic, 0, PAYLOAD);
+                var response = client.produceBatch(topic, 0, PRODUCE_BATCH);
                 if (response.errorCode() != ErrorCode.NONE)
                     throw new IOException("produce rejected: " + response.errorCode() + " " + response.errorMessage());
-                produced.increment();
+                produced.add(PRODUCE_BATCH.size());
                 latency.record(System.nanoTime() - start);
             }
         } catch (OutOfMemoryError exhausted) {

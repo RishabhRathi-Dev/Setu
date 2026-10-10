@@ -23,6 +23,8 @@ public final class ProtocolCodec {
     private static final int RESPONSE = 1;
     private static final int MAX_STRING_BYTES = 4_096;
     private static final int MAX_FETCH_BYTES = 15 * 1024 * 1024;
+    // Leave room under the 15 MiB frame limit for request metadata and per-record lengths.
+    private static final int MAX_BATCH_BYTES = 14 * 1024 * 1024;
     private static final int MAX_RESPONSE_ITEMS = 10_000;
 
     private ProtocolCodec() { }
@@ -37,6 +39,12 @@ public final class ProtocolCodec {
                 writeString(out, request.topic());
                 out.writeInt(request.partition());
                 writeBytes(out, request.value());
+            }
+            case PRODUCE_BATCH -> {
+                writeString(out, request.topic());
+                out.writeInt(request.partition());
+                out.writeInt(request.valueCount());
+                for (int i = 0; i < request.valueCount(); i++) writeBytes(out, request.valueAt(i));
             }
             case FETCH -> {
                 writeString(out, request.topic());
@@ -82,6 +90,7 @@ public final class ProtocolCodec {
             BrokerRequest request = switch (header.command) {
                 case PRODUCE -> new BrokerRequest(correlation, header.command, readString(in), in.readInt(),
                         -1, -1, readBytes(in), 0, null, null);
+                case PRODUCE_BATCH -> decodeProduceBatch(in, correlation);
                 case FETCH -> decodeFetch(in, correlation);
                 case COMMIT_OFFSET -> decodeCommit(in, correlation);
                 case JOIN_GROUP -> decodeJoin(in, correlation);
@@ -129,6 +138,22 @@ public final class ProtocolCodec {
                 offset, maxBytes, null, 0, group, member);
     }
 
+    private static BrokerRequest decodeProduceBatch(DataInputStream in, int correlation) throws IOException {
+        String topic = readString(in);
+        int partition = in.readInt();
+        int count = boundedCount(in.readInt());
+        List<byte[]> values = new ArrayList<>(count);
+        long bytes = 0;
+        for (int i = 0; i < count; i++) {
+            byte[] value = readBytes(in);
+            bytes += value.length;
+            if (bytes > MAX_BATCH_BYTES) throw bad("produce batch exceeds maximum bytes", correlation);
+            values.add(value);
+        }
+        return new BrokerRequest(correlation, Command.PRODUCE_BATCH, topic, partition, -1,
+                -1, null, 0, null, null, values);
+    }
+
     private static BrokerRequest decodeJoin(DataInputStream in, int correlation) throws IOException {
         String group = readString(in);
         String topic = readString(in);
@@ -142,6 +167,18 @@ public final class ProtocolCodec {
             case PRODUCE -> {
                 requireTopic(request.topic());
                 if (request.partition() < 0) throw bad("partition must be non-negative", request.correlationId());
+            }
+            case PRODUCE_BATCH -> {
+                requireTopic(request.topic());
+                if (request.partition() < 0) throw bad("partition must be non-negative", request.correlationId());
+                if (request.valueCount() == 0 || request.valueCount() > MAX_RESPONSE_ITEMS)
+                    throw bad("batch must contain between 1 and " + MAX_RESPONSE_ITEMS + " records", request.correlationId());
+                long bytes = 0;
+                for (int i = 0; i < request.valueCount(); i++) {
+                    byte[] value = request.valueAt(i);
+                    bytes += value.length;
+                    if (bytes > MAX_BATCH_BYTES) throw bad("produce batch exceeds maximum bytes", request.correlationId());
+                }
             }
             case FETCH -> {
                 requireTopic(request.topic());
@@ -202,7 +239,7 @@ public final class ProtocolCodec {
         writeString(out, response.errorMessage());
         if (response.errorCode() != ErrorCode.NONE) return bytes.toByteArray();
         switch (response.command()) {
-            case PRODUCE -> out.writeLong(response.offset());
+            case PRODUCE, PRODUCE_BATCH -> out.writeLong(response.offset());
             case FETCH -> {
                 out.writeInt(response.records().size());
                 for (ProtocolRecord record : response.records()) {
@@ -235,7 +272,7 @@ public final class ProtocolCodec {
             Map<String, Integer> topics = Map.of();
             if (errorCode == ErrorCode.NONE) {
                 switch (header.command) {
-                    case PRODUCE -> offset = in.readLong();
+                    case PRODUCE, PRODUCE_BATCH -> offset = in.readLong();
                     case FETCH -> {
                         int count = boundedCount(in.readInt());
                         List<ProtocolRecord> decoded = new ArrayList<>(count);

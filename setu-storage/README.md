@@ -12,7 +12,7 @@
 - In-memory logs retain their original logical offsets while removing acknowledged prefixes with `discardBefore`; `firstOffset` reports the retained boundary.
 - `MessageLogs` opens a log for `StorageMode.IN_MEMORY` or `StorageMode.FILE`.
 - Each record is encoded as a four-byte signed length followed by the payload bytes.
-- Appends synchronize the file with `FileChannel.force(true)` before returning an offset. If an append operation reports an I/O failure, it attempts to truncate back to the prior file size.
+- Single-record and batch appends synchronize with `FileChannel.force(true)` before returning offsets. A batch write performs one sync per `FileMessageLog` call; if a write reports an I/O failure, that file is truncated back to its prior size.
 - Startup recovery scans valid records, rebuilds the in-memory index, and truncates an invalid or partial tail to the end of the last valid record.
 - Reads enforce a byte limit without splitting records and cap one call at 10,000 returned records.
 - Tests cover append/read/offset behavior, segment rotation and recovery, and cleanup of a partial tail.
@@ -49,14 +49,14 @@ For ephemeral storage, use `new InMemoryMessageLog(maxRecordBytes)`. In-memory o
 
 ## Durability and recovery boundaries
 
-The append path calls `force(true)` before it updates the in-memory index and reports success. This provides a clear per-append synchronization boundary at the Java file-channel level, with potential throughput cost. It is not a claim of replicated durability or protection from every device/filesystem failure. No configurable acknowledgement modes or group commit are provided.
+The append path calls `force(true)` before it updates the in-memory index and reports success. Single-record writes sync each record; `appendBatch` syncs the entire encoded batch once. Segmented batches that cross a rotation boundary sync once per touched segment. This provides a clear durable-before-ack boundary at the Java file-channel level, but is not a claim of replicated durability or protection from every device/filesystem failure. No configurable acknowledgement modes or cross-request group commit are provided.
 
 Recovery treats the first invalid length or incomplete final record as a tail and truncates from that point. There is no checksum to distinguish a corrupt middle record from an invalid tail; an invalid record may therefore cause later bytes in the file to be discarded. Operators should back up data before manual repair.
 
 ## Not implemented
 
 - Retention, checksums, format versioning, or a persisted offset index.
-- FFM/`MemorySegment` mapping, off-heap buffers, read caching, asynchronous I/O, or batched/group commit.
+- FFM/`MemorySegment` mapping, off-heap buffers, read caching, asynchronous I/O, or cross-request group commit. `FileMessageLog` syncs once per explicit batch; segmented writes sync once per touched segment batch.
 - Backpressure, bounded write queues, storage metrics, and recovery diagnostics beyond thrown I/O errors.
 - Multi-process file locking, replicated storage, snapshots, and control-plane metadata persistence.
 

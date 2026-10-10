@@ -51,6 +51,43 @@ public final class SegmentedFileMessageLog implements MessageLog {
     }
 
     @Override
+    public synchronized long appendBatch(List<byte[]> values) throws IOException {
+        ensureOpen();
+        Objects.requireNonNull(values, "values");
+        if (values.isEmpty()) throw new IllegalArgumentException("values must not be empty");
+        for (byte[] value : values) {
+            Objects.requireNonNull(value, "value");
+            if (value.length > maxRecordBytes)
+                throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
+        }
+        long firstOffset = nextOffset;
+        int start = 0;
+        while (start < values.size()) {
+            Segment active = segments.getLast();
+            long size = Files.size(active.path);
+            int end = start;
+            long batchBytes = 0;
+            while (end < values.size()) {
+                long recordBytes = Integer.BYTES + (long) values.get(end).length;
+                if (end > start && size + batchBytes + recordBytes > maxSegmentBytes) break;
+                if (end == start && active.log.nextOffset() > 0 && size + recordBytes > maxSegmentBytes) {
+                    active = createSegment(nextOffset);
+                    size = 0;
+                }
+                batchBytes += recordBytes;
+                end++;
+            }
+            List<byte[]> part = values.subList(start, end);
+            long localFirst = active.log.appendBatch(part);
+            if (active.baseOffset + localFirst != nextOffset)
+                throw new IOException("Segment offset sequence is inconsistent");
+            nextOffset += part.size();
+            start = end;
+        }
+        return firstOffset;
+    }
+
+    @Override
     public synchronized List<LogRecord> read(long offset, int maxBytes) throws IOException {
         ensureOpen();
         if (offset < 0 || maxBytes < 0)

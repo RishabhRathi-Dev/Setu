@@ -307,7 +307,7 @@ Each topic partition stores one or more segments under:
 <data-directory>/<topic>/partition-<n>/<segment-base-offset>.log
 ```
 
-The current log record is a four-byte signed length followed by the record bytes. Offsets are zero-based record positions. `SegmentedFileMessageLog` scans each segment at startup to rebuild its in-memory offset index, truncates an invalid or partial tail in the active segment to the last valid record, and calls `FileChannel.force(true)` after each append before `PRODUCE` returns success. Segment rotation defaults to 1 GiB and can be configured through `DefaultBroker`. There is no record checksum, retention, or persisted offset index. Forcing every append favors a clear durability boundary over throughput; measure this before tuning acknowledgement behavior.
+The current log record is a four-byte signed length followed by the record bytes. Offsets are zero-based record positions. `SegmentedFileMessageLog` scans each segment at startup to rebuild its in-memory offset index, truncates an invalid or partial tail in the active segment to the last valid record, and calls `FileChannel.force(true)` before `PRODUCE` or `PRODUCE_BATCH` returns success. Single-record produce syncs once per record; a batch syncs once per touched segment. Segment rotation defaults to 1 GiB and can be configured through `DefaultBroker`. There is no record checksum, retention, or persisted offset index.
 
 Topics and partition logs survive restart because they are represented on disk. Committed consumer offsets and group membership currently live only in memory and are lost when the broker restarts. PostgreSQL and the control-plane metadata model from the root README are not connected to `DefaultBroker` yet.
 
@@ -335,7 +335,7 @@ try (SetuClient client = SetuClient.connectTls(
 }
 ```
 
-The timeout arguments are connect timeout and socket read timeout in milliseconds. A zero read timeout means no client-side read timeout. The client currently exposes generic `BrokerRequest`/`BrokerResponse` exchange plus convenience methods for topic creation, produce, fetch, and metadata; it does not yet expose asynchronous producers/consumers, retries, batching, or consumer group management methods.
+The timeout arguments are connect timeout and socket read timeout in milliseconds. A zero read timeout means no client-side read timeout. The client currently exposes generic `BrokerRequest`/`BrokerResponse` exchange plus convenience methods for topic creation, single and batched produce, fetch, metadata, and consumer group management; it does not yet expose asynchronous producers/consumers or retries.
 
 ## Failure and connection behavior
 
