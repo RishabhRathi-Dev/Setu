@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -84,8 +85,26 @@ def readme_badge(label: str, message: str, color: str, workflow_url: str) -> str
     return f"[![{alt_text}]({image_url})]({workflow_url})"
 
 
-def update_readme_badges(badges: list[str], readme_path: Path = Path("README.md")) -> None:
+def update_readme_badges(
+    badges: list[str],
+    readme_path: Path = Path("README.md"),
+    workflow_url: str | None = None,
+    visibility: str = "public",
+) -> None:
     readme = readme_path.read_text(encoding="utf-8")
+    if workflow_url is not None:
+        readme = re.sub(
+            r"https://github\.com/[^/\s)]+/[^/\s)]+/actions/workflows/ci\.yml",
+            workflow_url,
+            readme,
+        )
+        ci_image = f"![CI]({workflow_url}/badge.svg)"
+        ci_markdown = (
+            f"[{ci_image}]({workflow_url})"
+            if visibility == "public"
+            else f"[CI workflow]({workflow_url})"
+        )
+        readme = re.sub(r"\[!\[CI\]\([^)]*\)\]\([^)]*\)", ci_markdown, readme, count=1)
     pattern = re.compile(
         r"(?s)<!-- benchmark-metrics-badges:start -->.*?<!-- benchmark-metrics-badges:end -->"
     )
@@ -100,6 +119,68 @@ def update_readme_badges(badges: list[str], readme_path: Path = Path("README.md"
     readme_path.write_text(updated, encoding="utf-8")
 
 
+def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict[str, str]) -> str:
+    targets = {"IN_MEMORY": 10_000_000, "FILE": 1_000_000}
+    names = {"IN_MEMORY": "In-memory", "FILE": "File"}
+    lines = [
+        "### Target progress",
+        "",
+        "| Storage mode | Target produce rate | Peak observed | Target progress |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for mode, values in stages.items():
+        peak = max(float(stage["produce_per_s"]) for stage in values)
+        target = targets[mode]
+        progress = peak / target * 100
+        lines.append(
+            f"| {names[mode]} | {target:,} records/s | {format_rate(peak)} records/s | {progress:.1f}% |"
+        )
+
+    lines.extend([
+        "",
+        "### Progressive capacity stages",
+        "",
+        "| Mode | Stage | Producers | Consumers | Duration | Produced | Produce/s | Consumed | Consume/s | Avg CPU | Peak CPU | Heap | p99 request | Stage result |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    ])
+    for mode, values in stages.items():
+        for stage in values:
+            result = friendly_reason(stage.get("stop", "ramp").upper()) if stage.get("stop", "ramp") != "ramp" else "Ramping"
+            lines.append(
+                f"| {names[mode]} | {int(stage['stage'])} | {int(stage['producers']):,} | {int(stage['consumers']):,} "
+                f"| {float(stage['duration_s']):.2f}s | {int(stage['produced']):,} | {format_rate(float(stage['produce_per_s']))} "
+                f"| {int(stage['consumed']):,} | {format_rate(float(stage['consume_per_s']))} "
+                f"| {float(stage['cpu_avg']) * 100:.1f}% | {float(stage['cpu_peak']) * 100:.1f}% "
+                f"| {float(stage['heap_mb']):.1f} MB | {float(stage['p99_ms']):.3f} ms | {result} |"
+            )
+    lines.extend(["", "### Capacity badge color legend", "",
+        "| Color | Meaning |",
+        "| --- | --- |",
+        "| 🔵 Blue | Peak producer/consumer rates; throughput values are observations, not pass/fail thresholds. |",
+        "| 🟠 Orange | Capacity ramp stopped after sustained CPU saturation. |",
+        "| 🔴 Red | Capacity ramp reached JVM heap exhaustion or an operating-system resource limit. |",
+        "| 🟡 Yellow | Capacity ramp stopped at a broker/client limit or client stall. |",
+    ])
+    for mode, reason in stop_reasons.items():
+        lines.append(f"\n{names[mode]} capacity stop: **{friendly_reason(reason)}**.")
+    return "\n".join(lines)
+
+
+def update_capacity_details(details: str, readme_path: Path) -> None:
+    readme = readme_path.read_text(encoding="utf-8")
+    pattern = re.compile(
+        r"(?s)(<!-- benchmark-capacity-details:start -->).*?(<!-- benchmark-capacity-details:end -->)"
+    )
+    if len(pattern.findall(readme)) != 1:
+        raise SystemExit("README must contain exactly one capacity details block")
+    updated, count = pattern.subn(
+        lambda match: f"{match.group(1)}\n{details}\n{match.group(2)}", readme, count=1
+    )
+    if count != 1:
+        raise SystemExit("README capacity details block could not be updated")
+    readme_path.write_text(updated, encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", type=Path)
@@ -107,18 +188,40 @@ def main() -> None:
         "--reports", type=Path, default=Path("setu-benchmark/target/surefire-reports")
     )
     parser.add_argument("--output", type=Path, default=Path("benchmark-badges"))
+    parser.add_argument("--readme", type=Path, default=Path("README.md"))
+    parser.add_argument(
+        "--repository",
+        default=os.environ.get("GITHUB_REPOSITORY", "RishabhRathi-Dev/Setu"),
+        help="owner/repository used for the badge click-through link",
+    )
+    parser.add_argument(
+        "--server-url",
+        default=os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/"),
+        help="GitHub or GitHub Enterprise server URL",
+    )
+    parser.add_argument(
+        "--visibility",
+        choices=("public", "private"),
+        default=os.environ.get("GITHUB_REPOSITORY_VISIBILITY", "public"),
+        help="repository visibility; private repositories cannot display GitHub's workflow image badge externally",
+    )
     args = parser.parse_args()
 
     output = read_benchmark_output(args.log, args.reports)
     stages: dict[str, list[dict[str, str]]] = {"IN_MEMORY": [], "FILE": []}
+    seen_stages: set[tuple[str, int]] = set()
     stop_reasons: dict[str, str] = {}
     badges: list[str] = []
+    workflow_url = f"{args.server_url}/{args.repository}/actions/workflows/ci.yml"
 
     for line in output.splitlines():
         if "CAPACITY_STAGE " in line:
             fields = parse_fields(line, "CAPACITY_STAGE ")
             if fields.get("mode") in stages:
-                stages[fields["mode"]].append(fields)
+                stage_key = (fields["mode"], int(fields["stage"]))
+                if stage_key not in seen_stages:
+                    stages[fields["mode"]].append(fields)
+                    seen_stages.add(stage_key)
         elif "CAPACITY_STOP " in line:
             fields = parse_fields(line, "CAPACITY_STOP ")
             if fields.get("mode") in stages and fields.get("reason"):
@@ -154,7 +257,7 @@ def main() -> None:
                 f"{badge_mode} capacity",
                 f"{concurrency} · {friendly_reason(reason)} · peak CPU {cpu}% · {heap} MB · p99 {p99}",
                 capacity_color,
-                "https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml",
+                workflow_url,
             )
         )
 
@@ -176,7 +279,8 @@ def main() -> None:
             )
         )
 
-    update_readme_badges(badges)
+    update_readme_badges(badges, args.readme, workflow_url, args.visibility)
+    update_capacity_details(capacity_details(stages, stop_reasons), args.readme)
     print(f"Updated benchmark badges in {args.output}")
 
 

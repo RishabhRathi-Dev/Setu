@@ -8,7 +8,53 @@
 [![File Peak Rates from latest benchmark](https://img.shields.io/badge/236.38K%20prod%2Fs%20%C2%B7%20259.48K%20consumed%2Fs-blue?label=file%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:end -->
 
-Benchmark badges show terminal capacity, peak CPU, heap, p99 latency, and peak producer/consumer rates for each storage mode. They are backed by JSON generated from the progressive test output and refreshed after successful master runs.
+Benchmark badges show terminal capacity, peak CPU, heap, p99 latency, and peak producer/consumer rates for each storage mode. Their metric values are embedded directly in Shields URLs, so they render without access to repository-hosted JSON. For private repositories, the workflow status image is replaced by a link because GitHub workflow badges are not externally accessible; metric badges continue to update from successful runs on the default branch. The JSON snapshots are committed for traceability.
+
+## Latest capacity benchmark details
+
+The table is generated from every stage of the latest successful default-branch capacity run. CPU is process CPU load; p99 is the approximate request-latency histogram reported by the load worker.
+
+<!-- benchmark-capacity-details:start -->
+### Target progress
+
+| Storage mode | Target produce rate | Peak observed | Target progress |
+| --- | ---: | ---: | ---: |
+| In-memory | 10,000,000 records/s | 926.81K records/s | 9.3% |
+| File | 1,000,000 records/s | 236.38K records/s | 23.6% |
+
+### Progressive capacity stages
+
+| Mode | Stage | Producers | Consumers | Duration | Produced | Produce/s | Consumed | Consume/s | Avg CPU | Peak CPU | Heap | p99 request | Stage result |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| In-memory | 1 | 1 | 1 | 2.27s | 2,106,112 | 926.81K | 2,046,464 | 900.56K | 27.7% | 30.0% | 131.0 MB | 2.097 ms | Ramping |
+| In-memory | 2 | 2 | 2 | 2.25s | 1,989,888 | 885.59K | 2,038,784 | 907.36K | 44.6% | 52.2% | 678.9 MB | 8.389 ms | Ramping |
+| In-memory | 3 | 4 | 4 | 2.24s | 670,208 | 299.40K | 1,011,712 | 451.96K | 62.1% | 76.0% | 754.9 MB | 67.109 ms | Ramping |
+| In-memory | 4 | 8 | 8 | 2.32s | 25,088 | 10.81K | 48,640 | 20.95K | 73.9% | 79.4% | 764.0 MB | 536.871 ms | Ramping |
+| File | 1 | 1 | 1 | 2.02s | 409,600 | 202.35K | 409,344 | 202.23K | 18.5% | 28.9% | 40.5 MB | 4.194 ms | Ramping |
+| File | 2 | 2 | 2 | 2.01s | 404,480 | 201.60K | 484,352 | 241.42K | 15.2% | 17.9% | 94.6 MB | 8.389 ms | Ramping |
+| File | 3 | 4 | 4 | 2.01s | 421,888 | 209.61K | 463,360 | 230.22K | 13.4% | 15.2% | 146.3 MB | 16.777 ms | Ramping |
+| File | 4 | 8 | 8 | 2.00s | 421,120 | 210.40K | 473,088 | 236.36K | 14.0% | 17.3% | 177.8 MB | 33.554 ms | Ramping |
+| File | 5 | 16 | 16 | 2.28s | 521,984 | 228.57K | 508,416 | 222.63K | 13.0% | 16.0% | 169.0 MB | 67.109 ms | Ramping |
+| File | 6 | 32 | 32 | 2.00s | 464,128 | 231.51K | 435,200 | 217.08K | 15.1% | 16.2% | 263.7 MB | 134.218 ms | Ramping |
+| File | 7 | 64 | 64 | 2.03s | 453,888 | 223.31K | 459,264 | 225.96K | 20.0% | 21.2% | 247.0 MB | 268.435 ms | Ramping |
+| File | 8 | 128 | 128 | 2.29s | 496,128 | 216.87K | 545,792 | 238.58K | 20.0% | 21.2% | 370.3 MB | 536.871 ms | Ramping |
+| File | 9 | 256 | 256 | 2.02s | 442,112 | 218.38K | 525,312 | 259.48K | 22.1% | 26.1% | 499.5 MB | 1073.742 ms | Ramping |
+| File | 10 | 512 | 512 | 2.07s | 488,448 | 236.38K | 521,728 | 252.49K | 26.4% | 32.9% | 599.6 MB | 2147.484 ms | Ramping |
+| File | 11 | 1,024 | 1,024 | 2.18s | 267,264 | 122.43K | 0 | 0 | 38.9% | 59.0% | 746.8 MB | 2147.484 ms | JVM OOM |
+
+### Capacity badge color legend
+
+| Color | Meaning |
+| --- | --- |
+| 🔵 Blue | Peak producer/consumer rates; throughput values are observations, not pass/fail thresholds. |
+| 🟠 Orange | Capacity ramp stopped after sustained CPU saturation. |
+| 🔴 Red | Capacity ramp reached JVM heap exhaustion or an operating-system resource limit. |
+| 🟡 Yellow | Capacity ramp stopped at a broker/client limit or client stall. |
+
+File capacity stop: **JVM OOM**.
+
+In-memory capacity stop: **JVM OOM**.
+<!-- benchmark-capacity-details:end -->
 
 **Setu** is a distributed message broker built from scratch in **Java 25**, inspired by systems such as Kafka.
 
@@ -1508,6 +1554,6 @@ The production-module unit tests were run with Java 25 using:
 
 **Production unit stage: BUILD SUCCESS.** Storage, core, security, client, and server passed 39 tests across storage (4), core (11), security (22), and server (2); the client module has no dedicated tests. The bounded chaos suite passed all five tests in both storage modes, and both progressive capacity tests completed successfully.
 
-The latest local bounded run used 256-record batches and measured about **2.14M produced / 1.95M consumed records/s** in memory mode and **285K produced / 469K consumed records/s** in file mode, with a **354 ms** file-broker restart. The latest progressive run used 512-byte records and 256-record batches. It peaked at **927K produced / 907K consumed records/s** in memory mode and **236K produced / 259K consumed records/s** in file mode. Memory mode exhausted the 768 MiB heap while preparing the stage after 8 producers and 8 consumers; file mode exhausted it during the 1,024-producer/consumer stage. These machine-specific results remain below the 10M/s and 1M/s objectives. The badges above now reflect that progressive run; successful master CI runs continue to refresh and publish them.
+The latest local bounded run used 256-record batches and measured about **2.14M produced / 1.95M consumed records/s** in memory mode and **285K produced / 469K consumed records/s** in file mode, with a **354 ms** file-broker restart. The latest progressive run used 512-byte records and 256-record batches. It peaked at **927K produced / 907K consumed records/s** in memory mode and **236K produced / 259K consumed records/s** in file mode. Memory mode exhausted the 768 MiB heap while preparing the stage after 8 producers and 8 consumers; file mode exhausted it during the 1,024-producer/consumer stage. These machine-specific results remain below the 10M/s and 1M/s objectives. The badges above now reflect that progressive run; successful default-branch CI runs continue to refresh and publish them.
 
 Before batched produce, an earlier local progressive run reached **4,096 producers and consumers** in both modes before JVM OOM; its best fan-out rates were about **1.51M records/s** in memory mode and **456K records/s** in file mode. Its earlier quick run reported **80.8K produced / 1.55M consumed records/s** in memory mode and **2.43K / 437K records/s** in file mode. Keep these as historical comparisons; benchmark figures vary by host and are not CI performance thresholds.
