@@ -1,11 +1,11 @@
 # Setu
 
-[![CI](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml/badge.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[CI workflow](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:start -->
-[![In-Memory Capacity from latest benchmark](https://img.shields.io/badge/8%C3%978%20%C2%B7%20JVM%20OOM%20%C2%B7%20peak%20CPU%2079%25%20%C2%B7%20764%20MB%20%C2%B7%20p99%20537ms-red?label=in-memory%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![In-Memory Peak Rates from latest benchmark](https://img.shields.io/badge/926.81K%20prod%2Fs%20%C2%B7%20907.36K%20consumed%2Fs-blue?label=in-memory%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File Capacity from latest benchmark](https://img.shields.io/badge/1%2C024%C3%971%2C024%20%C2%B7%20JVM%20OOM%20%C2%B7%20peak%20CPU%2059%25%20%C2%B7%20747%20MB%20%C2%B7%20p99%202.1s-red?label=file%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File Peak Rates from latest benchmark](https://img.shields.io/badge/236.38K%20prod%2Fs%20%C2%B7%20259.48K%20consumed%2Fs-blue?label=file%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-Memory Capacity from latest benchmark](https://img.shields.io/badge/128%C3%97128%20%C2%B7%20CPU%20saturation%20%C2%B7%20peak%20CPU%2096%25%20%C2%B7%20763%20MB%20%C2%B7%20p99%204.3s-orange?label=in-memory%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-Memory Peak Rates from latest benchmark](https://img.shields.io/badge/278.53K%20prod%2Fs%20%C2%B7%20214.66K%20consumed%2Fs-blue?label=in-memory%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![File Capacity from latest benchmark](https://img.shields.io/badge/1%2C024%C3%971%2C024%20%C2%B7%20JVM%20OOM%20%C2%B7%20peak%20CPU%2096%25%20%C2%B7%20617%20MB%20%C2%B7%20p99%208.6s-red?label=file%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![File Peak Rates from latest benchmark](https://img.shields.io/badge/236.56K%20prod%2Fs%20%C2%B7%20246.05K%20consumed%2Fs-blue?label=file%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:end -->
 
 Benchmark badges show terminal capacity, peak CPU, heap, p99 latency, and peak producer/consumer rates for each storage mode. Their metric values are embedded directly in Shields URLs, so they render without access to repository-hosted JSON. For private repositories, the workflow status image is replaced by a link because GitHub workflow badges are not externally accessible; metric badges continue to update from successful runs on the default branch. The JSON snapshots are committed for traceability.
@@ -19,28 +19,32 @@ The table is generated from every stage of the latest successful default-branch 
 
 | Storage mode | Target produce rate | Peak observed | Target progress |
 | --- | ---: | ---: | ---: |
-| In-memory | 10,000,000 records/s | 926.81K records/s | 9.3% |
-| File | 1,000,000 records/s | 236.38K records/s | 23.6% |
+| In-memory | 10,000,000 records/s | 278.53K records/s | 2.8% |
+| File | 1,000,000 records/s | 236.56K records/s | 23.7% |
 
 ### Progressive capacity stages
 
 | Mode | Stage | Producers | Consumers | Duration | Produced | Produce/s | Consumed | Consume/s | Avg CPU | Peak CPU | Heap | p99 request | Stage result |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| In-memory | 1 | 1 | 1 | 2.27s | 2,106,112 | 926.81K | 2,046,464 | 900.56K | 27.7% | 30.0% | 131.0 MB | 2.097 ms | Ramping |
-| In-memory | 2 | 2 | 2 | 2.25s | 1,989,888 | 885.59K | 2,038,784 | 907.36K | 44.6% | 52.2% | 678.9 MB | 8.389 ms | Ramping |
-| In-memory | 3 | 4 | 4 | 2.24s | 670,208 | 299.40K | 1,011,712 | 451.96K | 62.1% | 76.0% | 754.9 MB | 67.109 ms | Ramping |
-| In-memory | 4 | 8 | 8 | 2.32s | 25,088 | 10.81K | 48,640 | 20.95K | 73.9% | 79.4% | 764.0 MB | 536.871 ms | Ramping |
-| File | 1 | 1 | 1 | 2.02s | 409,600 | 202.35K | 409,344 | 202.23K | 18.5% | 28.9% | 40.5 MB | 4.194 ms | Ramping |
-| File | 2 | 2 | 2 | 2.01s | 404,480 | 201.60K | 484,352 | 241.42K | 15.2% | 17.9% | 94.6 MB | 8.389 ms | Ramping |
-| File | 3 | 4 | 4 | 2.01s | 421,888 | 209.61K | 463,360 | 230.22K | 13.4% | 15.2% | 146.3 MB | 16.777 ms | Ramping |
-| File | 4 | 8 | 8 | 2.00s | 421,120 | 210.40K | 473,088 | 236.36K | 14.0% | 17.3% | 177.8 MB | 33.554 ms | Ramping |
-| File | 5 | 16 | 16 | 2.28s | 521,984 | 228.57K | 508,416 | 222.63K | 13.0% | 16.0% | 169.0 MB | 67.109 ms | Ramping |
-| File | 6 | 32 | 32 | 2.00s | 464,128 | 231.51K | 435,200 | 217.08K | 15.1% | 16.2% | 263.7 MB | 134.218 ms | Ramping |
-| File | 7 | 64 | 64 | 2.03s | 453,888 | 223.31K | 459,264 | 225.96K | 20.0% | 21.2% | 247.0 MB | 268.435 ms | Ramping |
-| File | 8 | 128 | 128 | 2.29s | 496,128 | 216.87K | 545,792 | 238.58K | 20.0% | 21.2% | 370.3 MB | 536.871 ms | Ramping |
-| File | 9 | 256 | 256 | 2.02s | 442,112 | 218.38K | 525,312 | 259.48K | 22.1% | 26.1% | 499.5 MB | 1073.742 ms | Ramping |
-| File | 10 | 512 | 512 | 2.07s | 488,448 | 236.38K | 521,728 | 252.49K | 26.4% | 32.9% | 599.6 MB | 2147.484 ms | Ramping |
-| File | 11 | 1,024 | 1,024 | 2.18s | 267,264 | 122.43K | 0 | 0 | 38.9% | 59.0% | 746.8 MB | 2147.484 ms | JVM OOM |
+| In-memory | 1 | 1 | 1 | 2.02s | 11,776 | 5.82K | 8,192 | 4.05K | 7.1% | 12.2% | 16.8 MB | 268.435 ms | Ramping |
+| In-memory | 2 | 2 | 2 | 2.01s | 25,088 | 12.47K | 16,896 | 8.40K | 10.1% | 16.3% | 32.7 MB | 134.218 ms | Ramping |
+| In-memory | 3 | 4 | 4 | 2.01s | 50,432 | 25.09K | 33,792 | 16.81K | 16.5% | 32.7% | 52.0 MB | 134.218 ms | Ramping |
+| In-memory | 4 | 8 | 8 | 2.02s | 100,864 | 49.96K | 67,584 | 33.47K | 26.8% | 39.6% | 93.3 MB | 268.435 ms | Ramping |
+| In-memory | 5 | 16 | 16 | 2.01s | 199,168 | 98.85K | 135,168 | 67.08K | 32.3% | 45.5% | 256.0 MB | 268.435 ms | Ramping |
+| In-memory | 6 | 32 | 32 | 2.03s | 390,912 | 192.47K | 264,704 | 130.33K | 54.8% | 73.9% | 508.0 MB | 268.435 ms | Ramping |
+| In-memory | 7 | 64 | 64 | 2.02s | 562,688 | 278.53K | 433,664 | 214.66K | 80.4% | 95.7% | 730.6 MB | 268.435 ms | Ramping |
+| In-memory | 8 | 128 | 128 | 1.46s | 81,664 | 55.98K | 74,240 | 50.89K | 79.2% | 96.4% | 762.6 MB | 4294.967 ms | CPU saturation |
+| File | 1 | 1 | 1 | 2.03s | 11,776 | 5.79K | 7,936 | 3.90K | 10.7% | 14.6% | 30.1 MB | 268.435 ms | Ramping |
+| File | 2 | 2 | 2 | 2.01s | 24,576 | 12.23K | 16,384 | 8.15K | 13.3% | 23.4% | 26.8 MB | 134.218 ms | Ramping |
+| File | 3 | 4 | 4 | 2.01s | 49,920 | 24.84K | 32,768 | 16.31K | 21.7% | 37.0% | 9.4 MB | 134.218 ms | Ramping |
+| File | 4 | 8 | 8 | 2.01s | 98,304 | 48.90K | 66,048 | 32.85K | 31.8% | 56.5% | 21.5 MB | 268.435 ms | Ramping |
+| File | 5 | 16 | 16 | 2.01s | 193,536 | 96.35K | 131,072 | 65.25K | 40.1% | 58.1% | 69.6 MB | 268.435 ms | Ramping |
+| File | 6 | 32 | 32 | 2.01s | 332,544 | 165.13K | 230,400 | 114.41K | 58.9% | 79.5% | 174.7 MB | 268.435 ms | Ramping |
+| File | 7 | 64 | 64 | 2.03s | 345,600 | 170.62K | 311,808 | 153.94K | 68.2% | 82.6% | 158.5 MB | 536.871 ms | Ramping |
+| File | 8 | 128 | 128 | 2.02s | 364,544 | 180.03K | 315,904 | 156.01K | 70.3% | 91.7% | 278.5 MB | 1073.742 ms | Ramping |
+| File | 9 | 256 | 256 | 2.03s | 366,080 | 180.67K | 358,912 | 177.13K | 72.7% | 92.0% | 535.5 MB | 2147.484 ms | Ramping |
+| File | 10 | 512 | 512 | 2.02s | 420,864 | 208.25K | 281,088 | 139.08K | 81.0% | 92.2% | 623.0 MB | 2147.484 ms | Ramping |
+| File | 11 | 1,024 | 1,024 | 2.13s | 504,064 | 236.56K | 524,288 | 246.05K | 82.0% | 96.2% | 617.2 MB | 8589.935 ms | Ramping |
 
 ### Capacity badge color legend
 
@@ -53,7 +57,7 @@ The table is generated from every stage of the latest successful default-branch 
 
 File capacity stop: **JVM OOM**.
 
-In-memory capacity stop: **JVM OOM**.
+In-memory capacity stop: **CPU saturation**.
 <!-- benchmark-capacity-details:end -->
 
 **Setu** is a distributed message broker built from scratch in **Java 25**, inspired by systems such as Kafka.
