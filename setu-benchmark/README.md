@@ -6,7 +6,7 @@ All load and failure testing lives under `src/test/java/io/setu/benchmark/chaos`
 
 The default profile remains unchanged. For controlled experiments, set `setu.benchmark.batch.records` (1–10,000, default 256), `setu.benchmark.stage.millis` (250–60,000, default 2,000), and `setu.benchmark.max.concurrency` (zero for the unbounded ramp, or a power of two up to 32,768). The test forwards these properties into its isolated worker JVM. Each worker reports `CAPACITY_CONFIG` so its workload is explicit. A bounded ramp ends with `CONFIGURED_LIMIT`; it does not establish the host's terminal capacity. This plaintext workload bypasses security quotas.
 
-The [11 October storage/batching experiment](../docs/performance/2026-10-11/README.md) includes raw comparisons and a command for the longer bounded file run. Larger batches exceeded 1M produced 512-byte records/s while consumers accumulated backlog; those results use a different profile from the published default benchmark badges.
+The 11 October storage/batching experiment exceeded 1M produced 512-byte records/s with larger batches while consumers accumulated backlog; those results use a different profile from the published default benchmark badges. Local working notes stay in the ignored `docs/` directory, and diagnostic captures belong under the ignored `logs/` directory.
 
 CI runs the matching 4,096-record, 12-second file experiment with up to two producers/consumers as a separate step before capacity exhaustion. Its results appear in the workflow log. The badge input continues to contain only the default profile and bounded chaos workload, keeping historical capacity comparisons consistent.
 

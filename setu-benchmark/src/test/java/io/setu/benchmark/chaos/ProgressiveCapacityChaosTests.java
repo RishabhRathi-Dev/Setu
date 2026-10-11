@@ -32,7 +32,8 @@ class ProgressiveCapacityChaosTests {
     }
 
     private void runIsolatedRamp(StorageMode mode) throws Exception {
-        Path output = tempDir.resolve(mode.name().toLowerCase() + "-capacity.log");
+        Path output = Files.createDirectories(tempDir.resolve("logs"))
+                .resolve(mode.name().toLowerCase() + "-capacity.log");
         String executable = Path.of(System.getProperty("java.home"), "bin",
                 System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java").toString();
         String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));

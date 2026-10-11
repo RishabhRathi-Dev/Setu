@@ -25,7 +25,7 @@ class BrokerCrashChaosTests {
     void forceKillsBrokerThenRecoversDurableRecordsAndTruncatesAPartialTail() throws Exception {
         Path data = tempDir.resolve("crash-data");
         Path ready = tempDir.resolve("ready.flag");
-        Path output = tempDir.resolve("child.log");
+        Path output = Files.createDirectories(tempDir.resolve("logs")).resolve("child.log");
         String javaExecutable = Path.of(System.getProperty("java.home"), "bin",
                 System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java").toString();
         String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));

@@ -103,7 +103,7 @@ Setu aims to provide:
 * Observability and metrics
 * Performance and failure benchmarking
 
-The current throughput objectives are **10 million records/s in memory** and **1 million records/s with file storage**. They are measured as broker records over TCP, using 512-byte payloads in the progressive capacity workload; they are goals rather than pass/fail thresholds and depend on the host. Published default-profile runs remain below these targets. A [local batching experiment](docs/performance/2026-10-11/README.md) exceeded the file-ingestion target with 4,096-record batches over a 12-second stage, while consumers accumulated backlog; the memory target remains open.
+The current throughput objectives are **10 million records/s in memory** and **1 million records/s with file storage**. They are measured as broker records over TCP, using 512-byte payloads in the progressive capacity workload; they are goals rather than pass/fail thresholds and depend on the host. Published default-profile runs remain below these targets. A local batching experiment exceeded the file-ingestion target with 4,096-record batches over a 12-second stage, while consumers accumulated backlog; the memory target remains open.
 
 The project is primarily concerned with the trade-offs between:
 

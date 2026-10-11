@@ -71,7 +71,8 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test 2>&1 | tee -a "$RUNNER_TEMP/setu-benchmark-output.log"
+          mkdir -p "$RUNNER_TEMP/logs"
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test 2>&1 | tee -a "$RUNNER_TEMP/logs/setu-benchmark-output.log"
 
       - name: Measure bounded file ingestion with larger batches
         run: >-
@@ -86,13 +87,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=ProgressiveCapacityChaosTests' -Dsurefire.failIfNoSpecifiedTests=false test 2>&1 | tee -a "$RUNNER_TEMP/setu-benchmark-output.log"
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=ProgressiveCapacityChaosTests' -Dsurefire.failIfNoSpecifiedTests=false test 2>&1 | tee -a "$RUNNER_TEMP/logs/setu-benchmark-output.log"
 
       - name: Generate badges from the latest capacity metrics
         if: success() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         run: >-
           python3 scripts/update-benchmark-badges.py
-          --log "$RUNNER_TEMP/setu-benchmark-output.log"
+          --log "$RUNNER_TEMP/logs/setu-benchmark-output.log"
           --repository "$GITHUB_REPOSITORY"
           --server-url "$GITHUB_SERVER_URL"
           --visibility "${{ github.event.repository.private && 'private' || 'public' }}"
