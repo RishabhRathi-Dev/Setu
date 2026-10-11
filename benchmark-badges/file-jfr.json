@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "file JFR",
-  "message": "stage 9 · 1.50 GiB/s alloc · 20.8ms GC",
+  "message": "stage 9 · 0.62 GiB/s alloc · 0.1ms GC",
   "color": "blue"
 }

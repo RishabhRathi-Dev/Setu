@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "memory capacity",
-  "message": "2,048×2,048 · JVM OOM · peak CPU 97% · 732 MB · p99 1.1s",
-  "color": "red"
+  "message": "1,024×1,024 · broker/client limit · peak CPU 94% · 716 MB · p99 2.1s",
+  "color": "yellow"
 }

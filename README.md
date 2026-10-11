@@ -2,12 +2,12 @@
 
 [CI workflow](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:start -->
-[![In-Memory Capacity from latest benchmark](https://img.shields.io/badge/2%2C048%C3%972%2C048%20%C2%B7%20JVM%20OOM%20%C2%B7%20peak%20CPU%2097%25%20%C2%B7%20732%20MB%20%C2%B7%20p99%201.1s-red?label=in-memory%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![In-Memory Peak Rates from latest benchmark](https://img.shields.io/badge/358.58K%20prod%2Fs%20%C2%B7%201.49M%20consumed%2Fs-blue?label=in-memory%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![In-Memory Jfr from latest benchmark](https://img.shields.io/badge/stage%2011%20%C2%B7%201.73%20GiB%2Fs%20alloc%20%C2%B7%202182.2ms%20GC-blue?label=in-memory%20JFR&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-Memory Capacity from latest benchmark](https://img.shields.io/badge/1%2C024%C3%971%2C024%20%C2%B7%20broker%2Fclient%20limit%20%C2%B7%20peak%20CPU%2094%25%20%C2%B7%20716%20MB%20%C2%B7%20p99%202.1s-yellow?label=in-memory%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-Memory Peak Rates from latest benchmark](https://img.shields.io/badge/368.78K%20prod%2Fs%20%C2%B7%201.22M%20consumed%2Fs-blue?label=in-memory%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-Memory Jfr from latest benchmark](https://img.shields.io/badge/stage%2011%20%C2%B7%201.20%20GiB%2Fs%20alloc%20%C2%B7%200.2ms%20GC-blue?label=in-memory%20JFR&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 [![File Capacity from latest benchmark](https://img.shields.io/badge/256%C3%97256%20%C2%B7%20broker%2Fclient%20limit%20%C2%B7%20peak%20CPU%200%25%20%C2%B7%200%20MB%20%C2%B7%20p99%20537ms-yellow?label=file%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File Peak Rates from latest benchmark](https://img.shields.io/badge/415.89K%20prod%2Fs%20%C2%B7%20518.98K%20consumed%2Fs-blue?label=file%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File Jfr from latest benchmark](https://img.shields.io/badge/stage%209%20%C2%B7%201.50%20GiB%2Fs%20alloc%20%C2%B7%2020.8ms%20GC-blue?label=file%20JFR&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![File Peak Rates from latest benchmark](https://img.shields.io/badge/420.68K%20prod%2Fs%20%C2%B7%20618.68K%20consumed%2Fs-blue?label=file%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![File Jfr from latest benchmark](https://img.shields.io/badge/stage%209%20%C2%B7%200.62%20GiB%2Fs%20alloc%20%C2%B7%200.1ms%20GC-blue?label=file%20JFR&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:end -->
 
 Benchmark badges show terminal capacity, peak CPU, heap, p99 latency, and peak producer/consumer rates for each storage mode. Their metric values are embedded directly in Shields URLs, so they render without access to repository-hosted JSON. For private repositories, the workflow status image is replaced by a link because GitHub workflow badges are not externally accessible; metric badges continue to update from successful runs on the default branch. The JSON snapshots are committed for traceability.
@@ -21,44 +21,42 @@ The table is generated from every stage of the latest successful default-branch 
 
 | Storage mode | Target produce rate | Peak observed | Target progress |
 | --- | ---: | ---: | ---: |
-| In-memory | 10,000,000 records/s | 358.58K records/s | 3.6% |
-| File | 1,000,000 records/s | 415.89K records/s | 41.6% |
+| In-memory | 10,000,000 records/s | 368.78K records/s | 3.7% |
+| File | 1,000,000 records/s | 420.68K records/s | 42.1% |
 
 ### Progressive capacity stages
 
 | Mode | Stage | Producers | Consumers | Duration | Produced | Produce/s | Consumed | Consume/s | Avg CPU | Peak CPU | Heap | p99 request | Stage result |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| In-memory | 1 | 1 | 1 | 2.01s | 637,696 | 317.96K | 636,928 | 317.58K | 98.5% | 99.9% | 68.8 MB | 4.194 ms | Ramping |
-| In-memory | 2 | 2 | 2 | 2.01s | 721,664 | 358.58K | 972,288 | 483.11K | 97.8% | 99.9% | 194.0 MB | 16.777 ms | Ramping |
-| In-memory | 3 | 4 | 4 | 2.01s | 654,592 | 325.97K | 1,692,672 | 842.90K | 97.7% | 99.9% | 376.0 MB | 16.777 ms | Ramping |
-| In-memory | 4 | 8 | 8 | 2.02s | 473,344 | 234.55K | 1,948,160 | 965.36K | 98.2% | 99.9% | 222.0 MB | 16.777 ms | Ramping |
-| In-memory | 5 | 16 | 16 | 2.01s | 391,168 | 194.54K | 2,466,816 | 1.23M | 98.1% | 99.9% | 277.0 MB | 33.554 ms | Ramping |
-| In-memory | 6 | 32 | 32 | 2.01s | 280,576 | 139.51K | 2,499,584 | 1.24M | 98.1% | 99.7% | 236.0 MB | 134.218 ms | Ramping |
-| In-memory | 7 | 64 | 64 | 2.01s | 258,048 | 128.51K | 2,468,864 | 1.23M | 98.1% | 99.6% | 302.0 MB | 268.435 ms | Ramping |
-| In-memory | 8 | 128 | 128 | 1.00s | 251,136 | 250.15K | 1,026,560 | 1.02M | 97.1% | 99.8% | 294.2 MB | 536.871 ms | cpu hold |
-| In-memory | 9 | 256 | 256 | 1.02s | 267,008 | 261.36K | 906,752 | 887.59K | 96.9% | 98.5% | 426.0 MB | 536.871 ms | cpu hold |
-| In-memory | 10 | 512 | 512 | 1.02s | 311,296 | 304.60K | 510,976 | 499.98K | 96.8% | 98.9% | 582.5 MB | 1073.742 ms | cpu hold |
-| In-memory | 11 | 1,024 | 1,024 | 1.02s | 300,288 | 293.74K | 54,272 | 53.09K | 95.8% | 99.9% | 501.1 MB | 1073.742 ms | cpu hold |
-| In-memory | 12 | 2,048 | 2,048 | 1.14s | 264,192 | 231.19K | 0 | 0 | 96.2% | 97.3% | 731.5 MB | 1073.742 ms | cpu hold |
-| File | 1 | 1 | 1 | 2.01s | 249,856 | 124.39K | 249,856 | 124.39K | 88.7% | 93.6% | 54.8 MB | 8.389 ms | Ramping |
-| File | 2 | 2 | 2 | 2.01s | 366,592 | 182.63K | 731,648 | 364.49K | 88.5% | 91.9% | 51.2 MB | 8.389 ms | Ramping |
-| File | 3 | 4 | 4 | 2.01s | 632,064 | 314.33K | 1,002,496 | 498.55K | 80.4% | 81.9% | 104.3 MB | 16.777 ms | Ramping |
-| File | 4 | 8 | 8 | 2.01s | 610,816 | 304.10K | 1,042,432 | 518.98K | 87.4% | 89.9% | 67.7 MB | 33.554 ms | Ramping |
-| File | 5 | 16 | 16 | 2.01s | 793,856 | 394.81K | 1,011,200 | 502.90K | 88.6% | 91.7% | 191.1 MB | 67.109 ms | Ramping |
-| File | 6 | 32 | 32 | 2.02s | 748,800 | 371.57K | 1,011,712 | 502.03K | 90.4% | 97.5% | 206.9 MB | 134.218 ms | Ramping |
-| File | 7 | 64 | 64 | 2.01s | 813,312 | 404.56K | 882,176 | 438.82K | 86.1% | 95.2% | 260.4 MB | 268.435 ms | Ramping |
-| File | 8 | 128 | 128 | 2.02s | 840,960 | 415.89K | 807,936 | 399.56K | 87.1% | 95.4% | 416.4 MB | 536.871 ms | Ramping |
-| File | 9 | 256 | 256 | 0.26s | 62,208 | 243.33K | 60,928 | 238.32K | 0.0% | 0.0% | 0.0 MB | 536.871 ms | broker/client limit |
+| In-memory | 1 | 1 | 1 | 2.01s | 703,744 | 349.53K | 703,232 | 349.27K | 97.9% | 99.0% | 498.0 MB | 4.194 ms | Ramping |
+| In-memory | 2 | 2 | 2 | 2.01s | 741,888 | 368.78K | 1,018,624 | 506.34K | 96.6% | 99.2% | 282.0 MB | 8.389 ms | Ramping |
+| In-memory | 3 | 4 | 4 | 2.01s | 591,616 | 294.06K | 1,433,088 | 712.32K | 98.2% | 99.9% | 366.0 MB | 8.389 ms | Ramping |
+| In-memory | 4 | 8 | 8 | 2.01s | 439,552 | 218.25K | 1,672,192 | 830.28K | 98.4% | 100.0% | 590.0 MB | 16.777 ms | Ramping |
+| In-memory | 5 | 16 | 16 | 2.01s | 331,520 | 164.67K | 2,234,880 | 1.11M | 98.7% | 99.9% | 326.0 MB | 67.109 ms | Ramping |
+| In-memory | 6 | 32 | 32 | 2.01s | 280,576 | 139.49K | 2,417,152 | 1.20M | 98.3% | 100.0% | 456.0 MB | 134.218 ms | Ramping |
+| In-memory | 7 | 64 | 64 | 2.02s | 264,448 | 131.22K | 2,314,240 | 1.15M | 98.6% | 100.0% | 384.0 MB | 268.435 ms | Ramping |
+| In-memory | 8 | 128 | 128 | 1.01s | 254,976 | 253.11K | 922,112 | 915.37K | 97.8% | 99.9% | 352.0 MB | 536.871 ms | cpu hold |
+| In-memory | 9 | 256 | 256 | 1.79s | 281,600 | 156.95K | 1,638,912 | 913.47K | 94.4% | 99.8% | 478.0 MB | 1073.742 ms | cpu hold |
+| In-memory | 10 | 512 | 512 | 2.01s | 238,336 | 118.31K | 1,666,560 | 827.32K | 92.1% | 99.5% | 580.0 MB | 2147.484 ms | cpu hold |
+| In-memory | 11 | 1,024 | 1,024 | 1.01s | 334,336 | 330.65K | 0 | 0 | 87.6% | 93.5% | 716.0 MB | 2147.484 ms | broker/client limit |
+| File | 1 | 1 | 1 | 2.01s | 221,696 | 110.44K | 221,440 | 110.32K | 91.0% | 95.7% | 402.0 MB | 8.389 ms | Ramping |
+| File | 2 | 2 | 2 | 2.01s | 346,624 | 172.64K | 693,248 | 345.29K | 88.2% | 95.8% | 266.0 MB | 8.389 ms | Ramping |
+| File | 3 | 4 | 4 | 2.01s | 615,680 | 306.50K | 881,664 | 438.91K | 81.2% | 85.8% | 208.0 MB | 16.777 ms | Ramping |
+| File | 4 | 8 | 8 | 2.01s | 817,664 | 407.23K | 997,888 | 496.99K | 84.7% | 91.9% | 288.0 MB | 33.554 ms | Ramping |
+| File | 5 | 16 | 16 | 2.01s | 846,848 | 420.68K | 1,024,512 | 508.94K | 81.8% | 89.9% | 448.0 MB | 67.109 ms | Ramping |
+| File | 6 | 32 | 32 | 2.01s | 786,688 | 392.00K | 1,241,600 | 618.68K | 91.7% | 95.9% | 344.0 MB | 134.218 ms | Ramping |
+| File | 7 | 64 | 64 | 2.01s | 837,376 | 416.65K | 943,616 | 469.51K | 94.6% | 97.0% | 534.0 MB | 268.435 ms | Ramping |
+| File | 8 | 128 | 128 | 1.00s | 406,016 | 404.42K | 345,600 | 344.24K | 96.6% | 97.6% | 404.0 MB | 536.871 ms | cpu hold |
+| File | 9 | 256 | 256 | 0.25s | 80,128 | 315.29K | 0 | 0 | 0.0% | 0.0% | 0.0 MB | 536.871 ms | broker/client limit |
 
 ### CPU saturation hold
 
 | Mode | Stage | Requested hold | Observed hold | Produce/s | Consume/s | Avg CPU | Outcome |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| In-memory | 8 | 10.00s | 10.05s | 5.58K | 1.42M | 97.8% | Completed |
-| In-memory | 9 | 10.00s | 10.06s | 0 | 1.49M | 98.4% | Completed |
-| In-memory | 10 | 10.00s | 10.07s | 229 | 1.35M | 98.3% | Completed |
-| In-memory | 11 | 10.00s | 10.19s | 4.65K | 1.06M | 96.8% | Completed |
-| In-memory | 12 | 10.00s | 0.26s | 132.42K | 0 | 95.8% | broker/client limit |
+| File | 8 | 10.00s | 10.05s | 371.23K | 394.03K | 90.8% | Completed |
+| In-memory | 8 | 10.00s | 10.07s | 6.00K | 1.22M | 98.4% | Completed |
+| In-memory | 9 | 10.00s | 10.05s | 0 | 1.22M | 97.7% | Completed |
+| In-memory | 10 | 10.00s | 10.05s | 1.30K | 1.17M | 98.5% | Completed |
 
 ### JFR diagnostics
 
@@ -66,33 +64,33 @@ Allocation rates are estimates from JFR allocation samples within each measured 
 
 | Mode | Stage | Estimated allocation | GC pause | CPU samples | Hottest sampled method | Backpressure waits |
 | --- | ---: | ---: | ---: | ---: | --- | ---: |
-| File | 1 | 654.3 MiB/s | 26.49 ms | 60 | `io.setu.storage.log.GroupCommitMessageLog.writeLoop` | 0 |
-| File | 2 | 1507.4 MiB/s | 48.88 ms | 53 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 0 |
-| File | 3 | 2174.8 MiB/s | 115.01 ms | 64 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 0 |
-| File | 4 | 2198.4 MiB/s | 179.87 ms | 80 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 0 |
-| File | 5 | 2363.4 MiB/s | 193.61 ms | 86 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 0 |
-| File | 6 | 2314.2 MiB/s | 236.12 ms | 81 | `io.setu.server.connection.FramedConnectionHandler.handle` | 0 |
-| File | 7 | 2344.3 MiB/s | 237.90 ms | 81 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 0 |
-| File | 8 | 2237.4 MiB/s | 288.08 ms | 64 | `io.setu.storage.log.FileMessageLog.appendValues` | 0 |
-| File | 9 | 1540.3 MiB/s | 20.79 ms | 8 | `io.setu.storage.log.FileMessageLog.appendValues` | 0 |
-| In-memory | 1 | 1247.7 MiB/s | 35.23 ms | 64 | `io.setu.server.connection.FramedConnectionHandler.handle` | 0 |
-| In-memory | 2 | 1554.3 MiB/s | 161.20 ms | 76 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 345 |
-| In-memory | 3 | 2130.9 MiB/s | 154.57 ms | 93 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 1,581 |
-| In-memory | 4 | 2127.7 MiB/s | 140.47 ms | 118 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 3,189 |
-| In-memory | 5 | 2500.6 MiB/s | 128.21 ms | 116 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 4,092 |
-| In-memory | 6 | 2435.4 MiB/s | 121.41 ms | 108 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 734 |
-| In-memory | 7 | 2383.3 MiB/s | 133.35 ms | 111 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 1,473 |
-| In-memory | 8 | 2413.6 MiB/s | 651.65 ms | 755 | `io.setu.core.protocol.ProtocolCodec.encodeFetchResponse` | 28,970 |
-| In-memory | 9 | 2502.2 MiB/s | 755.09 ms | 772 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 45,473 |
-| In-memory | 10 | 2276.1 MiB/s | 1091.32 ms | 662 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 72,786 |
-| In-memory | 11 | 1774.6 MiB/s | 2182.18 ms | 551 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 122,300 |
+| File | 1 | 623.0 MiB/s | 0.06 ms | 59 | `io.setu.storage.log.GroupCommitMessageLog.writeLoop` | 0 |
+| File | 2 | 1441.9 MiB/s | 0.20 ms | 64 | `io.setu.storage.log.GroupCommitMessageLog.writeLoop` | 0 |
+| File | 3 | 2059.1 MiB/s | 0.33 ms | 72 | `io.setu.storage.log.FileMessageLog.read` | 0 |
+| File | 4 | 2494.4 MiB/s | 0.35 ms | 74 | `io.setu.core.protocol.BrokerRequest.<init>` | 0 |
+| File | 5 | 2545.0 MiB/s | 0.42 ms | 93 | `io.setu.server.connection.FramedConnectionHandler.handle` | 0 |
+| File | 6 | 2800.7 MiB/s | 0.72 ms | 104 | `io.setu.storage.log.MessageValue.readFrom` | 0 |
+| File | 7 | 2468.2 MiB/s | 1.07 ms | 112 | `io.setu.storage.log.FileMessageLog.appendValues` | 0 |
+| File | 8 | 2129.6 MiB/s | 5.97 ms | 536 | `io.setu.server.connection.FramedConnectionHandler.handle` | 0 |
+| File | 9 | 638.1 MiB/s | 0.09 ms | 15 | `io.setu.storage.log.FileMessageLog.appendValues` | 0 |
+| In-memory | 1 | 1348.0 MiB/s | 0.17 ms | 74 | `io.setu.server.connection.FramedConnectionHandler.handle` | 0 |
+| In-memory | 2 | 1674.4 MiB/s | 1.02 ms | 86 | `io.setu.core.protocol.BrokerRequest.<init>` | 368 |
+| In-memory | 3 | 1865.5 MiB/s | 0.94 ms | 107 | `io.setu.core.protocol.ProtocolCodec.encodeFetchResponse` | 1,485 |
+| In-memory | 4 | 1894.7 MiB/s | 1.02 ms | 116 | `io.setu.server.connection.FramedConnectionHandler.handle` | 2,841 |
+| In-memory | 5 | 2284.3 MiB/s | 1.06 ms | 121 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 1,496 |
+| In-memory | 6 | 2313.7 MiB/s | 0.98 ms | 133 | `io.setu.core.protocol.FrameCodec.writeFrame` | 2,332 |
+| In-memory | 7 | 2378.3 MiB/s | 0.82 ms | 103 | `io.setu.server.connection.FramedConnectionHandler.handle` | 4,780 |
+| In-memory | 8 | 2133.7 MiB/s | 7.65 ms | 641 | `io.setu.core.protocol.ProtocolCodec.encodeFetchResponse` | 45,366 |
+| In-memory | 9 | 2104.5 MiB/s | 7.39 ms | 645 | `io.setu.server.connection.FramedConnectionHandler.handle` | 84,049 |
+| In-memory | 10 | 2027.8 MiB/s | 7.49 ms | 640 | `io.setu.core.protocol.ProtocolCodec.decodeResponse` | 178,775 |
+| In-memory | 11 | 1225.6 MiB/s | 0.22 ms | 39 | `io.setu.server.connection.FramedConnectionHandler.handle` | 5,226 |
 
 JFR recordings and raw captures are retained in the CI benchmark-diagnostics artifact. A resource crash may leave only the last completed stage checkpoint.
 
 ### Measured profile
 
-- File: 512-byte records, 256-record batches, 2000 ms stages, minimum 8 stages, memory-log budget 268435456 bytes, JFR true, CPU stop false.
-- In-memory: 512-byte records, 256-record batches, 2000 ms stages, minimum 8 stages, memory-log budget 268435456 bytes, JFR true, CPU stop false.
+- File: 512-byte records, 256-record batches, 2000 ms stages, minimum 8 stages, memory-log budget 268435456 bytes, JFR true, CPU stop false, collector ZGC, string deduplication true.
+- In-memory: 512-byte records, 256-record batches, 2000 ms stages, minimum 8 stages, memory-log budget 268435456 bytes, JFR true, CPU stop false, collector ZGC, string deduplication true.
 
 ### Capacity badge color legend
 
@@ -105,7 +103,7 @@ JFR recordings and raw captures are retained in the CI benchmark-diagnostics art
 
 File capacity stop: **broker/client limit**.
 
-In-memory capacity stop: **JVM OOM**.
+In-memory capacity stop: **broker/client limit**.
 <!-- benchmark-capacity-details:end -->
 
 **Setu** is a distributed message broker built from scratch in **Java 26**, inspired by systems such as Kafka.
