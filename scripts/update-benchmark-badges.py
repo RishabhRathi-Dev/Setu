@@ -122,7 +122,17 @@ def update_readme_badges(
     readme_path.write_text(updated, encoding="utf-8")
 
 
-def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict[str, str]) -> str:
+def peak_rates(stages: list[dict[str, str]], cpu_holds: list[dict[str, str]], mode: str) -> tuple[float, float]:
+    completed = [hold for hold in cpu_holds if hold.get("mode") == mode and hold.get("completed") == "true"
+                 and int(hold.get("hold_ms", "0")) > 0
+                 and float(hold.get("duration_ms", float(hold.get("duration_s", "0")) * 1000)) >= int(hold["hold_ms"])]
+    values = stages + completed
+    return (max(float(value["produce_per_s"]) for value in values),
+            max(float(value["consume_per_s"]) for value in values))
+
+
+def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict[str, str],
+                     cpu_holds: list[dict[str, str]] | None = None) -> str:
     targets = {"IN_MEMORY": 10_000_000, "FILE": 1_000_000}
     names = {"IN_MEMORY": "In-memory", "FILE": "File"}
     lines = [
@@ -132,7 +142,7 @@ def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict
         "| --- | ---: | ---: | ---: |",
     ]
     for mode, values in stages.items():
-        peak = max(float(stage["produce_per_s"]) for stage in values)
+        peak, _ = peak_rates(values, cpu_holds or [], mode)
         target = targets[mode]
         progress = peak / target * 100
         lines.append(
@@ -156,6 +166,24 @@ def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict
                 f"| {float(stage['cpu_avg']) * 100:.1f}% | {float(stage['cpu_peak']) * 100:.1f}% "
                 f"| {float(stage['heap_mb']):.1f} MB | {float(stage['p99_ms']):.3f} ms | {result} |"
             )
+    if cpu_holds:
+        lines.extend(["", "### CPU saturation hold", "",
+            "| Mode | Stage | Requested hold | Observed hold | Produce/s | Consume/s | Avg CPU | Outcome |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        ])
+        for hold in cpu_holds:
+            mode = hold["mode"]
+            requested = f"{int(hold.get('hold_ms', '0')) / 1000:.2f}s"
+            if "duration_s" in hold:
+                observed = f"{float(hold['duration_s']):.2f}s"
+                produce = format_rate(float(hold["produce_per_s"]))
+                consume = format_rate(float(hold["consume_per_s"]))
+                cpu = f"{float(hold['cpu_avg']) * 100:.1f}%"
+                outcome = "Completed" if hold.get("completed") == "true" else friendly_reason(hold.get("stop", "unknown"))
+            else:
+                observed = produce = consume = cpu = "—"
+                outcome = f"Interrupted: {friendly_reason(stop_reasons.get(mode, 'unknown'))}"
+            lines.append(f"| {names[mode]} | {hold['stage']} | {requested} | {observed} | {produce} | {consume} | {cpu} | {outcome} |")
     lines.extend(["", "### Capacity badge color legend", "",
         "| Color | Meaning |",
         "| --- | --- |",
@@ -214,6 +242,8 @@ def main() -> None:
     stages: dict[str, list[dict[str, str]]] = {"IN_MEMORY": [], "FILE": []}
     seen_stages: set[tuple[str, int]] = set()
     stop_reasons: dict[str, str] = {}
+    cpu_holds: dict[tuple[str, int], dict[str, str]] = {}
+    stage_totals: dict[tuple[str, int], dict[str, str]] = {}
     badges: list[str] = []
     workflow_url = f"{args.server_url}/{args.repository}/actions/workflows/ci.yml"
 
@@ -225,15 +255,26 @@ def main() -> None:
                 if stage_key not in seen_stages:
                     stages[fields["mode"]].append(fields)
                     seen_stages.add(stage_key)
+        elif "CAPACITY_STAGE_TOTAL " in line:
+            fields = parse_fields(line, "CAPACITY_STAGE_TOTAL ")
+            if fields.get("mode") in stages:
+                stage_totals[(fields["mode"], int(fields["stage"]))] = fields
         elif "CAPACITY_STOP " in line:
             fields = parse_fields(line, "CAPACITY_STOP ")
             if fields.get("mode") in stages and fields.get("reason"):
                 stop_reasons[fields["mode"]] = fields["reason"]
+        elif "CAPACITY_CPU_HOLD_BEGIN " in line or "CAPACITY_CPU_HOLD_END " in line:
+            marker = "CAPACITY_CPU_HOLD_BEGIN " if "CAPACITY_CPU_HOLD_BEGIN " in line else "CAPACITY_CPU_HOLD_END "
+            fields = parse_fields(line, marker)
+            if fields.get("mode") in stages:
+                key = (fields["mode"], int(fields["stage"]))
+                cpu_holds.setdefault(key, {}).update(fields)
 
     for mode, values in stages.items():
         if not values:
             raise SystemExit(f"No capacity stage metrics found for {mode}; badges were not updated")
         terminal = max(values, key=lambda fields: int(fields["stage"]))
+        terminal = stage_totals.get((mode, int(terminal["stage"])), terminal)
         reason = stop_reasons.get(mode, terminal.get("stop", "unknown"))
         label = "memory" if mode == "IN_MEMORY" else "file"
         concurrency = f"{int(terminal['producers']):,}×{int(terminal['consumers']):,}"
@@ -264,8 +305,7 @@ def main() -> None:
             )
         )
 
-        peak_produce = max(float(fields["produce_per_s"]) for fields in values)
-        peak_consume = max(float(fields["consume_per_s"]) for fields in values)
+        peak_produce, peak_consume = peak_rates(values, list(cpu_holds.values()), mode)
         write_badge(
             args.output,
             f"{label}-throughput.json",
@@ -283,7 +323,7 @@ def main() -> None:
         )
 
     update_readme_badges(badges, args.readme, workflow_url, args.visibility)
-    update_capacity_details(capacity_details(stages, stop_reasons), args.readme)
+    update_capacity_details(capacity_details(stages, stop_reasons, list(cpu_holds.values())), args.readme)
     print(f"Updated benchmark badges in {args.output}")
 
 

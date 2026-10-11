@@ -33,6 +33,7 @@ final class ProgressiveCapacityChaosWorker {
     private static final int MAX_FRAME_BYTES = 15 * 1024 * 1024;
     private static final long STAGE_MILLIS = configuredInt("setu.benchmark.stage.millis", 2_000, 250, 60_000);
     private static final int WARMUP_MILLIS = configuredInt("setu.benchmark.warmup.millis", 2_000, 0, 60_000);
+    private static final int CPU_HOLD_MILLIS = configuredInt("setu.benchmark.cpu.hold.millis", 10_000, 0, 60_000);
     private static final int MAX_CONCURRENCY = configuredInt("setu.benchmark.max.concurrency", 0, 0, 32_768);
     private static final int BATCH_RECORDS = configuredInt("setu.benchmark.batch.records", 256, 1, 10_000);
     private static final long SAMPLE_MILLIS = 250;
@@ -51,8 +52,8 @@ final class ProgressiveCapacityChaosWorker {
         stopReporter = new CapacityStopReporter(mode.name());
         if (MAX_CONCURRENCY != 0 && Integer.bitCount(MAX_CONCURRENCY) != 1)
             throw new IllegalArgumentException("setu.benchmark.max.concurrency must be zero or a power of two");
-        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d max_concurrency=%d quotas=disabled memory_log_budget=unlimited cpu_metric=process_time_per_available_cpu%n",
-                mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, WARMUP_MILLIS, MAX_CONCURRENCY);
+        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d cpu_hold_ms=%d max_concurrency=%d quotas=disabled memory_log_budget=unlimited cpu_metric=process_time_per_available_cpu%n",
+                mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, WARMUP_MILLIS, CPU_HOLD_MILLIS, MAX_CONCURRENCY);
         Path dataRoot = Path.of(args[1]);
         System.out.printf(Locale.ROOT, "CAPACITY_RUNTIME java=%s os=%s cpus=%d max_heap_mb=%d log_level=%s log_directory=%s tcp_nodelay=true%n",
                 System.getProperty("java.version"), System.getProperty("os.name").replace(' ', '_'),
@@ -125,7 +126,7 @@ final class ProgressiveCapacityChaosWorker {
                     return;
                 }
 
-                printStage(mode, result);
+                printStage(mode, result, result.cpuHoldStarted ? "CAPACITY_STAGE_TOTAL" : "CAPACITY_STAGE");
                 if (outOfMemory.get() || "JVM_OOM".equals(result.reason)) {
                     stopReporter.heapExhausted();
                 }
@@ -171,6 +172,13 @@ final class ProgressiveCapacityChaosWorker {
         long heapUsed = 0;
         String reason = null;
         String detail = "";
+        CpuSaturationHold cpuHold = new CpuSaturationHold(CPU_SATURATION, SATURATED_SAMPLES_TO_STOP,
+                CPU_HOLD_MILLIS * 1_000_000L);
+        long holdProduced = 0;
+        long holdConsumed = 0;
+        double holdCpuBaseline = 0;
+        int holdSamplesBaseline = 0;
+        double lastCpu = -1;
 
         try {
             while (producers.size() < concurrency) {
@@ -202,7 +210,6 @@ final class ProgressiveCapacityChaosWorker {
                         outOfMemory, workerFailure, consumed, latency));
             }
 
-            int saturatedSamples = 0;
             double cpuTotal = 0;
             int cpuSamples = 0;
             long deadline = started + durationMillis * 1_000_000L;
@@ -217,16 +224,34 @@ final class ProgressiveCapacityChaosWorker {
                     break;
                 }
                 double cpu = cpuSampler.sample(System.nanoTime(), os.getProcessCpuTime());
+                lastCpu = cpu;
                 if (cpu >= 0) {
                     cpuTotal += cpu;
                     cpuSamples++;
                     cpuMaximum = Math.max(cpuMaximum, cpu);
-                    saturatedSamples = cpu >= CPU_SATURATION ? saturatedSamples + 1 : 0;
-                    if (stopOnCpu && saturatedSamples >= SATURATED_SAMPLES_TO_STOP) {
-                        reason = "CPU_SATURATION";
-                        detail = String.format(Locale.ROOT, "process CPU remained at or above %.0f%%", CPU_SATURATION * 100);
-                        break;
-                    }
+                }
+                boolean wasHolding = cpuHold.isHolding();
+                boolean holdCompleted = stopOnCpu && cpuHold.sample(System.nanoTime(), cpu);
+                if (!wasHolding && cpuHold.isHolding()) {
+                    deadline = Math.max(deadline, cpuHold.deadlineNanos());
+                    holdProduced = produced.sum();
+                    holdConsumed = consumed.sum();
+                    holdCpuBaseline = cpuTotal;
+                    holdSamplesBaseline = cpuSamples;
+                    // Publish the completed ramp prefix before the hold can exhaust the JVM or disk.
+                    printStage(mode, new StageResult(stage, concurrency,
+                            Math.max(1, cpuHold.startedNanos() - started), holdProduced, holdConsumed,
+                            cpuSamples == 0 ? 0 : cpuTotal / cpuSamples, cpuMaximum,
+                            ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed(),
+                            latency.p99Nanos(), "CPU_HOLD", "holding at fixed concurrency", true));
+                    System.out.printf(Locale.ROOT,
+                            "CAPACITY_CPU_HOLD_BEGIN mode=%s stage=%d producers=%d consumers=%d hold_ms=%d trigger_cpu=%.3f%n",
+                            mode, stage, concurrency, concurrency, CPU_HOLD_MILLIS, cpu);
+                }
+                if (holdCompleted) {
+                    reason = "CPU_SATURATION";
+                    detail = "CPU saturation observed; completed " + CPU_HOLD_MILLIS + " ms at fixed concurrency";
+                    break;
                 }
                 MemoryUsage usage = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
                 heapUsed = usage.getUsed();
@@ -239,11 +264,29 @@ final class ProgressiveCapacityChaosWorker {
                 }
             }
             elapsedNanos = Math.max(1, System.nanoTime() - started);
+            if (reason == null && cpuHold.isHolding() && cpuHold.sample(System.nanoTime(), lastCpu)) {
+                reason = "CPU_SATURATION";
+                detail = "CPU saturation observed; completed " + CPU_HOLD_MILLIS + " ms at fixed concurrency";
+            }
             cpuAverage = cpuSamples == 0 ? 0 : cpuTotal / cpuSamples;
             if (outOfMemory.get()) reason = "JVM_OOM";
-            if (workerFailure.get() != null && reason == null) {
+            if (workerFailure.get() != null && (reason == null || "CPU_SATURATION".equals(reason))) {
                 reason = "BROKER_OR_CLIENT_LIMIT";
                 detail = workerFailure.get().toString();
+            }
+            if (cpuHold.isHolding()) {
+                long holdElapsedNanos = Math.max(1, System.nanoTime() - cpuHold.startedNanos());
+                double seconds = holdElapsedNanos / 1_000_000_000.0;
+                int samples = cpuSamples - holdSamplesBaseline;
+                long heldProduced = produced.sum() - holdProduced;
+                long heldConsumed = consumed.sum() - holdConsumed;
+                System.out.printf(Locale.ROOT,
+                        "CAPACITY_CPU_HOLD_END mode=%s stage=%d duration_s=%.2f duration_ms=%d produced=%d produce_per_s=%.0f " +
+                                "consumed=%d consume_per_s=%.0f cpu_avg=%.3f completed=%s stop=%s%n",
+                        mode, stage, seconds, holdElapsedNanos / 1_000_000, heldProduced, heldProduced / seconds,
+                        heldConsumed, heldConsumed / seconds,
+                        samples == 0 ? lastCpu : (cpuTotal - holdCpuBaseline) / samples,
+                        "CPU_SATURATION".equals(reason), reason);
             }
         } catch (OutOfMemoryError exhausted) {
             stopReporter.heapExhausted();
@@ -255,7 +298,7 @@ final class ProgressiveCapacityChaosWorker {
             } else {
                 workers.shutdown();
                 if (!workers.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS)) {
-                    if (reason == null) {
+                    if (reason == null || "CPU_SATURATION".equals(reason)) {
                         reason = "CLIENT_STALL";
                         detail = "in-flight client requests did not drain after the stage stopped";
                     }
@@ -270,7 +313,7 @@ final class ProgressiveCapacityChaosWorker {
         }
 
         return new StageResult(stage, concurrency, elapsedNanos, produced.sum(), consumed.sum(),
-                cpuAverage, cpuMaximum, heapUsed, latency.p99Nanos(), reason, detail);
+                cpuAverage, cpuMaximum, heapUsed, latency.p99Nanos(), reason, detail, cpuHold.isHolding());
     }
 
     private static void produceUntilStopped(SetuClient client, String topic, AtomicBoolean running,
@@ -340,12 +383,16 @@ final class ProgressiveCapacityChaosWorker {
     }
 
     private static void printStage(StorageMode mode, StageResult result) {
+        printStage(mode, result, "CAPACITY_STAGE");
+    }
+
+    private static void printStage(StorageMode mode, StageResult result, String marker) {
         double seconds = result.elapsedNanos / 1_000_000_000.0;
         System.out.printf(Locale.ROOT,
-                "CAPACITY_STAGE mode=%s stage=%d producers=%d consumers=%d duration_s=%.2f " +
+                "%s mode=%s stage=%d producers=%d consumers=%d duration_s=%.2f " +
                         "produced=%d produce_per_s=%.0f consumed=%d consume_per_s=%.0f " +
                         "cpu_avg=%.3f cpu_peak=%.3f heap_mb=%.1f p99_ms=%.3f stop=%s%n",
-                mode, result.stage, result.concurrency, result.concurrency, seconds,
+                marker, mode, result.stage, result.concurrency, result.concurrency, seconds,
                 result.produced, result.produced / seconds, result.consumed, result.consumed / seconds,
                 result.cpuAverage, result.cpuMaximum, result.heapUsed / (1024.0 * 1024),
                 result.p99Nanos / 1_000_000.0, result.reason == null ? "ramp" : result.reason);
@@ -417,5 +464,5 @@ final class ProgressiveCapacityChaosWorker {
 
     private record StageResult(int stage, int concurrency, long elapsedNanos, long produced, long consumed,
                                double cpuAverage, double cpuMaximum, long heapUsed, long p99Nanos,
-                               String reason, String detail) { }
+                               String reason, String detail, boolean cpuHoldStarted) { }
 }
