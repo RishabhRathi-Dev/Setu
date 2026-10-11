@@ -149,7 +149,7 @@ Setu aims to provide:
 * Observability and metrics
 * Performance and failure benchmarking
 
-The current throughput objectives are **10 million records/s in memory** and **1 million records/s with file storage**. They are measured as broker records over TCP, using 512-byte payloads in the progressive capacity workload; they are goals rather than pass/fail thresholds and depend on the host. Published default-profile runs remain below these targets. A local batching experiment exceeded the file-ingestion target with 4,096-record batches over a 12-second stage, while consumers accumulated backlog; the memory target remains open.
+The current throughput objectives are **10 million records/s in memory** and **1 million records/s with file storage**. The standard benchmark and AOT-training payload is now **1,024 bytes**; the progressive profile keeps 256-record batches. These goals are observations to work toward, not pass/fail thresholds, and depend on the host. The generated measured-profile section records the payload size used by each published run; older 512-byte results are not directly comparable. A local batching experiment exceeded the file-ingestion target with 4,096-record batches over a 12-second stage, while consumers accumulated backlog; the memory target remains open.
 
 The project is primarily concerned with the trade-offs between:
 
@@ -187,7 +187,7 @@ On macOS/Linux, use `bash ./mvnw test` (or `./mvnw test` when the checkout marks
 
 The first invocation downloads the pinned Maven distribution. The wrapper supplies Maven; it does not install Java.
 
-The wrapper JVM, forked tests, and broker launchers use `-XX:+UseZGC -XX:+UseStringDeduplication`. Benchmark child JVMs verify both options at startup. Java 26 supports AOT caching with ZGC: after packaging, run `./scripts/start-broker.ps1 --train-aot` (PowerShell) or `bash ./scripts/start-broker.sh --train-aot` (macOS/Linux). Subsequent launcher runs use the generated cache. See [the server launch instructions](setu-server/README.md#standalone-jar).
+The wrapper JVM, forked tests, and broker launchers use `-XX:+UseZGC -XX:+UseStringDeduplication`. Benchmark child JVMs verify both options at startup. Java 26 supports AOT caching with ZGC: after packaging, run `./scripts/start-broker.ps1 --train-aot` (PowerShell) or `bash ./scripts/start-broker.sh --train-aot` (macOS/Linux). This trains all five production modules through plaintext and the full mTLS/authentication/authorization/quota path, using 1,024-byte payloads in both storage modes. Subsequent launcher runs use the generated cache. Tests can run without AOT. See [the server launch instructions](setu-server/README.md#standalone-jar).
 
 ---
 

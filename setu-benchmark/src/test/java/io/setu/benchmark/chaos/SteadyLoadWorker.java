@@ -13,7 +13,7 @@ import java.util.concurrent.locks.LockSupport;
 public final class SteadyLoadWorker {
     private static final int PRODUCERS = 4;
     private static final int BATCH = 32;
-    private static final int RECORD_BYTES = 512;
+    private static final int RECORD_BYTES = 1024;
     public static void main(String[] args) throws Exception {
         BenchmarkRuntime.verifyZgc(SteadyLoadWorker.class);
         int port = Integer.parseInt(args[0]), partitions = Integer.parseInt(args[1]);

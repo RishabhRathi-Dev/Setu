@@ -27,17 +27,39 @@ jobs:
       - name: Build and test production modules
         run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-storage,setu-core,setu-security,setu-client,setu-server -am test
 
-      - name: Package broker and verify AOT caching with ZGC
+      - name: Package application and verify secure AOT coverage with ZGC
         shell: bash
         run: |
           set -o pipefail
           bash ./mvnw --batch-mode --no-transfer-progress -pl setu-server -am -DskipTests package
           bash ./scripts/start-broker.sh --train-aot
           java -XX:+UseZGC -XX:+UseStringDeduplication -XX:AOTMode=on \
-            -XX:AOTCache=setu-server/target/setu-server.aot -Xlog:aot=info \
+            -XX:AOTCache=setu-server/target/setu-server.aot -Xlog:aot=info,class+load=info \
             -jar setu-server/target/setu-server-1.0.0-SNAPSHOT.jar --aot-train \
             2>&1 | tee "$RUNNER_TEMP/aot-validation.log"
-          python3 -c 'import os, pathlib; report = (pathlib.Path(os.environ["RUNNER_TEMP"]) / "aot-validation.log").read_text(); assert "Using AOT-linked classes: true" in report, "AOT-linked classes were not enabled"'
+          python3 - <<'PY'
+          import os, pathlib
+          report = (pathlib.Path(os.environ["RUNNER_TEMP"]) / "aot-validation.log").read_text()
+          assert "Using AOT-linked classes: true" in report, "AOT-linked classes were not enabled"
+          for name in ("io.setu.server.security.SecuredRequestProcessor", "io.setu.client.SetuClient",
+                       "io.setu.core.broker.DefaultBroker", "io.setu.storage.log.InMemoryMessageLog",
+                       "io.setu.storage.log.FileMessageLog", "io.setu.storage.log.GroupCommitMessageLog",
+                       "io.setu.security.authentication.MtlsAuthenticator", "io.setu.security.authorization.InMemoryAuthorizer",
+                       "io.setu.security.quota.TokenBucketRateLimiter", "io.setu.security.tls.SetuKeyManagerProvider",
+                       "io.setu.security.tls.SetuTrustManagerProvider"):
+              assert name + " source: shared objects file" in report, name + " was not loaded from the AOT cache"
+          lines = [dict(field.split("=", 1) for field in line.split()[1:])
+                   for line in report.splitlines() if line.startswith("AOT_TRAINING ")]
+          for mode in ("IN_MEMORY", "FILE"):
+              for transport in ("plaintext", "mtls"):
+                  stage = next(row for row in lines if row["mode"] == mode and row["transport"] == transport)
+                  assert stage["completed"] == "true" and stage["record_bytes"] == "1024"
+                  if transport == "mtls":
+                      assert all(stage[key] == "allow_and_deny" for key in ("authentication", "authorization", "quotas"))
+          assert "AOT_BACKPRESSURE budget_bytes=65536 rejected=true reclaimed=true retry=accepted" in report
+          assert "AOT_COVERAGE modules=setu-server,setu-client,setu-core,setu-storage,setu-security gc=ZGC string_dedup_requested=true completed=true" in report
+          assert "AOT_RUNTIME gc=ZGC string_dedup_requested=true string_dedup_actual=true aot_mode=on" in report
+          PY
 
   integration-tests:
     runs-on: ubuntu-latest

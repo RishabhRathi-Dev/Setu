@@ -29,6 +29,8 @@ On the secure server path, TLS completes before any protocol frame is read. The 
 
 The server-side `ProtocolRequestAuthorizationMetadataResolver` owns the v1 command mapping. This keeps broker command parsing out of `setu-security`; the security module consumes the resulting identity, resource, permission, and usage counts through its interfaces.
 
+The packaged application's [AOT training workload](../setu-server/README.md#standalone-jar) covers this complete secure path using the real TLS client and both storage modes. Training verifies valid mTLS identity, missing-certificate rejection, ACL allow/deny, and quota allow/deny with disposable certificates. The resulting application cache contains trained security classes alongside server, client, core, and storage; the cached application runs with ZGC and string deduplication. Functional security tests do not need AOT caches.
+
 ---
 
 ## Goals

@@ -30,6 +30,8 @@ class BrokerLimitsChaosTests {
     private static final int RECORDS = PRODUCERS * RECORDS_PER_PRODUCER;
     private static final int WORKLOAD_TIMEOUT_SECONDS = 300;
     private static final int MAX_FRAME = 15 * 1024 * 1024;
+    // Keep sixteen concurrent 1 KiB fanout readers inside the shared response admission budget.
+    private static final int FETCH_PAGE_BYTES = 1024 * 1024;
     private static final String TOPIC = "limit-chaos";
     private static final String GROUP = "limit-group";
 
@@ -81,7 +83,7 @@ class BrokerLimitsChaosTests {
                             for (int i = 0; i < RECORDS_PER_PRODUCER; i++) {
                                 byte[] value = ("producer=" + id + ";record=" + i)
                                         .getBytes(StandardCharsets.UTF_8);
-                                byte[] payload = new byte[512];
+                                byte[] payload = new byte[1024];
                                 System.arraycopy(value, 0, payload, 0, value.length);
                                 java.util.Arrays.fill(payload, value.length, payload.length, (byte) id);
                                 var result = producer.produce(TOPIC, 0, payload);
@@ -101,7 +103,7 @@ class BrokerLimitsChaosTests {
                         int consumed = 0;
                         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WORKLOAD_TIMEOUT_SECONDS);
                         while (next < RECORDS) {
-                            var batch = consumer.fetch(GROUP, member, TOPIC, 0, next, 15 * 1024 * 1024);
+                            var batch = consumer.fetch(GROUP, member, TOPIC, 0, next, FETCH_PAGE_BYTES);
                             assertEquals(ErrorCode.NONE, batch.errorCode());
                             if (batch.records().isEmpty()) {
                                 if (System.nanoTime() >= deadline)

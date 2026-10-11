@@ -29,7 +29,7 @@ import java.util.concurrent.locks.LockSupport;
 
 /** Child-JVM load generator for an intentionally aggressive, progressively doubled capacity test. */
 final class ProgressiveCapacityChaosWorker {
-    private static final int RECORD_BYTES = 512;
+    private static final int RECORD_BYTES = 1024;
     private static final int MAX_FRAME_BYTES = 15 * 1024 * 1024;
     private static final long STAGE_MILLIS = configuredInt("setu.benchmark.stage.millis", 2_000, 250, 60_000);
     private static final int WARMUP_MILLIS = configuredInt("setu.benchmark.warmup.millis", 2_000, 0, 60_000);
@@ -359,6 +359,19 @@ final class ProgressiveCapacityChaosWorker {
                 }
                 long start = System.nanoTime();
                 var response = client.produceBatch(topic, 0, PRODUCE_BATCH);
+                // The 32 MiB writer budget can reject 128 simultaneous 256 KiB batches.
+                // Retry this transient rejection without increasing production limits; count it
+                // and include the retry delay in successful-request latency.
+                while (mode == StorageMode.FILE && response.errorCode() == ErrorCode.QUOTA_EXCEEDED
+                        && "Partition write queue is full; retry with backoff".equals(response.errorMessage())) {
+                    backpressure.increment();
+                    if (!running.get()) return;
+                    if (System.nanoTime() - start >= 5_000_000_000L)
+                        throw new IOException("Partition write queue did not recover within five seconds");
+                    LockSupport.parkNanos(1_000_000);
+                    if (!running.get()) return;
+                    response = client.produceBatch(topic, 0, PRODUCE_BATCH);
+                }
                 if (response.errorCode() == ErrorCode.QUOTA_EXCEEDED && mode == StorageMode.IN_MEMORY) {
                     backpressure.increment();
                     LockSupport.parkNanos(1_000_000);

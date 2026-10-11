@@ -16,7 +16,7 @@ public final class SteadyBrokerWorker {
         StorageMode mode = StorageMode.valueOf(args[0]);
         Path control = Path.of(args[1]);
         Path data = args.length > 2 ? Path.of(args[2]) : control.resolve("data");
-        try (var broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null, 512);
+        try (var broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null, 1024);
              var server = new TcpServer(new java.net.InetSocketAddress("127.0.0.1", 0),
                      new FramedConnectionHandler(new BrokerRequestHandler(broker)))) {
             server.start();

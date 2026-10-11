@@ -32,7 +32,7 @@ class QuickBrokerChaosBenchmarkTests {
     private static final int WORKLOAD_TIMEOUT_SECONDS = 300;
     private static final String TOPIC = "quick-chaos";
     private static final String GROUP = "quick-group";
-    private static final int VALUE_BYTES = 256;
+    private static final int VALUE_BYTES = 1024;
 
     @TempDir Path tempDir;
 

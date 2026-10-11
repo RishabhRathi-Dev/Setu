@@ -25,7 +25,6 @@
             <groupId>org.rishabh</groupId>
             <artifactId>setu-client</artifactId>
             <version>${project.version}</version>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.rishabh</groupId>

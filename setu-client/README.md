@@ -53,3 +53,5 @@ From the repository root with the project-required Java 26 JDK:
 ```
 
 The server TLS integration test exercises the client against a local TLS/mTLS broker path. The client module itself currently has no dedicated unit-test source tree.
+
+The packaged application's `--train-aot` workload uses `SetuClient` for plaintext and mTLS produce/fetch/acknowledgement traffic, so the application cache trains the client alongside core, storage, server, and security. See [application AOT training](../setu-server/README.md#standalone-jar). A separate application embedding this library must generate a cache for its own entry point and classpath, with `-XX:+UseZGC -XX:+UseStringDeduplication` in its JVM launch command.
