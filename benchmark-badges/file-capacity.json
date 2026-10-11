@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "file capacity",
-  "message": "2,048×2,048 · JVM OOM · peak CPU 97% · 766 MB · p99 0ms",
-  "color": "red"
+  "message": "256×256 · broker/client limit · peak CPU 0% · 0 MB · p99 537ms",
+  "color": "yellow"
 }
