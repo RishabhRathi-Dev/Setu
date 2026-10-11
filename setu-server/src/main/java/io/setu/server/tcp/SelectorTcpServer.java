@@ -24,11 +24,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Plaintext selector transport with asynchronous request dispatch and bounded client count. */
 public final class SelectorTcpServer implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(SelectorTcpServer.class);
     private static final int INITIAL_READ_CAPACITY = 8 * 1024;
+    private static final AtomicLong SESSION_IDS = new AtomicLong();
 
     private final InetSocketAddress bindAddress;
     private final int maxFrameSize;
@@ -76,6 +79,8 @@ public final class SelectorTcpServer implements AutoCloseable {
         listener = openedListener;
         requestExecutor = Executors.newVirtualThreadPerTaskExecutor();
         running.set(true);
+        LOG.info("Selector server started address={} backlog={} max_connections={} max_frame_bytes={} socket_timeout_ms={}",
+                openedListener.getLocalAddress(), options.acceptBacklog(), options.maxConnections(), maxFrameSize, options.socketTimeoutMillis());
         eventThread = Thread.ofPlatform().name("setu-selector-" + localAddress().getPort()).start(this::runLoop);
     }
 
@@ -107,6 +112,7 @@ public final class SelectorTcpServer implements AutoCloseable {
                             if (key.isValid() && key.isWritable()) writeClient(key, state);
                         }
                     } catch (IOException | RuntimeException failure) {
+                        LOG.warn("Selector connection failed channel={}", key.channel(), failure);
                         closeKey(key);
                     }
                 }
@@ -123,6 +129,7 @@ public final class SelectorTcpServer implements AutoCloseable {
         SocketChannel client;
         while ((client = listener.accept()) != null) {
             if (clients.size() >= options.maxConnections()) {
+                LOG.warn("Selector connection rejected active_connections={} limit={}", clients.size(), options.maxConnections());
                 client.close();
                 continue;
             }
@@ -131,6 +138,8 @@ public final class SelectorTcpServer implements AutoCloseable {
             ClientState state = new ClientState(client, maxFrameSize);
             client.register(selector, SelectionKey.OP_READ, state);
             clients.add(client);
+            if (LOG.isDebugEnabled()) LOG.debug("Selector session opened session={} peer={} active_connections={}",
+                    state.sessionId, client.getRemoteAddress(), clients.size());
         }
     }
 
@@ -170,10 +179,12 @@ public final class SelectorTcpServer implements AutoCloseable {
     }
 
     private void dispatch(ClientState state, SelectionKey key, byte[] request) {
-        try {
+        try (var sessionContext = MDC.putCloseable("sessionId", Long.toString(state.sessionId))) {
             byte[] response = Objects.requireNonNull(processor.process(null, request), "request processor response");
             ByteArrayOutputStream framed = new ByteArrayOutputStream();
             FrameCodec.writeFrame(new DataOutputStream(framed), response, maxFrameSize);
+            if (LOG.isDebugEnabled()) LOG.debug("Selector frame exchanged session={} request_bytes={} response_bytes={}",
+                    state.sessionId, request.length, response.length);
             ByteBuffer bytes = ByteBuffer.wrap(framed.toByteArray());
             completions.add(() -> {
                 if (!key.isValid() || !state.channel.isOpen()) return;
@@ -182,6 +193,7 @@ public final class SelectorTcpServer implements AutoCloseable {
                 key.interestOps(SelectionKey.OP_WRITE);
             });
         } catch (IOException | RuntimeException failure) {
+            LOG.warn("Selector dispatch failed session={} channel={} request_bytes={}", state.sessionId, state.channel, request.length, failure);
             completions.add(() -> closeKey(key));
         }
         selector.wakeup();
@@ -227,8 +239,11 @@ public final class SelectorTcpServer implements AutoCloseable {
         long now = System.nanoTime();
         for (SelectionKey key : selector.keys()) {
             if (key.attachment() instanceof ClientState state && !state.inFlight
-                    && now - state.lastActivityNanos > timeout)
+                    && now - state.lastActivityNanos > timeout) {
+                if (LOG.isDebugEnabled()) LOG.debug("Selector session timed out session={} idle_ms={} timeout_ms={}",
+                        state.sessionId, (now - state.lastActivityNanos) / 1_000_000, options.socketTimeoutMillis());
                 closeKey(key);
+            }
         }
     }
 
@@ -242,7 +257,10 @@ public final class SelectorTcpServer implements AutoCloseable {
         Object attachment = key.attachment();
         key.cancel();
         try { key.channel().close(); } catch (IOException ignored) { }
-        if (attachment instanceof ClientState state) clients.remove(state.channel);
+        if (attachment instanceof ClientState state) {
+            clients.remove(state.channel);
+            LOG.debug("Selector session closed session={} active_connections={}", state.sessionId, clients.size());
+        }
     }
 
     @Override
@@ -262,9 +280,11 @@ public final class SelectorTcpServer implements AutoCloseable {
             catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         }
         if (currentSelector != null) currentSelector.close();
+        LOG.info("Selector server stopped address={}", bindAddress);
     }
 
     private static final class ClientState {
+        private final long sessionId = SESSION_IDS.incrementAndGet();
         private final SocketChannel channel;
         private ByteBuffer inbound = ByteBuffer.allocate(INITIAL_READ_CAPACITY);
         private int expectedBodyLength = -1;

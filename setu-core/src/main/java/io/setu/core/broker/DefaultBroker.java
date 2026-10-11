@@ -20,9 +20,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Single-process broker with selectable in-memory or segmented file partition logs. */
 public final class DefaultBroker implements Broker {
+    private static final Logger LOG = LoggerFactory.getLogger(DefaultBroker.class);
     private static final int MAX_TOPICS = 10_000;
     private static final int MAX_PARTITIONS_PER_TOPIC = 1_024;
     public static final long DEFAULT_ACK_TIMEOUT_MILLIS = 30_000;
@@ -100,6 +103,9 @@ public final class DefaultBroker implements Broker {
             Files.createDirectories(this.dataDirectory);
             recoverTopics();
         }
+        LOG.info("Broker opened storage={} data_directory={} recovered_topics={} max_record_bytes={} segment_bytes={} memory_log_budget_bytes={} ack_timeout_ms={} inactivity_timeout_ms={}",
+                storageMode, this.dataDirectory, topics.size(), maxRecordBytes, maxSegmentBytes,
+                maxRetainedMemoryBytes, ackTimeoutMillis, consumerInactivityTimeoutMillis);
     }
 
     /** Accounted memory-log payload/chunk bytes, including append reservations; excludes protocol buffers and file indexes. */
@@ -145,6 +151,7 @@ public final class DefaultBroker implements Broker {
                 partitions.add(MessageLogs.open(storageMode, file, maxRecordBytes, maxSegmentBytes, memoryBudget));
             }
             topics.put(request.topic(), new TopicState(List.copyOf(partitions)));
+            LOG.info("Topic created topic={} partitions={} storage={}", request.topic(), partitions.size(), storageMode);
         } catch (IOException | RuntimeException failure) {
             closeLogs(partitions);
             throw failure;
@@ -257,6 +264,8 @@ public final class DefaultBroker implements Broker {
             }
             consumers.put(key, new ConsumerState(request.topic(), offsets, fetchedOffsets));
             consumers.get(key).touch(System.nanoTime());
+            if (LOG.isDebugEnabled()) LOG.debug("Consumer joined group={} member={} topic={} initial_offsets={}",
+                    request.groupId(), request.memberId(), request.topic(), offsets);
             reclaimTopic(request.topic());
         } else {
             ConsumerState consumer = consumers.get(key);
@@ -271,6 +280,7 @@ public final class DefaultBroker implements Broker {
         ConsumerState removed = consumers.remove(new ConsumerKey(request.groupId(), request.memberId()));
         if (topic == null && removed != null) topic = removed.topic;
         if (topic != null) reclaimTopic(topic);
+        if (LOG.isDebugEnabled()) LOG.debug("Consumer left group={} member={} topic={}", request.groupId(), request.memberId(), topic);
         return BrokerResponse.ok(request.correlationId(), request.command());
     }
 
@@ -294,6 +304,10 @@ public final class DefaultBroker implements Broker {
                 ConsumerState consumer = entry.getValue();
                 if (!consumer.expired(now, ackTimeoutNanos, consumerInactivityTimeoutNanos)) continue;
                 if (!consumers.remove(entry.getKey(), consumer)) continue;
+                LOG.warn("Consumer expired group={} member={} topic={} inactive_ms={} pending_ack_partitions={} acknowledged_offsets={} fetched_offsets={}",
+                        entry.getKey().groupId, entry.getKey().memberId, consumer.topic,
+                        TimeUnit.NANOSECONDS.toMillis(now - consumer.lastActivityNanos), consumer.pendingAckSince.keySet(),
+                        consumer.nextOffsets, consumer.fetchedOffsets);
                 Map<String, String> members = groupMembers.get(entry.getKey().groupId);
                 if (members != null) {
                     members.remove(entry.getKey().memberId);
@@ -314,7 +328,10 @@ public final class DefaultBroker implements Broker {
                 lowestReadOffset = Math.min(lowestReadOffset,
                         consumer.nextOffsets.getOrDefault(partition, log.nextOffset()));
         }
+        long previousFirst = LOG.isDebugEnabled() ? log.firstOffset() : 0;
         log.discardBefore(lowestReadOffset);
+        if (LOG.isDebugEnabled()) LOG.debug("Memory reclaimed topic={} partition={} previous_first={} first={} next={} retained_budget_bytes={}",
+                topic, partition, previousFirst, log.firstOffset(), log.nextOffset(), memoryBudget.usedBytes());
     }
 
     private synchronized void reclaimTopic(String topic) {
@@ -361,6 +378,7 @@ public final class DefaultBroker implements Broker {
                                 partitionPaths.get(i).resolve("000000000000.log"), maxRecordBytes, maxSegmentBytes, memoryBudget));
                     }
                     topics.put(name, new TopicState(List.copyOf(logs)));
+                    LOG.info("Topic recovered topic={} partitions={} directory={}", name, logs.size(), topicPath);
                 } catch (IOException | RuntimeException failure) {
                     closeLogs(logs);
                     throw failure;
@@ -384,7 +402,8 @@ public final class DefaultBroker implements Broker {
     }
 
     private static void closeLogs(List<MessageLog> logs) {
-        for (MessageLog log : logs) try { log.close(); } catch (IOException ignored) { }
+        for (MessageLog log : logs) try { log.close(); }
+        catch (IOException failure) { LOG.warn("Partition cleanup failed after broker initialization failure", failure); }
     }
 
     @Override
@@ -402,6 +421,7 @@ public final class DefaultBroker implements Broker {
             }
         }
         if (failure != null) throw failure;
+        LOG.info("Broker closed storage={} topics={} retained_budget_bytes={}", storageMode, topics.size(), memoryBudget.usedBytes());
     }
 
     private record TopicState(List<MessageLog> partitions) { }

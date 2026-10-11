@@ -32,13 +32,16 @@ class ProgressiveCapacityChaosTests {
     }
 
     private void runIsolatedRamp(StorageMode mode) throws Exception {
-        Path output = Files.createDirectories(tempDir.resolve("logs"))
-                .resolve(mode.name().toLowerCase() + "-capacity.log");
+        Path logDirectory = Files.createDirectories(Path.of(System.getProperty("SETU_LOG_DIR", "logs"))
+                .resolve("capacity").resolve(mode.name().toLowerCase() + "-" + java.util.UUID.randomUUID()));
+        Path output = logDirectory.resolve("capacity.log");
+        System.out.println("CAPACITY_CAPTURE mode=" + mode + " directory=" + logDirectory.toAbsolutePath());
         String executable = Path.of(System.getProperty("java.home"), "bin",
                 System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java").toString();
         String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
         List<String> command = new ArrayList<>(List.of(executable, "-Xms64m", "-Xmx768m", "-XX:MaxDirectMemorySize=128m"));
-        for (String property : List.of("setu.benchmark.batch.records", "setu.benchmark.stage.millis", "setu.benchmark.max.concurrency")) {
+        command.add("-DSETU_LOG_DIR=" + logDirectory.toAbsolutePath());
+        for (String property : List.of("setu.benchmark.batch.records", "setu.benchmark.stage.millis", "setu.benchmark.max.concurrency", "setu.log.level", "logback.configurationFile")) {
             String value = System.getProperty(property);
             if (value != null) command.add("-D" + property + "=" + value);
         }

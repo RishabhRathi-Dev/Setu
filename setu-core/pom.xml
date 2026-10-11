@@ -14,6 +14,10 @@
 
     <dependencies>
         <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.rishabh</groupId>
             <artifactId>setu-storage</artifactId>
             <version>${project.version}</version>

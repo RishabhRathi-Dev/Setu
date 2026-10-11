@@ -9,9 +9,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Arrays;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Simple record log with recovery by scanning length-prefixed records on open. */
 public final class FileMessageLog implements MessageLog {
+    private static final Logger LOG = LoggerFactory.getLogger(FileMessageLog.class);
+    private final Path path;
     private static final int MAX_RECORDS_PER_READ = 10_000;
     private final FileChannel channel;
     private final int maxRecordBytes;
@@ -27,10 +31,12 @@ public final class FileMessageLog implements MessageLog {
             throw new IllegalArgumentException("maxRecordBytes must be non-negative");
         }
         this.maxRecordBytes = maxRecordBytes;
+        this.path = path.toAbsolutePath().normalize();
         this.channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ,
                 StandardOpenOption.WRITE);
         try { recover(); }
         catch (IOException | RuntimeException failure) {
+            LOG.error("File log recovery failed path={} recovered_records={} recovered_bytes={}", this.path, recordCount, endPosition, failure);
             try { channel.close(); } catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
             throw failure;
         }
@@ -66,6 +72,8 @@ public final class FileMessageLog implements MessageLog {
         }
         positions[recordCount++] = position;
         endPosition += Integer.BYTES + (long) value.length;
+        if (LOG.isDebugEnabled()) LOG.debug("File record persisted path={} offset={} payload_bytes={} end_position={} forced=true",
+                path, offset, value.length, endPosition);
         return offset;
     }
 
@@ -85,6 +93,7 @@ public final class FileMessageLog implements MessageLog {
         reserveIndex(values.size());
         long position = endPosition;
         long firstOffset = recordCount;
+        long started = LOG.isDebugEnabled() ? System.nanoTime() : 0;
         ByteBuffer batch = ByteBuffer.allocate((int) encodedBytes);
         for (byte[] value : values) {
             batch.putInt(value.length).put(value);
@@ -97,12 +106,16 @@ public final class FileMessageLog implements MessageLog {
         } catch (IOException failure) {
             try { channel.truncate(position); channel.position(position); }
             catch (IOException rollbackFailure) { failure.addSuppressed(rollbackFailure); }
+            LOG.error("File batch append failed path={} first_offset={} records={} encoded_bytes={} rollback_position={}",
+                    path, firstOffset, values.size(), encodedBytes, position, failure);
             throw failure;
         }
         for (byte[] value : values) {
             positions[recordCount++] = endPosition;
             endPosition += Integer.BYTES + (long) value.length;
         }
+        if (LOG.isDebugEnabled()) LOG.debug("File batch persisted path={} first_offset={} records={} encoded_bytes={} end_position={} forced=true elapsed_us={}",
+                path, firstOffset, values.size(), encodedBytes, endPosition, (System.nanoTime() - started) / 1000);
         return firstOffset;
     }
 
@@ -143,6 +156,8 @@ public final class FileMessageLog implements MessageLog {
                 records.add(new LogRecord(offset++, value));
             }
         }
+        if (LOG.isDebugEnabled()) LOG.debug("File fetch path={} first_offset={} max_bytes={} records={} payload_bytes={}",
+                path, firstOffset, maxBytes, records.size(), bytesRead);
         return List.copyOf(records);
     }
 
@@ -170,10 +185,13 @@ public final class FileMessageLog implements MessageLog {
             position += Integer.BYTES + length;
         }
         if (position != size) {
+            LOG.warn("Discarding incomplete or invalid log tail path={} original_bytes={} valid_bytes={} discarded_bytes={} valid_records={}",
+                    path, size, position, size - position, recordCount);
             channel.truncate(position);
         }
         channel.position(position);
         endPosition = position;
+        LOG.info("File log recovered path={} records={} bytes={} max_record_bytes={}", path, recordCount, endPosition, maxRecordBytes);
     }
 
     private boolean readFully(ByteBuffer buffer) throws IOException {

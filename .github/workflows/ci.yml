@@ -98,6 +98,17 @@ jobs:
           --server-url "$GITHUB_SERVER_URL"
           --visibility "${{ github.event.repository.private && 'private' || 'public' }}"
 
+      - name: Retain benchmark logs and failure reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-diagnostics-${{ github.run_attempt }}
+          path: |
+            logs/
+            ${{ runner.temp }}/logs/
+            **/target/surefire-reports/
+          retention-days: 14
+
       - name: Publish latest benchmark badges
         if: success() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         shell: bash

@@ -20,9 +20,12 @@ import java.net.Socket;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Synchronous Setu protocol v1 client. Calls on one instance are serialized. */
 public final class SetuClient implements AutoCloseable {
+    private static final Logger LOG = LoggerFactory.getLogger(SetuClient.class);
     private final Socket socket;
     private final DataInputStream input;
     private final DataOutputStream output;
@@ -32,9 +35,13 @@ public final class SetuClient implements AutoCloseable {
     private SetuClient(Socket socket, int maxFrameSize) throws IOException {
         if (maxFrameSize < 0) throw new IllegalArgumentException("maxFrameSize must be non-negative");
         this.socket = socket;
+        socket.setTcpNoDelay(true);
         this.maxFrameSize = maxFrameSize;
         this.input = new DataInputStream(socket.getInputStream());
         this.output = new DataOutputStream(socket.getOutputStream());
+        if (LOG.isDebugEnabled()) LOG.debug("Client connected peer={} local={} max_frame_bytes={} read_timeout_ms={} tcp_nodelay={}",
+                socket.getRemoteSocketAddress(), socket.getLocalSocketAddress(), maxFrameSize,
+                socket.getSoTimeout(), socket.getTcpNoDelay());
     }
 
     public static SetuClient connectTls(String host, int port, SSLContext context,
@@ -49,6 +56,7 @@ public final class SetuClient implements AutoCloseable {
         try {
             transport.connect(new InetSocketAddress(host, port), connectTimeoutMillis);
             transport.setSoTimeout(readTimeoutMillis);
+            transport.setTcpNoDelay(true);
             SSLSocket tls = (SSLSocket) context.getSocketFactory().createSocket(transport, host, port, true);
             SSLParameters parameters = tls.getSSLParameters();
             if (enabledProtocols != null && !enabledProtocols.isEmpty())
@@ -60,8 +68,12 @@ public final class SetuClient implements AutoCloseable {
             tls.setUseClientMode(true);
             tls.setSoTimeout(readTimeoutMillis);
             tls.startHandshake();
+            LOG.info("TLS connected host={} port={} protocol={} cipher={}", host, port,
+                    tls.getSession().getProtocol(), tls.getSession().getCipherSuite());
             return new SetuClient(tls, maxFrameSize);
         } catch (IOException | RuntimeException failure) {
+            LOG.error("TLS connection failed host={} port={} connect_timeout_ms={} read_timeout_ms={}",
+                    host, port, connectTimeoutMillis, readTimeoutMillis, failure);
             try { transport.close(); } catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
             throw failure;
         }
@@ -87,22 +99,42 @@ public final class SetuClient implements AutoCloseable {
             socket.setSoTimeout(readTimeoutMillis);
             return new SetuClient(socket, maxFrameSize);
         } catch (IOException | RuntimeException failure) {
+            LOG.error("Plaintext connection failed host={} port={} connect_timeout_ms={} read_timeout_ms={}",
+                    host, port, connectTimeoutMillis, readTimeoutMillis, failure);
             try { socket.close(); } catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
             throw failure;
         }
     }
 
     public synchronized BrokerResponse request(BrokerRequest request) throws IOException {
-        byte[] requestBytes = ProtocolCodec.encodeRequest(request);
-        FrameCodec.writeFrame(output, requestBytes, maxFrameSize);
-        byte[] responseBytes = FrameCodec.readFrame(input, maxFrameSize);
-        if (responseBytes == null) throw new EOFException("Broker closed the connection before replying");
-        BrokerResponse response = ProtocolCodec.decodeResponse(responseBytes);
-        if (response.correlationId() != request.correlationId())
-            throw new IOException("Response correlation id does not match request");
-        if (response.command() != request.command())
-            throw new IOException("Response command does not match request");
-        return response;
+        long started = LOG.isDebugEnabled() ? System.nanoTime() : 0;
+        try {
+            byte[] requestBytes = ProtocolCodec.encodeRequest(request);
+            if (LOG.isDebugEnabled()) LOG.debug("Sending command={} correlation={} peer={} topic={} partition={} offset={} frame_bytes={}",
+                    request.command(), request.correlationId(), socket.getRemoteSocketAddress(),
+                    request.topic(), request.partition(), request.offset(), requestBytes.length);
+            FrameCodec.writeFrame(output, requestBytes, maxFrameSize);
+            byte[] responseBytes = FrameCodec.readFrame(input, maxFrameSize);
+            if (responseBytes == null) throw new EOFException("Broker closed the connection before replying");
+            BrokerResponse response = ProtocolCodec.decodeResponse(responseBytes);
+            if (response.correlationId() != request.correlationId())
+                throw new IOException("Response correlation id does not match request");
+            if (response.command() != request.command())
+                throw new IOException("Response command does not match request");
+            if (LOG.isDebugEnabled()) LOG.debug("Received command={} correlation={} error={} offset={} records={} frame_bytes={} elapsed_us={}",
+                    response.command(), response.correlationId(), response.errorCode(), response.offset(),
+                    response.records().size(), responseBytes.length, (System.nanoTime() - started) / 1000);
+            if (response.errorCode() != io.setu.core.protocol.ErrorCode.NONE)
+                LOG.warn("Broker rejected command={} correlation={} peer={} topic={} partition={} error={} reason={}",
+                        request.command(), request.correlationId(), socket.getRemoteSocketAddress(),
+                        request.topic(), request.partition(), response.errorCode(), response.errorMessage());
+            return response;
+        } catch (IOException | RuntimeException failure) {
+            LOG.error("Client request failed command={} correlation={} peer={} topic={} partition={} offset={}",
+                    request.command(), request.correlationId(), socket.getRemoteSocketAddress(),
+                    request.topic(), request.partition(), request.offset(), failure);
+            throw failure;
+        }
     }
 
     public BrokerResponse createTopic(String topic, int partitions) throws IOException {
@@ -166,6 +198,7 @@ public final class SetuClient implements AutoCloseable {
 
     @Override
     public synchronized void close() throws IOException {
+        if (LOG.isDebugEnabled()) LOG.debug("Client closing peer={}", socket.getRemoteSocketAddress());
         socket.close();
     }
 }

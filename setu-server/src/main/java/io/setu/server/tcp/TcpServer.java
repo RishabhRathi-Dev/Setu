@@ -57,6 +57,8 @@ public final class TcpServer implements AutoCloseable {
         serverChannel = channel;
         connectionExecutor = Executors.newVirtualThreadPerTaskExecutor();
         running.set(true);
+        log.info("TCP server started address={} backlog={} max_connections={} socket_timeout_ms={}",
+                channel.getLocalAddress(), options.acceptBacklog(), options.maxConnections(), options.socketTimeoutMillis());
         acceptThread = Thread.ofPlatform().name("setu-accept-" + ((InetSocketAddress) channel.getLocalAddress()).getPort())
                 .start(this::acceptConnections);
     }
@@ -84,6 +86,7 @@ public final class TcpServer implements AutoCloseable {
                 SocketChannel client = serverChannel.accept();
                 clients.add(client);
                 if (clients.size() > options.maxConnections()) {
+                    log.warn("Connection rejected: active_connections={} max_connections={}", clients.size(), options.maxConnections());
                     clients.remove(client);
                     closeQuietly(client);
                     continue;
@@ -108,6 +111,7 @@ public final class TcpServer implements AutoCloseable {
 
     private void handleClient(SocketChannel client) {
         try {
+            client.setOption(StandardSocketOptions.TCP_NODELAY, true);
             if (options.socketTimeoutMillis() > 0) {
                 client.socket().setSoTimeout(options.socketTimeoutMillis());
             }
@@ -166,6 +170,7 @@ public final class TcpServer implements AutoCloseable {
         if (failure != null) {
             throw failure;
         }
+        log.info("TCP server stopped address={} remaining_connections={}", bindAddress, clients.size());
     }
 
     private static void closeQuietly(SocketChannel channel) {

@@ -9,9 +9,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Append-only partition log split into files whose names contain their base offsets. */
 public final class SegmentedFileMessageLog implements MessageLog {
+    private static final Logger LOG = LoggerFactory.getLogger(SegmentedFileMessageLog.class);
     private static final int MAX_RECORDS_PER_READ = 10_000;
     private static final Pattern SEGMENT_NAME = Pattern.compile("([0-9]{12,})\\.log");
     private final Path directory;
@@ -30,6 +33,8 @@ public final class SegmentedFileMessageLog implements MessageLog {
         this.maxSegmentBytes = maxSegmentBytes;
         Files.createDirectories(this.directory);
         recover();
+        LOG.info("Partition log opened directory={} segments={} first_offset={} next_offset={} max_segment_bytes={}",
+                this.directory, segments.size(), firstOffset, nextOffset, maxSegmentBytes);
     }
 
     @Override
@@ -165,6 +170,8 @@ public final class SegmentedFileMessageLog implements MessageLog {
         FileMessageLog log = new FileMessageLog(path, maxRecordBytes);
         Segment segment = new Segment(baseOffset, path, log);
         segments.add(segment);
+        LOG.info("Segment created path={} base_offset={} segment_count={} max_segment_bytes={}",
+                path, baseOffset, segments.size(), maxSegmentBytes);
         return segment;
     }
 

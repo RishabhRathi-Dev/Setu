@@ -7,9 +7,12 @@ import java.util.Objects;
 import java.util.Arrays;
 import java.util.NavigableMap;
 import java.util.TreeMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Append-only partition log retained only for the lifetime of this instance. */
 public final class InMemoryMessageLog implements MessageLog {
+    private static final Logger LOG = LoggerFactory.getLogger(InMemoryMessageLog.class);
     private static final int MAX_RECORDS_PER_READ = 10_000;
     private final int maxRecordBytes;
     private static final int CHUNK_RECORDS = 1024;
@@ -63,6 +66,8 @@ public final class InMemoryMessageLog implements MessageLog {
         long before = retainedBytes;
         try {
             for (byte[] value : values) appendValidated(value);
+            if (LOG.isDebugEnabled()) LOG.debug("Memory batch appended first_offset={} records={} next_offset={} retained_bytes={} shared_budget_bytes={}",
+                    first, values.size(), nextOffset, retainedBytes, budget.usedBytes());
             return first;
         } finally { budget.release(reservation - (retainedBytes - before)); }
     }
@@ -132,6 +137,8 @@ public final class InMemoryMessageLog implements MessageLog {
         firstOffset = target;
         retainedBytes -= releasedBytes;
         budget.release(releasedBytes);
+        if (releasedBytes > 0 && LOG.isDebugEnabled()) LOG.debug("Memory records discarded first_offset={} next_offset={} released_bytes={} retained_bytes={} shared_budget_bytes={}",
+                firstOffset, nextOffset, releasedBytes, retainedBytes, budget.usedBytes());
     }
 
     private long chunkReservation(int count) {

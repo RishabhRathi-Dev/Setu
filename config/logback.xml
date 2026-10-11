@@ -5,7 +5,7 @@
     <property name="LOG_DIR" value="${SETU_LOG_DIR:-logs}"/>
 
     <property name="LOG_PATTERN"
-              value="%d{yyyy-MM-dd HH:mm:ss.SSS} | %X{sessionId:-} | %X{principal:-} | %thread | %X{module:-} | %logger{0} | %-5level | %msg%n"/>
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} | session=%X{sessionId:-} | principal=%X{principal:-} | correlation=%X{correlationId:-} | %thread | %logger{40} | %-5level | %msg%n%ex"/>
 
     <appender name="CONSOLE"
               class="ch.qos.logback.core.ConsoleAppender">
@@ -40,11 +40,7 @@
 
     </appender>
 
-    <logger name="io.setu.core" level="INFO"/>
-    <logger name="io.setu.storage" level="INFO"/>
-    <logger name="io.setu.server" level="INFO"/>
-    <logger name="io.setu.security" level="INFO"/>
-    <logger name="io.setu.client" level="INFO"/>
+    <logger name="io.setu" level="${setu.log.level:-${SETU_LOG_LEVEL:-DEBUG}}"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

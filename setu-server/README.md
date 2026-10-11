@@ -102,6 +102,8 @@ For `IN_MEMORY`, `memory.log.max.bytes` bounds retained log payload/chunk accoun
 
 The packaged Logback configuration persists operational logs as `logs/setu.log`, rotates at 100 MB or daily, retains up to 14 days, and caps archives at 2 GB. Set `SETU_LOG_DIR` to change the log directory, or use `-Dlogback.configurationFile=<path>` before `-jar` to provide a different logging configuration. Operational logs and durable message segment files are separate artifacts. See [server.properties](../config/server.properties) and [logback.xml](../config/logback.xml).
 
+Operational logging defaults to `DEBUG`. Use `SETU_LOG_LEVEL=INFO` or `-Dsetu.log.level=INFO` before `-jar` to reduce request logging; the JVM property takes precedence. DEBUG records command, correlation ID, topic/partition, offsets, frame sizes, result counts, and elapsed request/append times. Connection events identify sessions and peers; security decisions identify principals and resources. Recovery reports segment counts and offsets, and warns when an invalid tail is truncated. Unexpected failures retain their complete exception chain and stack trace in the logs while clients receive the existing structured errors. Record payloads, passwords, and private keys are not logged.
+
 Packaging keeps Java bytecode on the JVM. It provides a launchable distribution; performance claims come from benchmarks.
 
 ## Embedded TCP server lifecycle

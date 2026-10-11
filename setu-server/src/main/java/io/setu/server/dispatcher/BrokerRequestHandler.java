@@ -10,9 +10,13 @@ import io.setu.core.protocol.ProtocolException;
 
 import java.io.IOException;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 /** Decodes protocol v1 commands, invokes the broker API, and encodes structured responses. */
 public final class BrokerRequestHandler implements RequestHandler {
+    private static final Logger LOG = LoggerFactory.getLogger(BrokerRequestHandler.class);
     private final Broker broker;
 
     public BrokerRequestHandler(Broker broker) {
@@ -21,18 +25,49 @@ public final class BrokerRequestHandler implements RequestHandler {
 
     @Override
     public byte[] handle(byte[] payload) {
+        BrokerRequest request = null;
+        long started = LOG.isDebugEnabled() ? System.nanoTime() : 0;
+        boolean contextualLogging = LOG.isDebugEnabled();
+        String previousCorrelation = contextualLogging ? MDC.get("correlationId") : null;
         try {
-            BrokerRequest request = ProtocolCodec.decodeRequest(payload);
+            request = ProtocolCodec.decodeRequest(payload);
+            if (LOG.isDebugEnabled()) MDC.put("correlationId", Integer.toString(request.correlationId()));
+            if (LOG.isDebugEnabled()) LOG.debug("Request command={} correlation={} topic={} partition={} offset={} group={} member={} frame_bytes={}",
+                    request.command(), request.correlationId(), request.topic(), request.partition(), request.offset(),
+                    request.groupId(), request.memberId(), payload.length);
             BrokerResponse response = broker.execute(request);
-            return ProtocolCodec.encodeResponse(response);
+            byte[] encoded = ProtocolCodec.encodeResponse(response);
+            if (LOG.isDebugEnabled()) LOG.debug("Reply command={} correlation={} error={} offset={} records={} frame_bytes={} elapsed_us={}",
+                    response.command(), response.correlationId(), response.errorCode(), response.offset(),
+                    response.records().size(), encoded.length, (System.nanoTime() - started) / 1000);
+            return encoded;
         } catch (ProtocolException failure) {
+            LOG.warn("Malformed request frame_bytes={} reason={}", payload.length, failure.getMessage());
             return ProtocolCodec.errorResponse(payload, failure.errorCode(), failure.getMessage());
         } catch (BrokerException failure) {
+            LOG.warn("Request rejected command={} correlation={} topic={} partition={} error={} reason={}",
+                    request == null ? null : request.command(), request == null ? null : request.correlationId(),
+                    request == null ? null : request.topic(), request == null ? null : request.partition(),
+                    failure.errorCode(), failure.getMessage());
             return ProtocolCodec.errorResponse(payload, failure.errorCode(), failure.getMessage());
         } catch (IOException failure) {
+            logFailure(request, payload.length, failure);
             return ProtocolCodec.errorResponse(payload, ErrorCode.INTERNAL_ERROR, "Broker I/O failure");
         } catch (RuntimeException failure) {
+            logFailure(request, payload.length, failure);
             return ProtocolCodec.errorResponse(payload, ErrorCode.INTERNAL_ERROR, "Internal broker failure");
+        } finally {
+            if (contextualLogging) {
+                if (previousCorrelation == null) MDC.remove("correlationId");
+                else MDC.put("correlationId", previousCorrelation);
+            }
         }
+    }
+
+    private static void logFailure(BrokerRequest request, int bytes, Exception failure) {
+        LOG.error("Broker request failed command={} correlation={} topic={} partition={} offset={} frame_bytes={}",
+                request == null ? null : request.command(), request == null ? null : request.correlationId(),
+                request == null ? null : request.topic(), request == null ? null : request.partition(),
+                request == null ? null : request.offset(), bytes, failure);
     }
 }

@@ -40,28 +40,37 @@ final class ProgressiveCapacityChaosWorker {
     private static final byte[] PAYLOAD = new byte[RECORD_BYTES];
     private static final List<byte[]> PRODUCE_BATCH = java.util.Collections.nCopies(BATCH_RECORDS, PAYLOAD);
     private static final Field CLIENT_SOCKET = clientSocketField();
+    private static CapacityStopReporter stopReporter;
 
     private ProgressiveCapacityChaosWorker() { }
 
     public static void main(String[] args) {
         if (args.length != 2) throw new IllegalArgumentException("Expected <storage-mode> <data-directory>");
         StorageMode mode = StorageMode.valueOf(args[0]);
+        stopReporter = new CapacityStopReporter(mode.name());
         if (MAX_CONCURRENCY != 0 && Integer.bitCount(MAX_CONCURRENCY) != 1)
             throw new IllegalArgumentException("setu.benchmark.max.concurrency must be zero or a power of two");
         System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d max_concurrency=%d quotas=disabled memory_log_budget=unlimited%n",
                 mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, MAX_CONCURRENCY);
         Path dataRoot = Path.of(args[1]);
+        System.out.printf(Locale.ROOT, "CAPACITY_RUNTIME java=%s os=%s cpus=%d max_heap_mb=%d log_level=%s log_directory=%s tcp_nodelay=true%n",
+                System.getProperty("java.version"), System.getProperty("os.name").replace(' ', '_'),
+                Runtime.getRuntime().availableProcessors(), Runtime.getRuntime().maxMemory() / (1024 * 1024),
+                System.getProperty("setu.log.level", "INFO"), System.getProperty("SETU_LOG_DIR", "logs"));
         AtomicBoolean outOfMemory = new AtomicBoolean();
         Thread.setDefaultUncaughtExceptionHandler((thread, failure) -> {
-            if (failure instanceof OutOfMemoryError) outOfMemory.set(true);
-            else System.err.println("WORKER_THREAD_FAILURE thread=" + thread.getName() + " error=" + failure);
+            if (failure instanceof OutOfMemoryError) stopReporter.heapExhausted();
+            else {
+                System.err.println("WORKER_THREAD_FAILURE thread=" + thread.getName());
+                failure.printStackTrace(System.err);
+            }
         });
         try {
             run(mode, dataRoot, outOfMemory);
         } catch (OutOfMemoryError exhausted) {
-            stop(mode, "JVM_OOM", 0, 0, "main-thread heap allocation failed");
-            Runtime.getRuntime().halt(42);
+            stopReporter.heapExhausted();
         } catch (Throwable failure) {
+            failure.printStackTrace(System.err);
             stop(mode, "WORKER_FAILURE", 0, 0, failure.toString());
             Runtime.getRuntime().halt(43);
         }
@@ -85,14 +94,16 @@ final class ProgressiveCapacityChaosWorker {
             List<SetuClient> consumers = new ArrayList<>();
             while (true) {
                 stage++;
+                stopReporter.prepareStage(stage, concurrency);
+                System.out.printf("CAPACITY_PREPARE mode=%s stage=%d producers=%d consumers=%d%n", mode, stage, concurrency, concurrency);
                 StageResult result;
                 try {
                     result = runStage(mode, stage, concurrency, server, producers, consumers, clients, os, outOfMemory);
                 } catch (OutOfMemoryError exhausted) {
-                    stop(mode, "JVM_OOM", stage, concurrency / 2, "heap exhausted while preparing load stage");
-                    Runtime.getRuntime().halt(42);
+                    stopReporter.heapExhausted();
                     return;
                 } catch (IOException | RuntimeException resourceFailure) {
+                    resourceFailure.printStackTrace(System.err);
                     stop(mode, "RESOURCE_LIMIT", stage, concurrency / 2,
                             resourceFailure.getClass().getSimpleName() + ": " + resourceFailure.getMessage());
                     return;
@@ -100,8 +111,7 @@ final class ProgressiveCapacityChaosWorker {
 
                 printStage(mode, result);
                 if (outOfMemory.get() || "JVM_OOM".equals(result.reason)) {
-                    stop(mode, "JVM_OOM", stage, concurrency, "JVM heap exhausted during active load");
-                    Runtime.getRuntime().halt(42);
+                    stopReporter.heapExhausted();
                 }
                 if (result.reason != null) {
                     stop(mode, result.reason, stage, concurrency, result.detail);
@@ -117,6 +127,8 @@ final class ProgressiveCapacityChaosWorker {
                 }
                 concurrency *= 2;
             }
+        } catch (OutOfMemoryError exhausted) {
+            stopReporter.heapExhausted();
         } finally {
             for (SetuClient client : clients) closeQuietly(client);
             server.close();
@@ -199,6 +211,12 @@ final class ProgressiveCapacityChaosWorker {
                 }
                 MemoryUsage usage = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
                 heapUsed = usage.getUsed();
+                if (cpuSamples % 4 == 0) {
+                    System.out.printf(Locale.ROOT,
+                            "CAPACITY_SAMPLE mode=%s stage=%d elapsed_ms=%d produced=%d consumed=%d cpu=%.3f heap_mb=%.1f%n",
+                            mode, stage, (System.nanoTime() - started) / 1_000_000, produced.sum(), consumed.sum(),
+                            cpu, heapUsed / (1024.0 * 1024));
+                }
             }
             elapsedNanos = Math.max(1, System.nanoTime() - started);
             cpuAverage = cpuSamples == 0 ? 0 : cpuTotal / cpuSamples;
@@ -207,6 +225,8 @@ final class ProgressiveCapacityChaosWorker {
                 reason = "BROKER_OR_CLIENT_LIMIT";
                 detail = workerFailure.get().toString();
             }
+        } catch (OutOfMemoryError exhausted) {
+            stopReporter.heapExhausted();
         } finally {
             running.set(false);
             if (outOfMemory.get()) {
@@ -246,10 +266,12 @@ final class ProgressiveCapacityChaosWorker {
                 latency.record(System.nanoTime() - start);
             }
         } catch (OutOfMemoryError exhausted) {
-            outOfMemory.set(true);
-            running.set(false);
+            stopReporter.heapExhausted();
         } catch (Throwable problem) {
-            if (running.get()) failure.compareAndSet(null, problem);
+            if (running.get() && failure.compareAndSet(null, problem)) {
+                System.err.println("CAPACITY_REQUEST_FAILURE operation=produce topic=" + topic);
+                problem.printStackTrace(System.err);
+            }
         }
     }
 
@@ -277,10 +299,13 @@ final class ProgressiveCapacityChaosWorker {
                 latency.record(System.nanoTime() - start);
             }
         } catch (OutOfMemoryError exhausted) {
-            outOfMemory.set(true);
-            running.set(false);
+            stopReporter.heapExhausted();
         } catch (Throwable problem) {
-            if (running.get()) failure.compareAndSet(null, problem);
+            if (running.get() && failure.compareAndSet(null, problem)) {
+                System.err.println("CAPACITY_REQUEST_FAILURE operation=fetch_ack topic=" + topic + " group=" + group
+                        + " member=" + member + " offset=" + offset);
+                problem.printStackTrace(System.err);
+            }
         }
     }
 
@@ -305,6 +330,10 @@ final class ProgressiveCapacityChaosWorker {
                 result.cpuAverage, result.cpuMaximum, result.heapUsed / (1024.0 * 1024),
                 result.p99Nanos / 1_000_000.0, result.reason == null ? "ramp" : result.reason);
         System.out.flush();
+        long gcMillis = ManagementFactory.getGarbageCollectorMXBeans().stream()
+                .mapToLong(bean -> Math.max(0, bean.getCollectionTime())).sum();
+        System.out.printf("CAPACITY_DIAGNOSTICS mode=%s stage=%d live_threads=%d gc_total_ms=%d%n",
+                mode, result.stage, ManagementFactory.getThreadMXBean().getThreadCount(), gcMillis);
     }
 
     private static void stop(StorageMode mode, String reason, int stage, int concurrency, String detail) {

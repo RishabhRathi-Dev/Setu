@@ -13,6 +13,12 @@
 
     <dependencies>
         <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.5.25</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.rishabh</groupId>
             <artifactId>setu-core</artifactId>
             <version>${project.version}</version>
@@ -39,4 +45,18 @@
         </dependency>
     </dependencies>
 
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <SETU_LOG_DIR>${maven.multiModuleProjectDirectory}/logs/benchmarks</SETU_LOG_DIR>
+                        <logback.configurationFile>${project.basedir}/src/test/resources/logback-test.xml</logback.configurationFile>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

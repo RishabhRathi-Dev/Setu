@@ -29,7 +29,9 @@ class BrokerCrashChaosTests {
         String javaExecutable = Path.of(System.getProperty("java.home"), "bin",
                 System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java").toString();
         String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
-        Process child = new ProcessBuilder(javaExecutable, "-cp", classpath,
+        Process child = new ProcessBuilder(javaExecutable,
+                "-DSETU_LOG_DIR=" + output.getParent().toAbsolutePath(),
+                "-Dlogback.configurationFile=" + System.getProperty("logback.configurationFile"), "-cp", classpath,
                 BrokerCrashWorker.class.getName(), data.toString(), ready.toString(), Integer.toString(RECORDS))
                 .redirectErrorStream(true).redirectOutput(output.toFile()).start();
         try {
