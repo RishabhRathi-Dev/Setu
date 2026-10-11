@@ -17,7 +17,8 @@ public final class InMemoryMessageLog implements MessageLog {
     private final int maxRecordBytes;
     private static final int CHUNK_RECORDS = 1024;
     // Conservative reference-array, map-entry, key, and chunk-object allowance.
-    private static final long CHUNK_MEMORY_BYTES = CHUNK_RECORDS * (long) Long.BYTES + 128;
+    private final long chunkMemoryBytes;
+    private final boolean trackRetention;
     private final MemoryLogBudget budget;
     private long retainedBytes;
     private final NavigableMap<Long, Chunk> chunks = new TreeMap<>();
@@ -31,9 +32,16 @@ public final class InMemoryMessageLog implements MessageLog {
     }
 
     public InMemoryMessageLog(int maxRecordBytes, MemoryLogBudget budget) {
+        this(maxRecordBytes, budget, false);
+    }
+
+    public InMemoryMessageLog(int maxRecordBytes, MemoryLogBudget budget, boolean trackRetention) {
         if (maxRecordBytes < 0) throw new IllegalArgumentException("maxRecordBytes must be non-negative");
         this.maxRecordBytes = maxRecordBytes;
         this.budget = Objects.requireNonNull(budget, "budget");
+        this.trackRetention = trackRetention;
+        this.chunkMemoryBytes = CHUNK_RECORDS * (long) Long.BYTES + 128
+                + (trackRetention ? CHUNK_RECORDS * (long) Long.BYTES + 24 : 0);
     }
 
     @Override
@@ -51,21 +59,26 @@ public final class InMemoryMessageLog implements MessageLog {
 
     @Override
     public synchronized long appendBatch(List<byte[]> values) throws IOException {
+        return appendValues(values.stream().map(MessageValue::copyOf).toList());
+    }
+
+    @Override
+    public synchronized long appendValues(List<MessageValue> values) throws IOException {
         ensureOpen();
         Objects.requireNonNull(values, "values");
         if (values.isEmpty()) throw new IllegalArgumentException("values must not be empty");
         long first = nextOffset;
         long reservation = chunkReservation(values.size());
-        for (byte[] value : values) {
+        for (MessageValue value : values) {
             Objects.requireNonNull(value, "value");
-            if (value.length > maxRecordBytes)
-                throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
+            if (value.length() > maxRecordBytes)
+                throw new IOException("Record size " + value.length() + " exceeds maximum " + maxRecordBytes);
             reservation += recordMemoryBytes(value);
         }
         budget.reserve(reservation);
         long before = retainedBytes;
         try {
-            for (byte[] value : values) appendValidated(value);
+            for (MessageValue value : values) appendValidated(value);
             if (LOG.isDebugEnabled()) LOG.debug("Memory batch appended first_offset={} records={} next_offset={} retained_bytes={} shared_budget_bytes={}",
                     first, values.size(), nextOffset, retainedBytes, budget.usedBytes());
             return first;
@@ -74,6 +87,11 @@ public final class InMemoryMessageLog implements MessageLog {
 
     @Override
     public synchronized List<LogRecord> read(long firstOffset, int maxBytes) throws IOException {
+        return read(firstOffset, maxBytes, ReadAdmission.UNLIMITED);
+    }
+
+    @Override
+    public synchronized List<LogRecord> read(long firstOffset, int maxBytes, ReadAdmission admission) throws IOException {
         ensureOpen();
         if (firstOffset < 0 || maxBytes < 0)
             throw new IllegalArgumentException("offset and maxBytes must be non-negative");
@@ -91,6 +109,7 @@ public final class InMemoryMessageLog implements MessageLog {
                 int length = value.length();
                 if (bytesRead + length > maxBytes || result.size() == MAX_RECORDS_PER_READ)
                     return List.copyOf(result);
+                admission.reserve(bytesRead + length + 64L * (result.size() + 1) + 22);
                 result.add(new LogRecord(entry.getKey() + i, value));
                 bytesRead += length;
             }
@@ -118,7 +137,7 @@ public final class InMemoryMessageLog implements MessageLog {
         while (!chunks.isEmpty()) {
             var first = chunks.firstEntry();
             if (first.getKey() + first.getValue().count > target) break;
-            releasedBytes += CHUNK_MEMORY_BYTES + first.getValue().payloadBytes;
+            releasedBytes += chunkMemoryBytes + first.getValue().payloadBytes;
             chunks.pollFirstEntry();
         }
         if (chunks.isEmpty()) active = null;
@@ -141,10 +160,24 @@ public final class InMemoryMessageLog implements MessageLog {
                 firstOffset, nextOffset, releasedBytes, retainedBytes, budget.usedBytes());
     }
 
+    /** Optional lossy retention; timestamps use a monotonic clock and expire individual records. */
+    public synchronized void discardExpired(long now, long retentionNanos) throws IOException {
+        if (retentionNanos <= 0 || !trackRetention) return;
+        long target = firstOffset;
+        for (var entry : chunks.entrySet()) {
+            Chunk chunk = entry.getValue();
+            for (int i = chunk.discarded; i < chunk.count; i++) {
+                if (now - chunk.appendedNanos[i] < retentionNanos) { discardBefore(target); return; }
+                target = entry.getKey() + i + 1;
+            }
+        }
+        discardBefore(target);
+    }
+
     private long chunkReservation(int count) {
         int available = active == null ? 0 : CHUNK_RECORDS - active.count;
         long newChunks = (Math.max(0L, count - (long) available) + CHUNK_RECORDS - 1) / CHUNK_RECORDS;
-        return newChunks * CHUNK_MEMORY_BYTES;
+        return newChunks * chunkMemoryBytes;
     }
 
     private static long recordMemoryBytes(byte[] value) {
@@ -157,13 +190,17 @@ public final class InMemoryMessageLog implements MessageLog {
     }
 
     private long appendValidated(byte[] value) {
-        MessageValue copy = MessageValue.copyOf(value);
+        return appendValidated(MessageValue.copyOf(value));
+    }
+
+    private long appendValidated(MessageValue copy) {
         if (active == null || active.count == CHUNK_RECORDS) {
-            Chunk created = new Chunk();
+            Chunk created = new Chunk(trackRetention);
             chunks.put(nextOffset, created);
             active = created;
-            retainedBytes += CHUNK_MEMORY_BYTES;
+            retainedBytes += chunkMemoryBytes;
         }
+        if (trackRetention) active.appendedNanos[active.count] = System.nanoTime();
         active.records[active.count++] = copy;
         long bytes = recordMemoryBytes(copy);
         active.payloadBytes += bytes;
@@ -173,6 +210,8 @@ public final class InMemoryMessageLog implements MessageLog {
 
     private static final class Chunk {
         private final MessageValue[] records = new MessageValue[CHUNK_RECORDS];
+        private final long[] appendedNanos;
+        private Chunk(boolean retention) { appendedNanos = retention ? new long[CHUNK_RECORDS] : null; }
         private int count;
         private int discarded;
         private long payloadBytes;

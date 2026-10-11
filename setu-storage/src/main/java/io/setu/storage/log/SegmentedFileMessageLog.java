@@ -57,13 +57,18 @@ public final class SegmentedFileMessageLog implements MessageLog {
 
     @Override
     public synchronized long appendBatch(List<byte[]> values) throws IOException {
+        return appendValues(values.stream().map(MessageValue::copyOf).toList());
+    }
+
+    @Override
+    public synchronized long appendValues(List<MessageValue> values) throws IOException {
         ensureOpen();
         Objects.requireNonNull(values, "values");
         if (values.isEmpty()) throw new IllegalArgumentException("values must not be empty");
-        for (byte[] value : values) {
+        for (MessageValue value : values) {
             Objects.requireNonNull(value, "value");
-            if (value.length > maxRecordBytes)
-                throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
+            if (value.length() > maxRecordBytes)
+                throw new IOException("Record size " + value.length() + " exceeds maximum " + maxRecordBytes);
         }
         long firstOffset = nextOffset;
         int start = 0;
@@ -73,7 +78,7 @@ public final class SegmentedFileMessageLog implements MessageLog {
             int end = start;
             long batchBytes = 0;
             while (end < values.size()) {
-                long recordBytes = Integer.BYTES + (long) values.get(end).length;
+                long recordBytes = Integer.BYTES + (long) values.get(end).length();
                 if (end > start && size + batchBytes + recordBytes > maxSegmentBytes) break;
                 if (end == start && active.log.nextOffset() > 0 && size + recordBytes > maxSegmentBytes) {
                     active = createSegment(nextOffset);
@@ -82,8 +87,8 @@ public final class SegmentedFileMessageLog implements MessageLog {
                 batchBytes += recordBytes;
                 end++;
             }
-            List<byte[]> part = values.subList(start, end);
-            long localFirst = active.log.appendBatch(part);
+            List<MessageValue> part = values.subList(start, end);
+            long localFirst = active.log.appendValues(part);
             if (active.baseOffset + localFirst != nextOffset)
                 throw new IOException("Segment offset sequence is inconsistent");
             nextOffset += part.size();
@@ -94,6 +99,11 @@ public final class SegmentedFileMessageLog implements MessageLog {
 
     @Override
     public synchronized List<LogRecord> read(long offset, int maxBytes) throws IOException {
+        return read(offset, maxBytes, ReadAdmission.UNLIMITED);
+    }
+
+    @Override
+    public synchronized List<LogRecord> read(long offset, int maxBytes, ReadAdmission admission) throws IOException {
         ensureOpen();
         if (offset < 0 || maxBytes < 0)
             throw new IllegalArgumentException("offset and maxBytes must be non-negative");
@@ -108,7 +118,9 @@ public final class SegmentedFileMessageLog implements MessageLog {
             long localStart = Math.max(0, start - segment.baseOffset);
             int remainingBytes = (int) Math.max(0, maxBytes - bytesRead);
             if (remainingBytes == 0) break;
-            List<LogRecord> part = segment.log.read(localStart, remainingBytes);
+            long priorBytes = 3L * bytesRead + 96L * records.size();
+            List<LogRecord> part = segment.log.read(localStart, remainingBytes,
+                    bytes -> admission.reserve(priorBytes + bytes));
             if (part.isEmpty()) break;
             for (LogRecord record : part) {
                 if (records.size() >= MAX_RECORDS_PER_READ) return List.copyOf(records);

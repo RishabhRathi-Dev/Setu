@@ -172,6 +172,18 @@ public final class SetuClient implements AutoCloseable {
                 -1, null, 0, groupId, memberId));
     }
 
+    /** Waits up to waitMillis for data; the socket read timeout must exceed this value. */
+    public BrokerResponse fetch(String topic, int partition, long offset, int maxBytes, int waitMillis) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.FETCH, topic, partition, offset,
+                maxBytes, null, 0, null, null).withWaitMillis(waitMillis));
+    }
+
+    public BrokerResponse fetch(String group, String member, String topic, int partition,
+                                long offset, int maxBytes, int waitMillis) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.FETCH, topic, partition, offset,
+                maxBytes, null, 0, group, member).withWaitMillis(waitMillis));
+    }
+
     public BrokerResponse heartbeat(String groupId, String memberId) throws IOException {
         return request(new BrokerRequest(nextId(), Command.HEARTBEAT, null, -1, -1,
                 -1, null, 0, groupId, memberId));

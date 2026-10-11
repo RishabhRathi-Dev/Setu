@@ -79,15 +79,20 @@ public final class FileMessageLog implements MessageLog {
 
     @Override
     public synchronized long appendBatch(List<byte[]> values) throws IOException {
+        return appendValues(values.stream().map(MessageValue::copyOf).toList());
+    }
+
+    @Override
+    public synchronized long appendValues(List<MessageValue> values) throws IOException {
         ensureOpen();
         Objects.requireNonNull(values, "values");
         if (values.isEmpty()) throw new IllegalArgumentException("values must not be empty");
         long encodedBytes = 0;
-        for (byte[] value : values) {
+        for (MessageValue value : values) {
             Objects.requireNonNull(value, "value");
-            if (value.length > maxRecordBytes)
-                throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
-            encodedBytes += Integer.BYTES + (long) value.length;
+            if (value.length() > maxRecordBytes)
+                throw new IOException("Record size " + value.length() + " exceeds maximum " + maxRecordBytes);
+            encodedBytes += Integer.BYTES + (long) value.length();
             if (encodedBytes > Integer.MAX_VALUE) throw new IOException("Append batch is too large");
         }
         reserveIndex(values.size());
@@ -95,8 +100,9 @@ public final class FileMessageLog implements MessageLog {
         long firstOffset = recordCount;
         long started = LOG.isDebugEnabled() ? System.nanoTime() : 0;
         ByteBuffer batch = ByteBuffer.allocate((int) encodedBytes);
-        for (byte[] value : values) {
-            batch.putInt(value.length).put(value);
+        for (MessageValue value : values) {
+            batch.putInt(value.length());
+            value.copyTo(batch);
         }
         batch.flip();
         try {
@@ -110,9 +116,9 @@ public final class FileMessageLog implements MessageLog {
                     path, firstOffset, values.size(), encodedBytes, position, failure);
             throw failure;
         }
-        for (byte[] value : values) {
+        for (MessageValue value : values) {
             positions[recordCount++] = endPosition;
-            endPosition += Integer.BYTES + (long) value.length;
+            endPosition += Integer.BYTES + (long) value.length();
         }
         if (LOG.isDebugEnabled()) LOG.debug("File batch persisted path={} first_offset={} records={} encoded_bytes={} end_position={} forced=true elapsed_us={}",
                 path, firstOffset, values.size(), encodedBytes, endPosition, (System.nanoTime() - started) / 1000);
@@ -121,6 +127,11 @@ public final class FileMessageLog implements MessageLog {
 
     @Override
     public synchronized List<LogRecord> read(long firstOffset, int maxBytes) throws IOException {
+        return read(firstOffset, maxBytes, ReadAdmission.UNLIMITED);
+    }
+
+    @Override
+    public synchronized List<LogRecord> read(long firstOffset, int maxBytes, ReadAdmission admission) throws IOException {
         ensureOpen();
         if (firstOffset < 0 || maxBytes < 0) {
             throw new IllegalArgumentException("offset and maxBytes must be non-negative");
@@ -142,6 +153,8 @@ public final class FileMessageLog implements MessageLog {
                 end++;
             }
             if (end == offset) break;
+            // File window + private payload arrays + encoded reply and record metadata.
+            admission.reserve(3L * bytesRead + 96L * (records.size() + end - offset) + 22);
             ByteBuffer data = ByteBuffer.allocate(Math.toIntExact(windowEnd - positions[offset]));
             channel.position(positions[offset]);
             if (!readFully(data)) throw new IOException("Unexpected end of log while reading offset " + offset);

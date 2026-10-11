@@ -37,6 +37,8 @@ public final class TcpServer implements AutoCloseable {
         this.bindAddress = Objects.requireNonNull(bindAddress, "bindAddress");
         this.connectionHandler = Objects.requireNonNull(connectionHandler, "connectionHandler");
         this.options = Objects.requireNonNull(options, "options");
+        if (connectionHandler instanceof io.setu.server.connection.FramedConnectionHandler framed)
+            framed.configureBudgets(options.requestBufferBytes(), options.responseBufferBytes(), options.writeTimeoutMillis());
     }
 
     /** Binds synchronously, then returns once the accept loop has been started. */
@@ -118,7 +120,9 @@ public final class TcpServer implements AutoCloseable {
             connectionHandler.handle(client);
         } catch (IOException | RuntimeException failure) {
             if (running.get()) {
-                log.warn("Closing client connection after request failure", failure);
+                if (failure instanceof io.setu.core.protocol.BufferBudget.Exhausted)
+                    log.debug("Closing client connection after frame admission rejection");
+                else log.warn("Closing client connection after request failure", failure);
             }
         } finally {
             closeQuietly(client);
@@ -158,6 +162,8 @@ public final class TcpServer implements AutoCloseable {
         ExecutorService executor = connectionExecutor;
         if (executor != null) {
             executor.shutdownNow();
+            try { executor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
         Thread thread = acceptThread;
         if (thread != null && thread != Thread.currentThread()) {

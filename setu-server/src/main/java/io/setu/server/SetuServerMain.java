@@ -35,7 +35,8 @@ public final class SetuServerMain {
         }
         Set<String> supported = Set.of("bind.host", "bind.port", "storage.mode", "data.dir",
                 "record.max.bytes", "segment.max.bytes", "connections.max", "accept.backlog",
-                "socket.timeout.millis", "ack.timeout.millis", "consumer.timeout.millis", "transport", "memory.log.max.bytes");
+                "socket.timeout.millis", "ack.timeout.millis", "consumer.timeout.millis", "transport", "memory.log.max.bytes",
+                "requests.max.bytes", "responses.max.bytes", "memory.retention.millis", "write.timeout.millis");
         for (String key : properties.stringPropertyNames())
             if (!supported.contains(key)) throw new IllegalArgumentException("Unknown configuration property: " + key);
         StorageMode mode = StorageMode.valueOf(properties.getProperty("storage.mode", "FILE"));
@@ -43,7 +44,10 @@ public final class SetuServerMain {
                 Math.toIntExact(number(properties, "bind.port", 9092)));
         TcpServerOptions options = new TcpServerOptions(Math.toIntExact(number(properties, "connections.max", 10_000)),
                 Math.toIntExact(number(properties, "accept.backlog", 256)),
-                Math.toIntExact(number(properties, "socket.timeout.millis", 0)));
+                Math.toIntExact(number(properties, "socket.timeout.millis", 0)),
+                number(properties, "requests.max.bytes", 128L * 1024 * 1024),
+                number(properties, "responses.max.bytes", 128L * 1024 * 1024),
+                Math.toIntExact(number(properties, "write.timeout.millis", 30_000)));
         String transport = properties.getProperty("transport", "blocking");
         if (!Set.of("blocking", "selector").contains(transport))
             throw new IllegalArgumentException("transport must be blocking or selector");
@@ -54,7 +58,8 @@ public final class SetuServerMain {
                 number(properties, "segment.max.bytes", MessageLogs.DEFAULT_MAX_SEGMENT_BYTES),
                 number(properties, "ack.timeout.millis", DefaultBroker.DEFAULT_ACK_TIMEOUT_MILLIS),
                 number(properties, "consumer.timeout.millis", DefaultBroker.DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS),
-                number(properties, "memory.log.max.bytes", DefaultBroker.DEFAULT_MAX_RETAINED_MEMORY_BYTES))) {
+                number(properties, "memory.log.max.bytes", DefaultBroker.DEFAULT_MAX_RETAINED_MEMORY_BYTES),
+                number(properties, "memory.retention.millis", 0))) {
             BrokerRequestHandler handler = new BrokerRequestHandler(broker);
             TcpServer blocking = transport.equals("blocking")
                     ? new TcpServer(address, new FramedConnectionHandler(handler), options) : null;

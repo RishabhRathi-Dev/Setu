@@ -34,6 +34,7 @@ public final class ProtocolCodec {
     public static byte[] encodeRequest(BrokerRequest request) throws IOException {
         validateRequest(request);
         int capacity = 32;
+        if (request.command() == Command.PRODUCE) capacity = 24 + request.topic().length() + request.valueLength();
         if (request.command() == Command.PRODUCE_BATCH) {
             // Validated topic names are ASCII; the complete batch is already bounded to 14 MiB.
             capacity = 24 + request.topic().length();
@@ -46,23 +47,24 @@ public final class ProtocolCodec {
             case PRODUCE -> {
                 writeString(out, request.topic());
                 out.writeInt(request.partition());
-                writeBytes(out, request.valueForEncoding());
+                writeValue(out, request.payload());
             }
             case PRODUCE_BATCH -> {
                 writeString(out, request.topic());
                 out.writeInt(request.partition());
                 out.writeInt(request.valueCount());
-                for (int i = 0; i < request.valueCount(); i++) writeBytes(out, request.valueForEncoding(i));
+                for (MessageValue value : request.payloads()) writeValue(out, value);
             }
             case FETCH -> {
                 writeString(out, request.topic());
                 out.writeInt(request.partition());
                 out.writeLong(request.offset());
                 out.writeInt(request.maxBytes());
-                if (request.groupId() != null) {
-                    writeString(out, request.groupId());
-                    writeString(out, request.memberId());
+                if (request.groupId() != null || request.waitMillis() > 0) {
+                    writeString(out, request.groupId() == null ? "" : request.groupId());
+                    writeString(out, request.memberId() == null ? "" : request.memberId());
                 }
+                if (request.waitMillis() > 0) out.writeInt(request.waitMillis());
             }
             case COMMIT_OFFSET -> {
                 writeString(out, request.groupId());
@@ -97,7 +99,7 @@ public final class ProtocolCodec {
             correlation = header.correlationId;
             BrokerRequest request = switch (header.command) {
                 case PRODUCE -> new BrokerRequest(correlation, header.command, readString(in), in.readInt(),
-                        -1, -1, readBytes(in), 0, null, null);
+                        -1, -1, readValue(in), 0, null, null, List.of(), 0);
                 case PRODUCE_BATCH -> decodeProduceBatch(in, correlation);
                 case FETCH -> decodeFetch(in, correlation);
                 case COMMIT_OFFSET -> decodeCommit(in, correlation);
@@ -114,6 +116,8 @@ public final class ProtocolCodec {
             return request;
         } catch (ProtocolException e) {
             throw e;
+        } catch (BufferBudget.Exhausted e) {
+            throw new ProtocolException(ErrorCode.QUOTA_EXCEEDED, e.getMessage(), correlation);
         } catch (EOFException e) {
             throw bad("Truncated request", correlation);
         } catch (IOException | IllegalArgumentException e) {
@@ -142,24 +146,27 @@ public final class ProtocolCodec {
             group = readString(in);
             member = readString(in);
         }
+        int wait = in.available() > 0 ? in.readInt() : 0;
+        if (wait > 0 && "".equals(group) && "".equals(member)) { group = null; member = null; }
         return new BrokerRequest(correlation, Command.FETCH, topic, partition,
-                offset, maxBytes, null, 0, group, member);
+                offset, maxBytes, MessageValue.empty(), 0, group, member, List.of(), wait);
     }
 
     private static BrokerRequest decodeProduceBatch(DataInputStream in, int correlation) throws IOException {
         String topic = readString(in);
         int partition = in.readInt();
         int count = boundedCount(in.readInt());
-        List<byte[]> values = new ArrayList<>(count);
+        RequestBuffers.reserveObjects(64L * count);
+        List<MessageValue> values = new ArrayList<>(count);
         long bytes = 0;
         for (int i = 0; i < count; i++) {
-            byte[] value = readBytes(in);
-            bytes += value.length;
+            MessageValue value = readValue(in);
+            bytes += value.length();
             if (bytes > MAX_BATCH_BYTES) throw bad("produce batch exceeds maximum bytes", correlation);
             values.add(value);
         }
         return new BrokerRequest(correlation, Command.PRODUCE_BATCH, topic, partition, -1,
-                -1, null, 0, null, null, values);
+                -1, MessageValue.empty(), 0, null, null, values, 0);
     }
 
     private static BrokerRequest decodeJoin(DataInputStream in, int correlation) throws IOException {
@@ -241,7 +248,16 @@ public final class ProtocolCodec {
     public static byte[] encodeResponse(BrokerResponse response) throws IOException {
         if (response.errorCode() == ErrorCode.NONE && response.command() == Command.FETCH)
             return encodeFetchResponse(response);
-        EncodingBuffer bytes = new EncodingBuffer(32);
+        long size = 18L + response.errorMessage().getBytes(StandardCharsets.UTF_8).length;
+        if (response.errorCode() == ErrorCode.NONE) {
+            if (response.command() == Command.PRODUCE || response.command() == Command.PRODUCE_BATCH) size += 8;
+            if (response.command() == Command.METADATA) {
+                size += 4;
+                for (String topic : response.topics().keySet()) size += 8L + topic.getBytes(StandardCharsets.UTF_8).length;
+            }
+        }
+        ResponseBuffers.reserve(size);
+        EncodingBuffer bytes = new EncodingBuffer(Math.toIntExact(size));
         DataOutputStream out = new DataOutputStream(bytes);
         writeHeader(out, RESPONSE, response.command(), response.correlationId());
         out.writeShort(response.errorCode().id());
@@ -268,6 +284,7 @@ public final class ProtocolCodec {
         long required = 22L + message.length;
         for (ProtocolRecord record : response.records()) required += 12L + record.valueLength();
         if (required > Integer.MAX_VALUE) throw new IOException("Fetch response is too large to encode");
+        ResponseBuffers.reserve(required);
         ByteBuffer output = ByteBuffer.allocate((int) required);
         output.putInt(MAGIC).put((byte) VERSION).put((byte) RESPONSE)
                 .putShort((short) response.command().id()).putInt(response.correlationId())
@@ -366,6 +383,18 @@ public final class ProtocolCodec {
         byte[] data = value.getBytes(StandardCharsets.UTF_8);
         if (data.length > MAX_STRING_BYTES) throw new IOException("String field exceeds " + MAX_STRING_BYTES + " bytes");
         writeBytes(out, data);
+    }
+
+    private static void writeValue(DataOutputStream out, MessageValue value) throws IOException {
+        out.writeInt(value.length());
+        value.writeTo(out);
+    }
+
+    private static MessageValue readValue(DataInputStream in) throws IOException {
+        int length = in.readInt();
+        if (length < 0 || length > 16 * 1024 * 1024 || length > in.available())
+            throw new IOException("Invalid byte field length: " + length);
+        return MessageValue.readFrom((java.io.DataInput) in, length);
     }
 
     private static String readString(DataInputStream in) throws IOException {

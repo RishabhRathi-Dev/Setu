@@ -50,6 +50,8 @@ public final class BrokerRequestHandler implements RequestHandler {
                     request == null ? null : request.topic(), request == null ? null : request.partition(),
                     failure.errorCode(), failure.getMessage());
             return ProtocolCodec.errorResponse(payload, failure.errorCode(), failure.getMessage());
+        } catch (io.setu.core.protocol.BufferBudget.Exhausted failure) {
+            return ProtocolCodec.errorResponse(payload, ErrorCode.QUOTA_EXCEEDED, failure.getMessage());
         } catch (IOException failure) {
             logFailure(request, payload.length, failure);
             return ProtocolCodec.errorResponse(payload, ErrorCode.INTERNAL_ERROR, "Broker I/O failure");

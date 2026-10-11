@@ -22,6 +22,16 @@ public interface MessageLog extends AutoCloseable {
 
     List<LogRecord> read(long firstOffset, int maxBytes) throws IOException;
 
+    default List<LogRecord> read(long offset, int maxBytes, ReadAdmission admission) throws IOException {
+        admission.reserve(3L * maxBytes + 640_000);
+        return read(offset, maxBytes);
+    }
+
+    /** Immutable input avoids copy-on-read accessors between protocol and storage. */
+    default long appendValues(List<MessageValue> values) throws IOException {
+        return appendBatch(values.stream().map(MessageValue::copy).toList());
+    }
+
     long nextOffset();
 
     /** Lowest offset still retained; persistent implementations may always return zero. */

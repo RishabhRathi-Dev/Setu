@@ -1,297 +1,242 @@
 package io.setu.server.tcp;
 
-import io.setu.core.protocol.FrameCodec;
+import io.setu.core.protocol.BufferBudget;
+import io.setu.core.protocol.ResponseBuffers;
 import io.setu.server.dispatcher.RequestHandler;
 import io.setu.server.dispatcher.RequestProcessor;
-
-import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.ServerSocketChannel;
-import java.nio.channels.SocketChannel;
-import java.util.Iterator;
-import java.util.Objects;
+import java.nio.channels.*;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.Objects;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
-import java.util.concurrent.atomic.AtomicLong;
 
-/** Plaintext selector transport with asynchronous request dispatch and bounded client count. */
+/** One event loop; a connection admits exactly one frame and one reply at a time. */
 public final class SelectorTcpServer implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(SelectorTcpServer.class);
-    private static final int INITIAL_READ_CAPACITY = 8 * 1024;
-    private static final AtomicLong SESSION_IDS = new AtomicLong();
-
-    private final InetSocketAddress bindAddress;
+    private static final java.util.concurrent.atomic.AtomicLong SESSION_IDS = new java.util.concurrent.atomic.AtomicLong();
+    private final InetSocketAddress address;
     private final int maxFrameSize;
     private final TcpServerOptions options;
     private final RequestProcessor processor;
+    private final BufferBudget requests;
+    private final BufferBudget responses;
     private final AtomicBoolean running = new AtomicBoolean();
-    private final Set<SocketChannel> clients = ConcurrentHashMap.newKeySet();
+    private final Set<Client> clients = ConcurrentHashMap.newKeySet();
     private final ConcurrentLinkedQueue<Runnable> completions = new ConcurrentLinkedQueue<>();
-    private volatile Selector selector;
-    private volatile ServerSocketChannel listener;
-    private volatile Thread eventThread;
-    private volatile ExecutorService requestExecutor;
+    private Selector selector;
+    private ServerSocketChannel listener;
+    private Thread eventThread;
+    private ExecutorService workers;
 
-    public SelectorTcpServer(InetSocketAddress bindAddress, int maxFrameSize,
-                             TcpServerOptions options, RequestProcessor processor) {
-        this.bindAddress = Objects.requireNonNull(bindAddress, "bindAddress");
-        if (maxFrameSize < 0 || maxFrameSize > Integer.MAX_VALUE - Integer.BYTES)
-            throw new IllegalArgumentException("maxFrameSize is outside the supported range");
+    public SelectorTcpServer(InetSocketAddress address, int maxFrameSize, TcpServerOptions options, RequestProcessor processor) {
+        this.address = Objects.requireNonNull(address);
+        if (maxFrameSize < 0 || maxFrameSize > Integer.MAX_VALUE - 4) throw new IllegalArgumentException("invalid frame limit");
         this.maxFrameSize = maxFrameSize;
-        this.options = Objects.requireNonNull(options, "options");
-        this.processor = Objects.requireNonNull(processor, "processor");
+        this.options = Objects.requireNonNull(options);
+        this.processor = Objects.requireNonNull(processor);
+        requests = new BufferBudget(options.requestBufferBytes());
+        responses = new BufferBudget(options.responseBufferBytes());
     }
-
-    public SelectorTcpServer(InetSocketAddress bindAddress, int maxFrameSize,
-                             TcpServerOptions options, RequestHandler handler) {
-        this(bindAddress, maxFrameSize, options,
-                (identity, request) -> Objects.requireNonNull(handler, "handler").handle(request));
+    public SelectorTcpServer(InetSocketAddress address, int maxFrameSize, TcpServerOptions options, RequestHandler handler) {
+        this(address, maxFrameSize, options, (identity, request) -> handler.handle(request));
     }
-
     public synchronized void start() throws IOException {
         if (running.get()) throw new IllegalStateException("Server is already running");
-        Selector openedSelector = Selector.open();
-        ServerSocketChannel openedListener = ServerSocketChannel.open();
+        selector = Selector.open();
+        listener = ServerSocketChannel.open();
         try {
-            openedListener.configureBlocking(false);
-            openedListener.setOption(StandardSocketOptions.SO_REUSEADDR, true);
-            openedListener.bind(bindAddress, options.acceptBacklog());
-            openedListener.register(openedSelector, SelectionKey.OP_ACCEPT);
-        } catch (IOException failure) {
-            openedListener.close();
-            openedSelector.close();
-            throw failure;
-        }
-        selector = openedSelector;
-        listener = openedListener;
-        requestExecutor = Executors.newVirtualThreadPerTaskExecutor();
+            listener.configureBlocking(false);
+            listener.setOption(StandardSocketOptions.SO_REUSEADDR, true);
+            listener.bind(address, options.acceptBacklog());
+            listener.register(selector, SelectionKey.OP_ACCEPT);
+        } catch (IOException | RuntimeException e) { listener.close(); selector.close(); throw e; }
+        workers = Executors.newVirtualThreadPerTaskExecutor();
         running.set(true);
-        LOG.info("Selector server started address={} backlog={} max_connections={} max_frame_bytes={} socket_timeout_ms={}",
-                openedListener.getLocalAddress(), options.acceptBacklog(), options.maxConnections(), maxFrameSize, options.socketTimeoutMillis());
         eventThread = Thread.ofPlatform().name("setu-selector-" + localAddress().getPort()).start(this::runLoop);
+        LOG.info("Selector server started address={} max_connections={} request_budget={} response_budget={}",
+                localAddress(), options.maxConnections(), requests.maximumBytes(), responses.maximumBytes());
     }
-
-    public InetSocketAddress localAddress() {
-        ServerSocketChannel current = listener;
-        if (current == null || !current.isOpen()) throw new IllegalStateException("Server has not been started");
-        try { return (InetSocketAddress) current.getLocalAddress(); }
-        catch (IOException e) { throw new IllegalStateException("Unable to read bound address", e); }
-    }
-
     public boolean isRunning() { return running.get(); }
-
+    public long inFlightRequestBytes() { return requests.usedBytes(); }
+    public long inFlightResponseBytes() { return responses.usedBytes(); }
+    public InetSocketAddress localAddress() {
+        if (listener == null || !listener.isOpen()) throw new IllegalStateException("Server has not been started");
+        try { return (InetSocketAddress) listener.getLocalAddress(); }
+        catch (IOException e) { throw new IllegalStateException(e); }
+    }
     private void runLoop() {
         try {
             while (running.get()) {
-                drainCompletions();
-                selector.select(500);
-                drainCompletions();
-                Iterator<SelectionKey> keys = selector.selectedKeys().iterator();
-                while (keys.hasNext()) {
-                    SelectionKey key = keys.next();
-                    keys.remove();
+                drain();
+                selector.select(100);
+                drain();
+                var iterator = selector.selectedKeys().iterator();
+                while (iterator.hasNext()) {
+                    SelectionKey key = iterator.next(); iterator.remove();
                     if (!key.isValid()) continue;
                     try {
-                        if (key.isAcceptable()) acceptClients();
+                        if (key.isAcceptable()) accept();
                         else {
-                            ClientState state = (ClientState) key.attachment();
-                            if (key.isReadable()) readClient(key, state);
-                            if (key.isValid() && key.isWritable()) writeClient(key, state);
+                            Client client = (Client) key.attachment();
+                            if (key.isReadable()) read(key, client);
+                            if (key.isValid() && key.isWritable()) write(key, client);
                         }
-                    } catch (IOException | RuntimeException failure) {
-                        LOG.warn("Selector connection failed channel={}", key.channel(), failure);
-                        closeKey(key);
+                    } catch (IOException | RuntimeException e) {
+                        if (!(key.attachment() instanceof Client client)) throw e;
+                        if (e instanceof BufferBudget.Exhausted) LOG.debug("Selector frame admission rejected session={}", client.sessionId);
+                        else LOG.warn("Selector connection failed session={}", client.sessionId, e);
+                        closeClient(client);
                     }
                 }
-                closeIdleClients();
+                if (options.socketTimeoutMillis() > 0) {
+                    long now = System.nanoTime();
+                    for (Client client : clients)
+                        if (!client.inFlight && now - client.activity > options.socketTimeoutMillis() * 1_000_000L)
+                            closeClient(client);
+                }
+                long now = System.nanoTime();
+                for (Client client : clients)
+                    if (client.outbound != null && now - client.writeStarted > options.writeTimeoutMillis() * 1_000_000L)
+                        closeClient(client);
             }
-        } catch (IOException failure) {
-            if (running.get()) LOG.error("Selector loop failed", failure);
-        } finally {
-            try { close(); } catch (IOException e) { LOG.debug("Error closing selector server", e); }
-        }
+        } catch (IOException | RuntimeException e) { if (running.get()) LOG.error("Selector loop failed", e); }
+        finally { running.set(false); for (Client client : clients) closeClient(client); }
     }
-
-    private void acceptClients() throws IOException {
-        SocketChannel client;
-        while ((client = listener.accept()) != null) {
-            if (clients.size() >= options.maxConnections()) {
-                LOG.warn("Selector connection rejected active_connections={} limit={}", clients.size(), options.maxConnections());
-                client.close();
-                continue;
-            }
-            client.configureBlocking(false);
-            client.setOption(StandardSocketOptions.TCP_NODELAY, true);
-            ClientState state = new ClientState(client, maxFrameSize);
-            client.register(selector, SelectionKey.OP_READ, state);
-            clients.add(client);
-            if (LOG.isDebugEnabled()) LOG.debug("Selector session opened session={} peer={} active_connections={}",
-                    state.sessionId, client.getRemoteAddress(), clients.size());
-        }
-    }
-
-    private void readClient(SelectionKey key, ClientState state) throws IOException {
-        ensureReadCapacity(state);
-        int count = state.channel.read(state.inbound);
-        if (count < 0) { closeKey(key); return; }
-        if (count == 0) return;
-        state.lastActivityNanos = System.nanoTime();
-        if (processBufferedRequest(key, state)) key.interestOps(key.interestOps() & ~SelectionKey.OP_READ);
-    }
-
-    private boolean processBufferedRequest(SelectionKey key, ClientState state) throws IOException {
-        state.inbound.flip();
-        if (state.expectedBodyLength < 0) {
-            if (state.inbound.remaining() < Integer.BYTES) {
-                state.inbound.compact();
-                return false;
-            }
-            state.expectedBodyLength = state.inbound.getInt();
-            if (state.expectedBodyLength < 0 || state.expectedBodyLength > maxFrameSize) {
-                throw new IOException("Invalid frame length: " + state.expectedBodyLength);
+    private void accept() throws IOException {
+        SocketChannel channel;
+        while ((channel = listener.accept()) != null) {
+            if (clients.size() >= options.maxConnections()) { channel.close(); continue; }
+            BufferBudget.Lease connectionCredit = null;
+            try {
+                connectionCredit = requests.reserve(1024);
+                channel.configureBlocking(false);
+                channel.setOption(StandardSocketOptions.TCP_NODELAY, true);
+                Client client = new Client(channel, connectionCredit);
+                client.key = channel.register(selector, SelectionKey.OP_READ, client);
+                clients.add(client);
+                LOG.debug("Selector session opened session={} peer={} active_connections={}", client.sessionId, channel.getRemoteAddress(), clients.size());
+            } catch (BufferBudget.Exhausted e) { channel.close(); }
+            catch (IOException | RuntimeException e) {
+                if (connectionCredit != null) connectionCredit.close();
+                channel.close(); throw e;
             }
         }
-        if (state.inbound.remaining() < state.expectedBodyLength) {
-            state.inbound.compact();
-            ensureReadCapacity(state);
-            return false;
-        }
-        byte[] request = new byte[state.expectedBodyLength];
-        state.inbound.get(request);
-        state.expectedBodyLength = -1;
-        state.inbound.compact();
-        state.inFlight = true;
-        requestExecutor.execute(() -> dispatch(state, key, request));
-        return true;
     }
-
-    private void dispatch(ClientState state, SelectionKey key, byte[] request) {
-        try (var sessionContext = MDC.putCloseable("sessionId", Long.toString(state.sessionId))) {
-            byte[] response = Objects.requireNonNull(processor.process(null, request), "request processor response");
-            ByteArrayOutputStream framed = new ByteArrayOutputStream();
-            FrameCodec.writeFrame(new DataOutputStream(framed), response, maxFrameSize);
-            if (LOG.isDebugEnabled()) LOG.debug("Selector frame exchanged session={} request_bytes={} response_bytes={}",
-                    state.sessionId, request.length, response.length);
-            ByteBuffer bytes = ByteBuffer.wrap(framed.toByteArray());
+    private void read(SelectionKey key, Client client) throws IOException {
+        if (client.body == null) {
+            int count = client.channel.read(client.header);
+            if (count < 0) { closeClient(client); return; }
+            if (count > 0) client.activity = System.nanoTime();
+            if (client.header.hasRemaining()) return;
+            int length = client.header.flip().getInt();
+            client.header.clear();
+            if (length < 0 || length > maxFrameSize) throw new IOException("Invalid frame length");
+            client.requestCredit = requests.reserve(2L * length + 1024);
+            client.body = ByteBuffer.allocate(length); // no growth/copy and no read-ahead into the next frame
+        }
+        int count = client.channel.read(client.body);
+        if (count < 0) { closeClient(client); return; }
+        if (count > 0) client.activity = System.nanoTime();
+        if (client.body.hasRemaining()) return;
+        byte[] request = client.body.array();
+        client.body = null;
+        client.inFlight = true;
+        key.interestOps(0);
+        BufferBudget.Lease requestCredit = client.requestCredit;
+        client.requestCredit = null;
+        try { workers.execute(() -> dispatch(client, request, requestCredit)); }
+        catch (RuntimeException e) { requestCredit.close(); throw e; }
+    }
+    private void dispatch(Client client, byte[] request, BufferBudget.Lease credit) {
+        ResponseBuffers responseCredit = new ResponseBuffers(responses);
+        boolean transferred = false;
+        try (credit; var requestContext = io.setu.core.protocol.RequestBuffers.activate(credit);
+             var sessionContext = org.slf4j.MDC.putCloseable("sessionId", Long.toString(client.sessionId));
+             var context = responseCredit.activate()) {
+            byte[] response = Objects.requireNonNull(processor.process(null, request));
+            if (response.length > maxFrameSize) throw new IOException("Response exceeds frame limit");
+            responseCredit.ensure(response.length);
+            LOG.debug("Selector frame exchanged session={} request_bytes={} response_bytes={}", client.sessionId, request.length, response.length);
+            // The four-byte header is separate; no second framed copy of the entire response.
             completions.add(() -> {
-                if (!key.isValid() || !state.channel.isOpen()) return;
-                state.outbound = bytes;
-                state.lastActivityNanos = System.nanoTime();
-                key.interestOps(SelectionKey.OP_WRITE);
+                if (!running.get() || !client.key.isValid()) { responseCredit.close(); return; }
+                client.responseCredit = responseCredit;
+                client.outbound = new ByteBuffer[]{ByteBuffer.allocate(4).putInt(response.length).flip(), ByteBuffer.wrap(response)};
+                client.activity = System.nanoTime();
+                client.writeStarted = client.activity;
+                client.key.interestOps(SelectionKey.OP_WRITE);
             });
-        } catch (IOException | RuntimeException failure) {
-            LOG.warn("Selector dispatch failed session={} channel={} request_bytes={}", state.sessionId, state.channel, request.length, failure);
-            completions.add(() -> closeKey(key));
+            transferred = true;
+        } catch (Exception e) {
+            LOG.warn("Selector dispatch failed session={}", client.sessionId, e);
+            completions.add(() -> closeClient(client));
         }
-        selector.wakeup();
-    }
-
-    private void writeClient(SelectionKey key, ClientState state) throws IOException {
-        if (state.outbound == null) { key.interestOps(0); return; }
-        state.channel.write(state.outbound);
-        state.lastActivityNanos = System.nanoTime();
-        if (!state.outbound.hasRemaining()) {
-            state.outbound = null;
-            state.inFlight = false;
-            shrinkReadBuffer(state);
-            if (processBufferedRequest(key, state)) key.interestOps(0);
-            else key.interestOps(SelectionKey.OP_READ);
+        finally {
+            if (!transferred) responseCredit.close();
+            // close() drains completions after all dispatch workers have terminated.
+            selector.wakeup();
         }
     }
-
-    private void ensureReadCapacity(ClientState state) throws IOException {
-        int desired = state.expectedBodyLength < 0 ? state.inbound.position() + Integer.BYTES : state.expectedBodyLength;
-        if (state.inbound.capacity() >= desired && state.inbound.hasRemaining()) return;
-        int target = Math.min(maxFrameSize + Integer.BYTES,
-                Math.max(desired, Math.max(INITIAL_READ_CAPACITY, state.inbound.capacity() * 2)));
-        if (target <= state.inbound.capacity()) throw new IOException("Input buffer reached configured frame limit");
-        ByteBuffer replacement = ByteBuffer.allocate(target);
-        state.inbound.flip();
-        replacement.put(state.inbound);
-        state.inbound = replacement;
-    }
-
-    private void shrinkReadBuffer(ClientState state) {
-        if (state.inbound.capacity() <= INITIAL_READ_CAPACITY * 2
-                || state.inbound.position() > INITIAL_READ_CAPACITY) return;
-        ByteBuffer replacement = ByteBuffer.allocate(INITIAL_READ_CAPACITY);
-        state.inbound.flip();
-        replacement.put(state.inbound);
-        state.inbound = replacement;
-    }
-
-    private void closeIdleClients() {
-        if (options.socketTimeoutMillis() <= 0) return;
-        long timeout = options.socketTimeoutMillis() * 1_000_000L;
-        long now = System.nanoTime();
-        for (SelectionKey key : selector.keys()) {
-            if (key.attachment() instanceof ClientState state && !state.inFlight
-                    && now - state.lastActivityNanos > timeout) {
-                if (LOG.isDebugEnabled()) LOG.debug("Selector session timed out session={} idle_ms={} timeout_ms={}",
-                        state.sessionId, (now - state.lastActivityNanos) / 1_000_000, options.socketTimeoutMillis());
-                closeKey(key);
-            }
+    private void write(SelectionKey key, Client client) throws IOException {
+        if (client.channel.write(client.outbound) > 0) client.activity = System.nanoTime();
+        if (!client.outbound[0].hasRemaining() && !client.outbound[1].hasRemaining()) {
+            client.outbound = null;
+            client.responseCredit.close(); client.responseCredit = null;
+            client.inFlight = false;
+            key.interestOps(SelectionKey.OP_READ);
         }
     }
-
-    private void drainCompletions() {
-        Runnable completion;
-        while ((completion = completions.poll()) != null) completion.run();
+    private void drain() { Runnable action; while ((action = completions.poll()) != null) action.run(); }
+    private void closeClient(Client client) {
+        if (client == null) return;
+        client.key.cancel();
+        try { client.channel.close(); } catch (IOException ignored) { }
+        if (client.requestCredit != null) { client.requestCredit.close(); client.requestCredit = null; }
+        if (client.responseCredit != null) { client.responseCredit.close(); client.responseCredit = null; }
+        client.connectionCredit.close();
+        client.body = null; client.outbound = null;
+        if (clients.remove(client)) LOG.debug("Selector session closed session={} active_connections={}", client.sessionId, clients.size());
     }
-
-    private void closeKey(SelectionKey key) {
-        if (key == null) return;
-        Object attachment = key.attachment();
-        key.cancel();
-        try { key.channel().close(); } catch (IOException ignored) { }
-        if (attachment instanceof ClientState state) {
-            clients.remove(state.channel);
-            LOG.debug("Selector session closed session={} active_connections={}", state.sessionId, clients.size());
-        }
-    }
-
-    @Override
     public synchronized void close() throws IOException {
-        if (!running.getAndSet(false)) return;
-        Selector currentSelector = selector;
-        if (currentSelector != null) currentSelector.wakeup();
+        running.set(false);
+        if (selector == null) return;
+        selector.wakeup();
         if (listener != null) listener.close();
-        for (SocketChannel client : clients) try { client.close(); } catch (IOException ignored) { }
-        clients.clear();
-        completions.clear();
-        ExecutorService executor = requestExecutor;
-        if (executor != null) executor.shutdownNow();
-        Thread thread = eventThread;
-        if (thread != null && thread != Thread.currentThread()) {
-            try { thread.join(5_000); }
-            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        // Closing sockets lets any asynchronous dispatch observe cancellation on its next write.
+        for (Client client : clients) try { client.channel.close(); } catch (IOException ignored) { }
+        boolean interrupted = false;
+        if (eventThread != null && eventThread != Thread.currentThread()) {
+            while (eventThread.isAlive()) try { eventThread.join(); } catch (InterruptedException e) { interrupted = true; }
         }
-        if (currentSelector != null) currentSelector.close();
-        LOG.info("Selector server stopped address={}", bindAddress);
+        if (workers != null) {
+            workers.shutdownNow();
+            while (!workers.isTerminated()) try { workers.awaitTermination(1, TimeUnit.SECONDS); }
+            catch (InterruptedException e) { interrupted = true; }
+        }
+        drain();
+        for (Client client : clients) closeClient(client);
+        selector.close();
+        if (interrupted) Thread.currentThread().interrupt();
     }
-
-    private static final class ClientState {
-        private final long sessionId = SESSION_IDS.incrementAndGet();
-        private final SocketChannel channel;
-        private ByteBuffer inbound = ByteBuffer.allocate(INITIAL_READ_CAPACITY);
-        private int expectedBodyLength = -1;
-        private ByteBuffer outbound;
-        private boolean inFlight;
-        private long lastActivityNanos = System.nanoTime();
-
-        private ClientState(SocketChannel channel, int maxFrameSize) { this.channel = channel; }
+    private static final class Client {
+        final SocketChannel channel;
+        final long sessionId = SESSION_IDS.incrementAndGet();
+        final ByteBuffer header = ByteBuffer.allocate(4);
+        final BufferBudget.Lease connectionCredit;
+        SelectionKey key;
+        ByteBuffer body;
+        BufferBudget.Lease requestCredit;
+        ResponseBuffers responseCredit;
+        ByteBuffer[] outbound;
+        boolean inFlight;
+        long activity = System.nanoTime();
+        long writeStarted;
+        Client(SocketChannel channel, BufferBudget.Lease connectionCredit) { this.channel = channel; this.connectionCredit = connectionCredit; }
     }
 }

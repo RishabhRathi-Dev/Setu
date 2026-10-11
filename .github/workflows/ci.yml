@@ -77,6 +77,15 @@ jobs:
       - name: Verify benchmark report isolation
         run: python3 -m unittest discover -s scripts -p 'test_benchmark_badges.py'
 
+      - name: Measure steady throughput in isolated broker and client processes
+        shell: bash
+        run: |
+          set -o pipefail
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am \
+            '-Dtest=IsolatedThroughputBenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false \
+            -Dsetu.benchmark.steady.rate=10000 -Dsetu.benchmark.steady.seconds=3 test \
+            2>&1 | tee "$RUNNER_TEMP/logs/steady-throughput.log"
+
       - name: Measure bounded file ingestion with larger batches
         shell: bash
         run: |

@@ -21,12 +21,17 @@ public final class MessageLogs {
 
     public static MessageLog open(StorageMode mode, Path file, int maxRecordBytes,
                                   long maxSegmentBytes, MemoryLogBudget memoryBudget) throws IOException {
+        return open(mode, file, maxRecordBytes, maxSegmentBytes, memoryBudget, false);
+    }
+
+    public static MessageLog open(StorageMode mode, Path file, int maxRecordBytes,
+                                  long maxSegmentBytes, MemoryLogBudget memoryBudget, boolean timedRetention) throws IOException {
         Objects.requireNonNull(mode, "mode");
         return switch (mode) {
-            case IN_MEMORY -> new InMemoryMessageLog(maxRecordBytes, memoryBudget);
-            case FILE -> new SegmentedFileMessageLog(
+            case IN_MEMORY -> new InMemoryMessageLog(maxRecordBytes, memoryBudget, timedRetention);
+            case FILE -> new GroupCommitMessageLog(new SegmentedFileMessageLog(
                     Objects.requireNonNull(file, "file").toAbsolutePath().getParent(),
-                    maxRecordBytes, maxSegmentBytes);
+                    maxRecordBytes, maxSegmentBytes), 32L * 1024 * 1024, 1024, 250_000);
         };
     }
 }
