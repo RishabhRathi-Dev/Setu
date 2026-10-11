@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "memory JFR",
-  "message": "stage 11 · 1.46 GiB/s alloc · 1.3ms GC",
+  "message": "stage 12 · 1.33 GiB/s alloc · 1.3ms GC",
   "color": "blue"
 }
