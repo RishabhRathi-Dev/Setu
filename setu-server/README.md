@@ -85,7 +85,24 @@ FramedConnectionHandler
 
 This division keeps socket acceptance, connection setup, framing, request policy, and broker operation behind separate components. `SecureServerFactory` is the composition root for a ready-to-run secure server.
 
-## TCP server lifecycle
+## Standalone JAR
+
+Build and launch the local-development broker from the repository root with Java 25:
+
+```powershell
+.\mvnw.cmd -pl setu-server -am package
+java -jar setu-server/target/setu-server-1.0.0-SNAPSHOT.jar --config config/server.properties
+```
+
+The runnable JAR requires its adjacent `target/lib/` directory, which Maven fills with runtime dependencies. Distribute the JAR and `lib/` together. `--help` prints usage; running without arguments selects plaintext `127.0.0.1:9092`, file storage under `./data`, and rolling operational logs under `./logs`. Paths are relative to the launch working directory. Ctrl+C closes connections and the broker through a shutdown hook.
+
+`config/server.properties` exposes the bind address, storage mode (`FILE` or `IN_MEMORY`), data directory, segment and record size, connection cap, backlog, timeouts, and transport (`blocking` or `selector`). This launcher serves plaintext; the existing secure embedding API below provides TLS/mTLS, authentication, authorization, and quotas. The capacity workload also uses the plaintext path and bypasses quotas, so raising quota rates cannot change its throughput.
+
+The packaged Logback configuration persists operational logs as `logs/setu.log`, rotates at 100 MB or daily, retains up to 14 days, and caps archives at 2 GB. Set `SETU_LOG_DIR` to change the log directory, or use `-Dlogback.configurationFile=<path>` before `-jar` to provide a different logging configuration. Operational logs and durable message segment files are separate artifacts. See [server.properties](../config/server.properties) and [logback.xml](../config/logback.xml).
+
+Packaging keeps Java bytecode on the JVM. It provides a launchable distribution; performance claims come from benchmarks.
+
+## Embedded TCP server lifecycle
 
 `TcpServer` takes a bind address, a `ConnectionHandler`, and optionally `TcpServerOptions`:
 

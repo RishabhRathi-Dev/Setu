@@ -107,7 +107,7 @@ public final class SegmentedFileMessageLog implements MessageLog {
             for (LogRecord record : part) {
                 if (records.size() >= MAX_RECORDS_PER_READ) return List.copyOf(records);
                 records.add(new LogRecord(segment.baseOffset + record.offset(), record.value()));
-                bytesRead += record.value().length;
+                bytesRead += record.valueLength();
             }
             start = segment.baseOffset + part.getLast().offset() + 1;
             if (start < segmentEnd || records.size() >= MAX_RECORDS_PER_READ || bytesRead >= maxBytes) break;

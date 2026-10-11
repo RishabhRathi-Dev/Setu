@@ -8,13 +8,17 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Arrays;
 
 /** Simple record log with recovery by scanning length-prefixed records on open. */
 public final class FileMessageLog implements MessageLog {
     private static final int MAX_RECORDS_PER_READ = 10_000;
     private final FileChannel channel;
     private final int maxRecordBytes;
-    private final List<RecordPosition> index = new ArrayList<>();
+    private static final int READ_WINDOW_BYTES = 1024 * 1024;
+    private long[] positions = new long[1024];
+    private int recordCount;
+    private long endPosition;
     private boolean closed;
 
     public FileMessageLog(Path path, int maxRecordBytes) throws IOException {
@@ -25,7 +29,11 @@ public final class FileMessageLog implements MessageLog {
         this.maxRecordBytes = maxRecordBytes;
         this.channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ,
                 StandardOpenOption.WRITE);
-        recover();
+        try { recover(); }
+        catch (IOException | RuntimeException failure) {
+            try { channel.close(); } catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
+        }
     }
 
     @Override
@@ -35,8 +43,9 @@ public final class FileMessageLog implements MessageLog {
         if (value.length > maxRecordBytes) {
             throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
         }
-        long offset = index.size();
-        long position = channel.size();
+        long offset = recordCount;
+        reserveIndex(1);
+        long position = endPosition;
         ByteBuffer record = ByteBuffer.allocate(Integer.BYTES + value.length)
                 .putInt(value.length).put(value);
         record.flip();
@@ -55,7 +64,8 @@ public final class FileMessageLog implements MessageLog {
             }
             throw failure;
         }
-        index.add(new RecordPosition(position + Integer.BYTES, value.length));
+        positions[recordCount++] = position;
+        endPosition += Integer.BYTES + (long) value.length;
         return offset;
     }
 
@@ -72,15 +82,12 @@ public final class FileMessageLog implements MessageLog {
             encodedBytes += Integer.BYTES + (long) value.length;
             if (encodedBytes > Integer.MAX_VALUE) throw new IOException("Append batch is too large");
         }
-        long position = channel.size();
-        long firstOffset = index.size();
+        reserveIndex(values.size());
+        long position = endPosition;
+        long firstOffset = recordCount;
         ByteBuffer batch = ByteBuffer.allocate((int) encodedBytes);
-        List<RecordPosition> positions = new ArrayList<>(values.size());
-        long cursor = position;
         for (byte[] value : values) {
             batch.putInt(value.length).put(value);
-            positions.add(new RecordPosition(cursor + Integer.BYTES, value.length));
-            cursor += Integer.BYTES + (long) value.length;
         }
         batch.flip();
         try {
@@ -92,7 +99,10 @@ public final class FileMessageLog implements MessageLog {
             catch (IOException rollbackFailure) { failure.addSuppressed(rollbackFailure); }
             throw failure;
         }
-        index.addAll(positions);
+        for (byte[] value : values) {
+            positions[recordCount++] = endPosition;
+            endPosition += Integer.BYTES + (long) value.length;
+        }
         return firstOffset;
     }
 
@@ -102,33 +112,43 @@ public final class FileMessageLog implements MessageLog {
         if (firstOffset < 0 || maxBytes < 0) {
             throw new IllegalArgumentException("offset and maxBytes must be non-negative");
         }
-        if (maxBytes == 0) return List.of();
+        if (maxBytes == 0 || firstOffset >= recordCount) return List.of();
         List<LogRecord> records = new ArrayList<>();
         long bytesRead = 0;
-        for (long offset = firstOffset; offset < index.size() && records.size() < MAX_RECORDS_PER_READ; offset++) {
-            RecordPosition entry = index.get(Math.toIntExact(offset));
-            if (!records.isEmpty() && bytesRead + entry.length > maxBytes) {
-                break;
+        int offset = (int) firstOffset;
+        while (offset < recordCount && records.size() < MAX_RECORDS_PER_READ) {
+            int end = offset;
+            long windowEnd = positions[offset];
+            while (end < recordCount && records.size() + end - offset < MAX_RECORDS_PER_READ) {
+                long recordEnd = end + 1 == recordCount ? endPosition : positions[end + 1];
+                int length = Math.toIntExact(recordEnd - positions[end] - Integer.BYTES);
+                if (bytesRead + length > maxBytes) break;
+                if (end > offset && recordEnd - positions[offset] > READ_WINDOW_BYTES) break;
+                bytesRead += length;
+                windowEnd = recordEnd;
+                end++;
             }
-            if (records.isEmpty() && entry.length > maxBytes) {
-                break;
+            if (end == offset) break;
+            ByteBuffer data = ByteBuffer.allocate(Math.toIntExact(windowEnd - positions[offset]));
+            channel.position(positions[offset]);
+            if (!readFully(data)) throw new IOException("Unexpected end of log while reading offset " + offset);
+            data.flip();
+            while (offset < end) {
+                int length = data.getInt();
+                long recordEnd = offset + 1 == recordCount ? endPosition : positions[offset + 1];
+                if (length != recordEnd - positions[offset] - Integer.BYTES)
+                    throw new IOException("Record length changed while reading offset " + offset);
+                byte[] value = new byte[length];
+                data.get(value);
+                records.add(new LogRecord(offset++, value));
             }
-            ByteBuffer data = ByteBuffer.allocate(entry.length);
-            channel.position(entry.position);
-            while (data.hasRemaining()) {
-                if (channel.read(data) < 0) {
-                    throw new IOException("Unexpected end of log while reading offset " + offset);
-                }
-            }
-            records.add(new LogRecord(offset, data.array()));
-            bytesRead += entry.length;
         }
         return List.copyOf(records);
     }
 
     @Override
     public synchronized long nextOffset() {
-        return index.size();
+        return recordCount;
     }
 
     private void recover() throws IOException {
@@ -145,13 +165,15 @@ public final class FileMessageLog implements MessageLog {
             if (length < 0 || length > maxRecordBytes || position + Integer.BYTES + length > size) {
                 break;
             }
-            index.add(new RecordPosition(position + Integer.BYTES, length));
+            reserveIndex(1);
+            positions[recordCount++] = position;
             position += Integer.BYTES + length;
         }
         if (position != size) {
             channel.truncate(position);
         }
         channel.position(position);
+        endPosition = position;
     }
 
     private boolean readFully(ByteBuffer buffer) throws IOException {
@@ -178,5 +200,11 @@ public final class FileMessageLog implements MessageLog {
         }
     }
 
-    private record RecordPosition(long position, int length) { }
+    private void reserveIndex(int additional) throws IOException {
+        long required = recordCount + (long) additional;
+        if (required > Integer.MAX_VALUE - 8) throw new IOException("Segment record index is full");
+        if (required > positions.length)
+            positions = Arrays.copyOf(positions, (int) Math.max(required,
+                    Math.min(Integer.MAX_VALUE - 8L, positions.length * 2L)));
+    }
 }

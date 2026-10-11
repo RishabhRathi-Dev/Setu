@@ -6,15 +6,15 @@
 
 - `MessageLog` exposes append, sequential read from an offset, next-offset lookup, and close operations.
 - `LogRecord` carries a zero-based offset and defensively copies its byte value.
-- `FileMessageLog` stores records in one file, maintains an in-memory offset-to-position list, and serializes operations with synchronized methods.
+- `FileMessageLog` stores records in one file, maintains an in-memory primitive `long[]` position index, and serializes operations with synchronized methods. Record lengths come from adjacent positions, avoiding a heap object per indexed record.
 - `SegmentedFileMessageLog` rotates a partition across length-prefixed files named by their first logical offset, keeping reads and offsets continuous across files.
-- `InMemoryMessageLog` stores defensive copies of records in process memory and implements the same offset and read-budget behavior.
-- In-memory logs retain their original logical offsets while removing acknowledged prefixes with `discardBefore`; `firstOffset` reports the retained boundary.
+- `InMemoryMessageLog` stores defensive copies in chunks of 1,024 record references and implements the same offset and read-budget behavior.
+- In-memory logs retain their original logical offsets while removing acknowledged prefixes with `discardBefore`; `firstOffset` reports the retained boundary. Reclamation releases complete chunks and clears references in partially consumed chunks without shifting surviving records.
 - `MessageLogs` opens a log for `StorageMode.IN_MEMORY` or `StorageMode.FILE`.
 - Each record is encoded as a four-byte signed length followed by the payload bytes.
 - Single-record and batch appends synchronize with `FileChannel.force(true)` before returning offsets. A batch write performs one sync per `FileMessageLog` call; if a write reports an I/O failure, that file is truncated back to its prior size.
 - Startup recovery scans valid records, rebuilds the in-memory index, and truncates an invalid or partial tail to the end of the last valid record.
-- Reads enforce a byte limit without splitting records and cap one call at 10,000 returned records.
+- Reads enforce a payload-byte limit without splitting records and cap one call at 10,000 returned records. File reads coalesce adjacent records into windows of up to 1 MiB; a single larger record uses its own larger window.
 - Tests cover append/read/offset behavior, segment rotation and recovery, and cleanup of a partial tail.
 
 ## On-disk layout

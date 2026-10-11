@@ -12,4 +12,6 @@ public record LogRecord(long offset, byte[] value) {
     public byte[] value() {
         return value.clone();
     }
+
+    public int valueLength() { return value.length; }
 }

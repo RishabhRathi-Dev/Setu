@@ -73,6 +73,15 @@ jobs:
           set -o pipefail
           bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test 2>&1 | tee -a "$RUNNER_TEMP/setu-benchmark-output.log"
 
+      - name: Measure bounded file ingestion with larger batches
+        run: >-
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am
+          '-Dtest=ProgressiveCapacityChaosTests#progressivelyRampsFileProducersAndConsumersUntilTheRuntimeLimit'
+          -Dsurefire.failIfNoSpecifiedTests=false
+          -Dsetu.benchmark.batch.records=4096
+          -Dsetu.benchmark.max.concurrency=2
+          -Dsetu.benchmark.stage.millis=12000 test
+
       - name: Run progressive capacity exhaustion last
         shell: bash
         run: |

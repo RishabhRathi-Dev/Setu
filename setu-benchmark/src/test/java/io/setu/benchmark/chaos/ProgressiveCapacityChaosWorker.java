@@ -31,12 +31,14 @@ import java.util.concurrent.locks.LockSupport;
 final class ProgressiveCapacityChaosWorker {
     private static final int RECORD_BYTES = 512;
     private static final int MAX_FRAME_BYTES = 15 * 1024 * 1024;
-    private static final long STAGE_MILLIS = 2_000;
+    private static final long STAGE_MILLIS = configuredInt("setu.benchmark.stage.millis", 2_000, 250, 60_000);
+    private static final int MAX_CONCURRENCY = configuredInt("setu.benchmark.max.concurrency", 0, 0, 32_768);
+    private static final int BATCH_RECORDS = configuredInt("setu.benchmark.batch.records", 256, 1, 10_000);
     private static final long SAMPLE_MILLIS = 250;
     private static final double CPU_SATURATION = 0.92;
     private static final int SATURATED_SAMPLES_TO_STOP = 4;
     private static final byte[] PAYLOAD = new byte[RECORD_BYTES];
-    private static final List<byte[]> PRODUCE_BATCH = java.util.Collections.nCopies(256, PAYLOAD);
+    private static final List<byte[]> PRODUCE_BATCH = java.util.Collections.nCopies(BATCH_RECORDS, PAYLOAD);
     private static final Field CLIENT_SOCKET = clientSocketField();
 
     private ProgressiveCapacityChaosWorker() { }
@@ -44,6 +46,10 @@ final class ProgressiveCapacityChaosWorker {
     public static void main(String[] args) {
         if (args.length != 2) throw new IllegalArgumentException("Expected <storage-mode> <data-directory>");
         StorageMode mode = StorageMode.valueOf(args[0]);
+        if (MAX_CONCURRENCY != 0 && Integer.bitCount(MAX_CONCURRENCY) != 1)
+            throw new IllegalArgumentException("setu.benchmark.max.concurrency must be zero or a power of two");
+        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d max_concurrency=%d quotas=disabled%n",
+                mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, MAX_CONCURRENCY);
         Path dataRoot = Path.of(args[1]);
         AtomicBoolean outOfMemory = new AtomicBoolean();
         Thread.setDefaultUncaughtExceptionHandler((thread, failure) -> {
@@ -99,6 +105,10 @@ final class ProgressiveCapacityChaosWorker {
                 }
                 if (result.reason != null) {
                     stop(mode, result.reason, stage, concurrency, result.detail);
+                    return;
+                }
+                if (MAX_CONCURRENCY > 0 && concurrency >= MAX_CONCURRENCY) {
+                    stop(mode, "CONFIGURED_LIMIT", stage, concurrency, "configured concurrency ceiling reached");
                     return;
                 }
                 if (concurrency > Integer.MAX_VALUE / 2) {
@@ -320,6 +330,13 @@ final class ProgressiveCapacityChaosWorker {
         } catch (ReflectiveOperationException failure) {
             throw new ExceptionInInitializerError(failure);
         }
+    }
+
+    private static int configuredInt(String property, int fallback, int minimum, int maximum) {
+        int value = Integer.parseInt(System.getProperty(property, Integer.toString(fallback)));
+        if (value < minimum || value > maximum)
+            throw new IllegalArgumentException(property + " must be between " + minimum + " and " + maximum);
+        return value;
     }
 
     private static final class LatencyHistogram {

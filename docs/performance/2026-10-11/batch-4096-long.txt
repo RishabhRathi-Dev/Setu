@@ -1,0 +1,4 @@
+CAPACITY_CONFIG mode=FILE record_bytes=512 batch_records=4096 stage_ms=12000 max_concurrency=2 quotas=disabled
+CAPACITY_STAGE mode=FILE stage=1 producers=1 consumers=1 duration_s=12.14 produced=9666560 produce_per_s=796482 consumed=5855232 consume_per_s=482446 cpu_avg=0.173 cpu_peak=0.267 heap_mb=472.3 p99_ms=16.777 stop=ramp
+CAPACITY_STAGE mode=FILE stage=2 producers=2 consumers=2 duration_s=12.12 produced=13611008 produce_per_s=1123164 consumed=2956288 consume_per_s=243949 cpu_avg=0.263 cpu_peak=0.395 heap_mb=373.5 p99_ms=16.777 stop=ramp
+CAPACITY_STOP mode=FILE reason=CONFIGURED_LIMIT stage=2 producers=2 consumers=2 detail=configured concurrency ceiling reached
