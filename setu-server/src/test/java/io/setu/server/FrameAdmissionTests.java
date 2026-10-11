@@ -50,7 +50,9 @@ class FrameAdmissionTests {
             return bytes;
         };
         long base = selector ? 1024 : 17 * 1024;
-        var options = new TcpServerOptions(10, 10, 200, base + 1100, 2048);
+        // Admit both connections, but leave too little capacity for the second frame.
+        // No server read timeout: a missing admission check must fail the client read timeout.
+        var options = new TcpServerOptions(10, 10, 0, 2 * base + 1100, 2048);
         var framed = new FramedConnectionHandler(1024, handler);
         var blocking = selector ? null : new TcpServer(new InetSocketAddress("127.0.0.1", 0), framed, options);
         var nio = selector ? new SelectorTcpServer(new InetSocketAddress("127.0.0.1", 0), 1024, options, handler) : null;
@@ -66,28 +68,39 @@ class FrameAdmissionTests {
                 assertTrue(entered.await(3, TimeUnit.SECONDS));
                 assertEquals(base + 1040, requests.getAsLong());
                 try (var rejected = new Socket("127.0.0.1", port)) {
-                rejected.setSoTimeout(3000);
-                var header = new DataOutputStream(rejected.getOutputStream());
-                header.writeInt(8); header.flush(); // no body sent: admission must already reject
-                assertEquals(-1, rejected.getInputStream().read());
-                assertEquals(base + 1040, requests.getAsLong());
+                    rejected.setSoTimeout(3000);
+                    assertRejectedBeforeBody(rejected);
+                    awaitRequestBytes(requests, base + 1040);
                 }
                 release.countDown();
                 assertEquals(8, FrameCodec.readFrame(new DataInputStream(first.getInputStream()), 1024).length);
             } finally { release.countDown(); }
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
-            while (requests.getAsLong() != 0 && System.nanoTime() < deadline) Thread.sleep(10);
-            assertEquals(0, requests.getAsLong());
+            awaitRequestBytes(requests, 0);
             // A partially received frame must release its credit even without a completed request.
             try (var partial = new Socket("127.0.0.1", port)) {
                 var output = new DataOutputStream(partial.getOutputStream());
                 output.writeInt(8); output.writeByte(1); output.flush();
-                deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
-                while (requests.getAsLong() == 0 && System.nanoTime() < deadline) Thread.sleep(5);
-                assertEquals(base + 1040, requests.getAsLong());
+                awaitRequestBytes(requests, base + 1040);
             }
         }
         assertEquals(0, requests.getAsLong());
         assertEquals(0, responses.getAsLong());
+    }
+
+    private void assertRejectedBeforeBody(Socket rejected) throws IOException {
+        try {
+            var header = new DataOutputStream(rejected.getOutputStream());
+            header.writeInt(8); header.flush(); // no body sent: admission must already reject
+            assertEquals(-1, rejected.getInputStream().read());
+        } catch (SocketException closedByPeer) {
+            // TCP rejection can surface as EOF or a reset, depending on the OS and timing.
+            // SocketTimeoutException is not caught: waiting for the body would fail the test.
+        }
+    }
+
+    private void awaitRequestBytes(LongSupplier requests, long expected) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (requests.getAsLong() != expected && System.nanoTime() < deadline) Thread.sleep(5);
+        assertEquals(expected, requests.getAsLong());
     }
 }
