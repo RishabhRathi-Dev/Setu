@@ -39,7 +39,8 @@ class ProgressiveCapacityChaosTests {
         String executable = Path.of(System.getProperty("java.home"), "bin",
                 System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java").toString();
         String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
-        List<String> command = new ArrayList<>(List.of(executable, "-XX:+UseZGC", "-XX:+UseStringDeduplication", "-Xms64m", "-Xmx768m", "-XX:MaxDirectMemorySize=128m"));
+        List<String> command = new ArrayList<>(List.of(executable, "-XX:+UseZGC", "-XX:+UseStringDeduplication"));
+        BenchmarkSettings.addJvmArguments(command, 768);
         command.add("-DSETU_LOG_DIR=" + logDirectory.toAbsolutePath());
         for (String property : List.of("setu.benchmark.batch.records", "setu.benchmark.stage.millis", "setu.benchmark.warmup.millis", "setu.benchmark.cpu.hold.millis", "setu.benchmark.max.concurrency", "setu.benchmark.min.stages", "setu.benchmark.memory.log.bytes", "setu.benchmark.jfr", "setu.log.level", "logback.configurationFile")) {
             String value = System.getProperty(property);

@@ -51,7 +51,9 @@ class IsolatedThroughputBenchmarkTests {
     }
     private static Process child(Class<?> worker, Path output, String... arguments) throws Exception {
         String java = Path.of(System.getProperty("java.home"), "bin", System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java").toString();
-        List<String> command = new ArrayList<>(List.of(java, "-XX:+UseZGC", "-XX:+UseStringDeduplication", "-Xms64m", "-Xmx512m", "-Dsetu.log.level=WARN",
+        List<String> command = new ArrayList<>(List.of(java, "-XX:+UseZGC", "-XX:+UseStringDeduplication"));
+        BenchmarkSettings.addJvmArguments(command, 512);
+        command.addAll(List.of("-Dsetu.log.level=WARN",
                 "-DSETU_LOG_DIR=" + output.getParent().resolve(output.getFileName().toString().replace(".log", "-operational")).toAbsolutePath(),
                 "-cp", System.getProperty("surefire.test.class.path", System.getProperty("java.class.path")), worker.getName()));
         command.addAll(List.of(arguments));

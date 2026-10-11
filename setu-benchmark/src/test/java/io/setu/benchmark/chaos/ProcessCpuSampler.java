@@ -1,13 +1,13 @@
 package io.setu.benchmark.chaos;
 
-/** Process CPU time normalized to the CPUs available to this JVM, including affinity/container limits. */
+/** Process CPU time normalized to the allocated CPU budget, including fractional quotas. */
 final class ProcessCpuSampler {
-    private final int processors;
+    private final double processors;
     private long previousTime;
     private long previousCpu;
 
-    ProcessCpuSampler(int processors, long time, long cpu) {
-        if (processors <= 0) throw new IllegalArgumentException("processors must be positive");
+    ProcessCpuSampler(double processors, long time, long cpu) {
+        if (!Double.isFinite(processors) || processors <= 0) throw new IllegalArgumentException("processors must be finite and positive");
         this.processors = processors;
         previousTime = time;
         previousCpu = cpu;

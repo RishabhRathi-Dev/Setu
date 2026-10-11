@@ -141,15 +141,17 @@ def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict
     lines = [
         "### Target progress",
         "",
-        "| Storage mode | Target produce rate | Peak observed | Target progress |",
-        "| --- | ---: | ---: | ---: |",
+        "| Storage mode | Target produce rate | Peak observed | Payload bytes | Peak payload MiB/s | Target progress |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for mode, values in stages.items():
         peak, _ = peak_rates(values, cpu_holds or [], mode)
         target = targets[mode]
         progress = peak / target * 100
+        record_bytes = int((configs or {}).get(mode, {}).get('record_bytes', '0'))
+        payload_rate = f"{peak * record_bytes / (1024 * 1024):.2f}" if record_bytes else 'unrecorded'
         lines.append(
-            f"| {names[mode]} | {target:,} records/s | {format_rate(peak)} records/s | {progress:.1f}% |"
+            f"| {names[mode]} | {target:,} records/s | {format_rate(peak)} records/s | {record_bytes or 'unrecorded'} | {payload_rate} | {progress:.1f}% |"
         )
 
     lines.extend([

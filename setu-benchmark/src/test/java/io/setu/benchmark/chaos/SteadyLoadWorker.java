@@ -13,7 +13,7 @@ import java.util.concurrent.locks.LockSupport;
 public final class SteadyLoadWorker {
     private static final int PRODUCERS = 4;
     private static final int BATCH = 32;
-    private static final int RECORD_BYTES = 1024;
+    private static final int RECORD_BYTES = BenchmarkSettings.recordBytes();
     public static void main(String[] args) throws Exception {
         BenchmarkRuntime.verifyZgc(SteadyLoadWorker.class);
         int port = Integer.parseInt(args[0]), partitions = Integer.parseInt(args[1]);
@@ -112,10 +112,12 @@ public final class SteadyLoadWorker {
                 System.out.printf(Locale.ROOT,
                         "STEADY_STAGE partitions=%d producers=%d consumers=1 offered_records_per_s=%d duration_s=%d " +
                         "produced=%d delivered=%d produce_per_s=%.1f deliver_per_s=%.1f missed_records=%d errors=%d drain_ms=%.3f " +
-                        "produce_p99_ms=%.3f fetch_p99_ms=%.3f ack_p99_ms=%.3f scheduled_completion_p99_ms=%.3f%n",
+                        "produce_p99_ms=%.3f fetch_p99_ms=%.3f ack_p99_ms=%.3f scheduled_completion_p99_ms=%.3f record_bytes=%d produce_mib_per_s=%.3f deliver_mib_per_s=%.3f%n",
                         partitions, PRODUCERS, rate, seconds, produced.get(), consumed.get(),
                         measuredProduced.get() / (double) seconds, measuredConsumed.get() / (double) seconds, misses.get(), errors.get(),
-                        Math.max(0, completed - end) / 1_000_000.0, produceLatency.p99(), fetchLatency.p99(), ackLatency.p99(), scheduleLatency.p99());
+                        Math.max(0, completed - end) / 1_000_000.0, produceLatency.p99(), fetchLatency.p99(), ackLatency.p99(), scheduleLatency.p99(), RECORD_BYTES,
+                        measuredProduced.get() * (double) RECORD_BYTES / seconds / (1024 * 1024),
+                        measuredConsumed.get() * (double) RECORD_BYTES / seconds / (1024 * 1024));
             }
             if (failure.get() != null) throw new IOException("load worker failed", failure.get());
             if (consumed.get() != produced.get()) throw new IOException("consumer failed to drain accepted records");

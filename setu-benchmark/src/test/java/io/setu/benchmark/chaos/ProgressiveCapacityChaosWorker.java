@@ -29,7 +29,7 @@ import java.util.concurrent.locks.LockSupport;
 
 /** Child-JVM load generator for an intentionally aggressive, progressively doubled capacity test. */
 final class ProgressiveCapacityChaosWorker {
-    private static final int RECORD_BYTES = 1024;
+    private static final int RECORD_BYTES = BenchmarkSettings.recordBytes();
     private static final int MAX_FRAME_BYTES = 15 * 1024 * 1024;
     private static final long STAGE_MILLIS = configuredInt("setu.benchmark.stage.millis", 2_000, 250, 60_000);
     private static final int WARMUP_MILLIS = configuredInt("setu.benchmark.warmup.millis", 2_000, 0, 60_000);
@@ -55,9 +55,11 @@ final class ProgressiveCapacityChaosWorker {
         stopReporter = new CapacityStopReporter(mode.name());
         if (MAX_CONCURRENCY != 0 && Integer.bitCount(MAX_CONCURRENCY) != 1)
             throw new IllegalArgumentException("setu.benchmark.max.concurrency must be zero or a power of two");
-        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d cpu_hold_ms=%d max_concurrency=%d min_stages=%d security_quotas=disabled memory_log_budget=%d cpu_stop=false jfr=%s gc=ZGC string_dedup=true cpu_metric=process_time_per_available_cpu%n",
+        if ((long) BATCH_RECORDS * (RECORD_BYTES + Integer.BYTES) + 1024 > MAX_FRAME_BYTES)
+            throw new IllegalArgumentException("Payload size and batch count exceed the 15 MiB frame limit");
+        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d cpu_hold_ms=%d max_concurrency=%d min_stages=%d security_quotas=disabled memory_log_budget=%d cpu_stop=false jfr=%s gc=ZGC string_dedup=true cpu_metric=process_time_per_budget_cpu cpu_budget_cores=%.3f%n",
                 mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, WARMUP_MILLIS, CPU_HOLD_MILLIS, MAX_CONCURRENCY,
-                MIN_STAGES, MEMORY_LOG_BYTES, System.getProperty("setu.benchmark.jfr", "true"));
+                MIN_STAGES, MEMORY_LOG_BYTES, System.getProperty("setu.benchmark.jfr", "true"), BenchmarkSettings.cpuCores());
         Path dataRoot = Path.of(args[1]);
         System.out.printf(Locale.ROOT, "CAPACITY_RUNTIME java=%s os=%s cpus=%d max_heap_mb=%d log_level=%s log_directory=%s tcp_nodelay=true%n",
                 System.getProperty("java.version"), System.getProperty("os.name").replace(' ', '_'),
@@ -95,7 +97,7 @@ final class ProgressiveCapacityChaosWorker {
                 dataRoot.toAbsolutePath(), fileStore.type(), fileStore.getUsableSpace() / (1024 * 1024));
         OperatingSystemMXBean os = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
         Path brokerData = mode == StorageMode.FILE ? dataRoot.resolve("broker-data") : null;
-        DefaultBroker broker = new DefaultBroker(mode, brokerData, 1024, 64L * 1024 * 1024,
+        DefaultBroker broker = new DefaultBroker(mode, brokerData, RECORD_BYTES, 64L * 1024 * 1024,
                 60 * 60 * 1000L, 2 * 60 * 60 * 1000L, MEMORY_LOG_BYTES);
         TcpServer server = new TcpServer(new java.net.InetSocketAddress("127.0.0.1", 0),
                 new FramedConnectionHandler(new BrokerRequestHandler(broker)),
@@ -217,7 +219,7 @@ final class ProgressiveCapacityChaosWorker {
 
             started = System.nanoTime();
             jfrStage.begin();
-            ProcessCpuSampler cpuSampler = new ProcessCpuSampler(Runtime.getRuntime().availableProcessors(),
+            ProcessCpuSampler cpuSampler = new ProcessCpuSampler(BenchmarkSettings.cpuCores(),
                     started, os.getProcessCpuTime());
             for (int i = 0; i < concurrency; i++) {
                 SetuClient producer = producers.get(i);
@@ -278,6 +280,13 @@ final class ProgressiveCapacityChaosWorker {
                 heapUsed = usage.getUsed();
                 if (System.nanoTime() >= nextDiagnostic) {
                     nextDiagnostic += 1_000_000_000L;
+                    long diskReserve = Long.parseLong(System.getProperty("setu.benchmark.disk.reserve.bytes", "0"));
+                    if (mode == StorageMode.FILE && diskReserve > 0
+                            && Files.getFileStore(Path.of(System.getProperty("java.io.tmpdir"))).getUsableSpace() <= diskReserve) {
+                        reason = "RESOURCE_LIMIT";
+                        detail = "Configured free disk reserve reached";
+                        break;
+                    }
                     System.out.printf(Locale.ROOT,
                             "CAPACITY_SAMPLE mode=%s stage=%d elapsed_ms=%d produced=%d consumed=%d cpu=%.3f heap_mb=%.1f%n",
                             mode, stage, (System.nanoTime() - started) / 1_000_000, produced.sum(), consumed.sum(),
@@ -445,11 +454,13 @@ final class ProgressiveCapacityChaosWorker {
         System.out.printf(Locale.ROOT,
                 "%s mode=%s stage=%d producers=%d consumers=%d duration_s=%.2f " +
                         "produced=%d produce_per_s=%.0f consumed=%d consume_per_s=%.0f " +
-                        "cpu_avg=%.3f cpu_peak=%.3f heap_mb=%.1f p99_ms=%.3f stop=%s%n",
+                        "cpu_avg=%.3f cpu_peak=%.3f heap_mb=%.1f p99_ms=%.3f record_bytes=%d produce_mib_per_s=%.3f consume_mib_per_s=%.3f stop=%s%n",
                 marker, mode, result.stage, result.concurrency, result.concurrency, seconds,
                 result.produced, result.produced / seconds, result.consumed, result.consumed / seconds,
                 result.cpuAverage, result.cpuMaximum, result.heapUsed / (1024.0 * 1024),
-                result.p99Nanos / 1_000_000.0, result.reason == null ? "ramp" : result.reason);
+                result.p99Nanos / 1_000_000.0, RECORD_BYTES,
+                result.produced * (double) RECORD_BYTES / seconds / (1024 * 1024),
+                result.consumed * (double) RECORD_BYTES / seconds / (1024 * 1024), result.reason == null ? "ramp" : result.reason);
         System.out.flush();
         long gcMillis = ManagementFactory.getGarbageCollectorMXBeans().stream()
                 .mapToLong(bean -> Math.max(0, bean.getCollectionTime())).sum();

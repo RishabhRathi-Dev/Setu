@@ -5,6 +5,7 @@ import io.setu.server.connection.FramedConnectionHandler;
 import io.setu.server.dispatcher.BrokerRequestHandler;
 import io.setu.server.tcp.TcpServer;
 import io.setu.storage.log.StorageMode;
+import io.setu.storage.log.MessageLogs;
 import java.nio.file.*;
 import java.lang.management.ManagementFactory;
 import com.sun.management.OperatingSystemMXBean;
@@ -16,7 +17,10 @@ public final class SteadyBrokerWorker {
         StorageMode mode = StorageMode.valueOf(args[0]);
         Path control = Path.of(args[1]);
         Path data = args.length > 2 ? Path.of(args[2]) : control.resolve("data");
-        try (var broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null, 1024);
+        try (var broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null, BenchmarkSettings.recordBytes(),
+                MessageLogs.DEFAULT_MAX_SEGMENT_BYTES, DefaultBroker.DEFAULT_ACK_TIMEOUT_MILLIS,
+                DefaultBroker.DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS,
+                BenchmarkSettings.integer("setu.benchmark.memory.log.bytes", 256 * 1024 * 1024, 0, Integer.MAX_VALUE));
              var server = new TcpServer(new java.net.InetSocketAddress("127.0.0.1", 0),
                      new FramedConnectionHandler(new BrokerRequestHandler(broker)))) {
             server.start();
@@ -30,7 +34,7 @@ public final class SteadyBrokerWorker {
                 if (started != 0) peakHeap = Math.max(peakHeap, ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed());
                 if (started != 0 && Files.exists(control.resolve("measure.stop"))) {
                     long elapsed = System.nanoTime() - started;
-                    double cpu = (os.getProcessCpuTime() - cpuStarted) / (double) elapsed / Runtime.getRuntime().availableProcessors();
+                    double cpu = (os.getProcessCpuTime() - cpuStarted) / (double) elapsed / BenchmarkSettings.cpuCores();
                     System.out.printf(java.util.Locale.ROOT,
                             "STEADY_BROKER mode=%s cpus=%d cpu_avg=%.4f sampled_peak_heap_mb=%.1f retained_log_bytes=%d%n",
                             mode, Runtime.getRuntime().availableProcessors(), cpu, peakHeap / (1024.0 * 1024), broker.retainedInMemoryBytes());

@@ -10,6 +10,15 @@ spec.loader.exec_module(badges)
 
 
 class BenchmarkCaptureTests(unittest.TestCase):
+    def test_target_progress_reports_payload_throughput_only_for_recorded_sizes(self):
+        stage = dict(stage="1", producers="1", consumers="1", duration_s="1", produced="2048",
+                     produce_per_s="2048", consumed="1024", consume_per_s="1024", cpu_avg=".8",
+                     cpu_peak=".9", heap_mb="128", p99_ms="2", stop="ramp")
+        details = badges.capacity_details({"IN_MEMORY": [stage], "FILE": [stage]}, {},
+                                          configs={"IN_MEMORY": dict(record_bytes="512")})
+        self.assertIn("2.05K records/s | 512 | 1.00 |", details)
+        self.assertIn("2.05K records/s | unrecorded | unrecorded |", details)
+
     def test_main_publishes_jfr_and_rejects_missing_profile_without_changing_any_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

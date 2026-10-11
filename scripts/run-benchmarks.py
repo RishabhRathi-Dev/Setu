@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+"""Detect host limits, enforce a shared Linux budget, and compare payloads sequentially."""
+import argparse
+from dataclasses import asdict, dataclass
+import json
+import math
+import os
+import platform
+from pathlib import Path
+import re
+import shutil
+import signal
+import statistics
+import subprocess
+import sys
+import tempfile
+import uuid
+
+MIB = 1024 ** 2
+GIB = 1024 ** 3
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def cgroup_paths(proc=Path('/proc'), root=Path('/sys/fs/cgroup')):
+    """Walk v2 ancestors too: a parent slice can impose the effective limit."""
+    for line in (proc / 'self/cgroup').read_text().splitlines():
+        if line.startswith('0::'):
+            current = root / line[3:].lstrip('/')
+            if '..' in current.parts:
+                raise ValueError('unexpected cgroup path')
+            while True:
+                yield current
+                if current == root:
+                    return
+                current = current.parent
+    raise ValueError('cgroup v2 is required for enforced Linux benchmarks')
+
+
+def read_limit(path):
+    if not path.exists():
+        return None
+    value = path.read_text().strip()
+    return None if value == 'max' else int(value)
+
+
+def detect_host(data_directory, proc=Path('/proc'), cgroups=Path('/sys/fs/cgroup')):
+    if sys.platform != 'linux':
+        raise ValueError('Use Linux/WSL to detect and enforce CPU, memory and process-tree limits')
+    info = dict(re.findall(r'^(\w+):\s+(\d+) kB', (proc / 'meminfo').read_text(), re.M))
+    total, available = int(info['MemTotal']) * 1024, int(info['MemAvailable']) * 1024
+    affinity = sorted(os.sched_getaffinity(0))
+    cpus = float(len(affinity))
+    for group in cgroup_paths(proc, cgroups):
+        if (group / 'cpu.max').exists():
+            quota, period = (group / 'cpu.max').read_text().split()
+            if quota != 'max':
+                cpus = min(cpus, int(quota) / int(period))
+        limit = read_limit(group / 'memory.max')
+        if limit is not None:
+            total = min(total, limit)
+            available = min(available, max(0, limit - int((group / 'memory.current').read_text())))
+    cpuinfo = (proc / 'cpuinfo').read_text()
+    model = re.search(r'^model name\s*:\s*(.*)', cpuinfo, re.M)
+    return dict(platform=sys.platform, kernel=platform.release(), architecture=platform.machine(),
+                cpu_model=model.group(1) if model else 'unknown',
+                logical_cpus=os.cpu_count(), affinity=affinity, available_cpu_cores=cpus,
+                memory_total_bytes=total, memory_available_bytes=available,
+                data_directory=str(data_directory.resolve()), filesystem_free_bytes=shutil.disk_usage(data_directory).free)
+
+
+@dataclass(frozen=True)
+class Budget:
+    cpu_cores: float
+    memory_bytes: int
+    heap_mib: int
+    direct_mib: int
+    memory_log_bytes: int
+    disk_reserve_bytes: int
+
+
+def fraction(value):
+    result = float(value)
+    if not math.isfinite(result) or not 0 < result <= 1:
+        raise argparse.ArgumentTypeError('resource fractions must be finite and in (0, 1]')
+    return result
+
+
+def plan(host, cpu_fraction=.8, memory_fraction=.8, disk_fraction=.8, profile='host', workers=1,
+         heap_mib=None, direct_mib=None, memory_log_mib=None):
+    cpu_ceiling, memory_ceiling = {'host': (math.inf, math.inf),
+                                 'github-private': (2, 8 * GIB), 'github-public': (4, 16 * GIB)}[profile]
+    cpus = math.floor(min(host['available_cpu_cores'], cpu_ceiling) * fraction(cpu_fraction) * 100) / 100
+    if cpus < .01:
+        raise ValueError('CPU budget must allow at least 1% of one core')
+    memory = int(min(host['memory_available_bytes'], memory_ceiling) * fraction(memory_fraction))
+    # The hard limit includes Maven (512 MiB), Surefire (256 MiB), all workers,
+    # native allocations, and charged page cache. Heap/direct are not RSS limits.
+    worker_mib = (memory // MIB - 768) // workers
+    if worker_mib < 384:
+        raise ValueError('not enough available memory for Maven, Surefire and the worker budget')
+    heap = heap_mib if heap_mib is not None else int(worker_mib * .60)
+    direct = direct_mib if direct_mib is not None else max(16, int(worker_mib * .10))
+    if heap < 128 or direct < 16 or heap + direct > int(worker_mib * .75):
+        raise ValueError('heap/direct overrides must leave at least 25% of the worker allocation for native memory/cache')
+    retained = memory_log_mib if memory_log_mib is not None else min(2047, max(1, heap // 4))
+    if retained < 1 or retained > heap // 2 or retained * MIB > 2 ** 31 - 1:
+        raise ValueError('memory log must be positive, at most half the heap and below 2 GiB')
+    return Budget(cpus, memory, heap, direct, retained * MIB,
+                  int(host['filesystem_free_bytes'] * (1 - fraction(disk_fraction))))
+
+
+def java_properties(budget, payload, data_directory):
+    return [f'-Dsetu.benchmark.record.bytes={payload}', f'-Dsetu.benchmark.heap.mib={budget.heap_mib}',
+            f'-Dsetu.benchmark.direct.mib={budget.direct_mib}', f'-Dsetu.benchmark.cpu.cores={budget.cpu_cores:.6f}',
+            f'-Dsetu.benchmark.memory.log.bytes={budget.memory_log_bytes}',
+            f'-Dsetu.benchmark.disk.reserve.bytes={budget.disk_reserve_bytes}',
+            f'-Djava.io.tmpdir={data_directory}', '-DargLine=-Xmx256m', '-Dsetu.log.level=INFO']
+
+
+def limited_command(command, budget, unit):
+    if not shutil.which('systemd-run'):
+        raise ValueError('systemd-run is required; enable systemd in WSL or use a Linux runner')
+    prefix = [] if os.geteuid() == 0 else ['sudo', '-n']
+    # A transient service, rather than independent per-JVM limits, bounds descendants
+    # together and terminates them on failure/interruption. No privileged workload.
+    result = prefix + ['systemd-run', '--quiet', '--wait', '--pipe', '--collect', '--service-type=exec',
+                       '--unit=' + unit, '--uid=' + str(os.getuid()), '--gid=' + str(os.getgid()),
+                       '--working-directory=' + str(ROOT), '-p', f'CPUQuota={round(budget.cpu_cores * 100)}%',
+                       '-p', f'MemoryMax={budget.memory_bytes}', '-p', f'MemoryHigh={int(budget.memory_bytes * .9)}',
+                       '-p', 'MemorySwapMax=0', '-p', 'OOMPolicy=kill', '-p', 'KillMode=control-group',
+                       '-p', 'RuntimeMaxSec=3300']
+    for name in ('JAVA_HOME', 'PATH', 'HOME', 'MAVEN_OPTS', 'PYTHONHOME', 'LD_LIBRARY_PATH'):
+        if name in os.environ:
+            result.append('--setenv=' + name + '=' + os.environ[name])
+    return result + ['--'] + command
+
+
+def fields(line, marker):
+    return dict(item.split('=', 1) for item in line.split(marker, 1)[1].split() if '=' in item)
+
+
+def summarize_capture(log, payload, max_concurrency):
+    configs, stages, stops = {}, {}, {}
+    for line in log.splitlines():
+        for marker, target in (('CAPACITY_CONFIG ', configs), ('CAPACITY_STOP ', stops)):
+            if marker in line:
+                row = fields(line, marker)
+                if row['mode'] in target:
+                    raise ValueError(f'duplicate {marker.strip()} for {row["mode"]}; capture mixes runs')
+                target[row['mode']] = row
+        if 'CAPACITY_STAGE ' in line:
+            row = fields(line, 'CAPACITY_STAGE ')
+            if row.get('stop') == 'ramp':
+                key = (row['mode'], int(row['stage']))
+                if key in stages:
+                    raise ValueError('duplicate completed stage; capture mixes runs')
+                stages[key] = row
+    expected = max_concurrency.bit_length()
+    rows = []
+    for mode in ('IN_MEMORY', 'FILE'):
+        if int(configs.get(mode, {}).get('record_bytes', 0)) != payload:
+            raise ValueError(f'{mode} payload configuration missing or mismatched')
+        if stops.get(mode, {}).get('reason') != 'CONFIGURED_LIMIT':
+            raise ValueError(f'{mode} stopped before the configured comparison ceiling')
+        for stage in range(1, expected + 1):
+            row = stages.get((mode, stage))
+            if not row:
+                raise ValueError(f'{mode} comparison is missing completed stage {stage}')
+            rows.append(dict(mode=mode, payload_bytes=payload, concurrency=int(row['producers']),
+                             produce_records_per_s=float(row['produce_per_s']),
+                             consume_records_per_s=float(row['consume_per_s']),
+                             produce_mib_per_s=float(row['produce_per_s']) * payload / MIB,
+                             consume_mib_per_s=float(row['consume_per_s']) * payload / MIB,
+                             p99_ms=float(row['p99_ms']), cpu_average=float(row['cpu_avg'])))
+    return rows
+
+
+def comparison_report(rows):
+    groups = {}
+    for row in rows:
+        groups.setdefault((row['mode'], row['payload_bytes'], row['concurrency']), []).append(row)
+    text = ['# Payload comparison', '',
+            'Matched sequential runs; rates exclude warmup and setup. Consumer rates include fanout.',
+            'MiB/s counts payload bytes, excluding protocol/storage overhead. These bounded runs do not measure terminal capacity.', '',
+            '| Mode | Payload bytes | Producers/consumers | Runs | Median produce/s | Range produce/s | Produce MiB/s | Fanout MiB/s | p99 ms | CPU budget used |',
+            '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |']
+    for (mode, payload, concurrency), values in sorted(groups.items()):
+        med = lambda key: statistics.median(row[key] for row in values)
+        rates = [row['produce_records_per_s'] for row in values]
+        text.append(f'| {mode} | {payload} | {concurrency} | {len(values)} | {med("produce_records_per_s"):,.0f} | '
+                    f'{min(rates):,.0f}–{max(rates):,.0f} | {med("produce_mib_per_s"):.2f} | '
+                    f'{med("consume_mib_per_s"):.2f} | {med("p99_ms"):.3f} | {med("cpu_average"):.1%} |')
+    return '\n'.join(text) + '\n'
+
+
+def main():
+    def interrupted(_signum, _frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, interrupted)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--kind', choices=('sweep', 'capacity', 'steady', 'large-batch', 'chaos'), default='sweep')
+    parser.add_argument('--profile', choices=('host', 'github-private', 'github-public'), default='host')
+    parser.add_argument('--fraction', type=fraction, default=.8)
+    parser.add_argument('--cpu-fraction', type=fraction)
+    parser.add_argument('--memory-fraction', type=fraction)
+    parser.add_argument('--disk-fraction', type=fraction)
+    parser.add_argument('--payload-sizes', default='256,512,1024,4096')
+    parser.add_argument('--repeats', type=int, default=3)
+    parser.add_argument('--max-concurrency', type=int, default=8)
+    parser.add_argument('--stage-millis', type=int, default=3000)
+    parser.add_argument('--warmup-millis', type=int, default=2000)
+    parser.add_argument('--heap-mib', type=int)
+    parser.add_argument('--direct-mib', type=int)
+    parser.add_argument('--memory-log-mib', type=int)
+    parser.add_argument('--data-directory', type=Path, default=Path(tempfile.gettempdir()))
+    parser.add_argument('--output', type=Path, default=ROOT / 'logs/benchmarks/resources')
+    parser.add_argument('--log', type=Path, help='explicit single-profile capture (capacity/steady/large-batch)')
+    parser.add_argument('--dry-run', action='store_true', help='detect and print the plan without launching anything')
+    args = parser.parse_args()
+    payloads = [int(value) for value in args.payload_sizes.split(',')]
+    if not payloads or len(set(payloads)) != len(payloads) or any(not 1 <= size <= 65536 for size in payloads):
+        parser.error('payload sizes must be distinct integers in 1..65536')
+    if args.kind != 'sweep' and len(payloads) != 1:
+        parser.error('single-profile benchmarks require exactly one --payload-sizes value')
+    if not 1 <= args.repeats <= 10 or not 250 <= args.stage_millis <= 60000 or not 0 <= args.warmup_millis <= 60000:
+        parser.error('repeats must be 1..10, stage millis 250..60000, warmup millis 0..60000')
+    if not 1 <= args.max_concurrency <= 32768 or args.max_concurrency & (args.max_concurrency - 1):
+        parser.error('comparison concurrency must be a power of two in 1..32768')
+    batch = 4096 if args.kind == 'large-batch' else 256
+    if any(batch * (size + 4) + 1024 > 15 * MIB for size in payloads):
+        parser.error('payload and batch size exceed the 15 MiB frame limit')
+    if args.log and args.kind == 'sweep':
+        parser.error('sweeps use separate captures; --log is only for single profiles')
+    args.data_directory = args.data_directory.resolve(strict=True)
+    host = detect_host(args.data_directory)
+    budget = plan(host, args.cpu_fraction or args.fraction, args.memory_fraction or args.fraction,
+                  args.disk_fraction or args.fraction, args.profile, 2 if args.kind == 'steady' else 1,
+                  args.heap_mib, args.direct_mib, args.memory_log_mib)
+    snapshot = dict(host=host, budget=asdict(budget), profile=args.profile, kind=args.kind,
+                    cpu_fraction=args.cpu_fraction or args.fraction,
+                    memory_fraction=args.memory_fraction or args.fraction,
+                    disk_fraction=args.disk_fraction or args.fraction, enforcement='systemd-cgroup-v2',
+                    payload_sizes=payloads, repeats=args.repeats if args.kind == 'sweep' else 1)
+    print('BENCHMARK_RESOURCES ' + json.dumps(snapshot, sort_keys=True), flush=True)
+    if args.dry_run:
+        return
+    output = args.output.resolve() / (args.kind + '-' + uuid.uuid4().hex[:12])
+    output.mkdir(parents=True)
+    (output / 'resources.json').write_text(json.dumps(snapshot, indent=2) + '\n')
+    print('BENCHMARK_CAPTURE directory=' + str(output), flush=True)
+    os.environ['MAVEN_OPTS'] = '-Xmx512m'  # bound the launcher inside the shared envelope too
+    rows = []
+    repetitions = args.repeats if args.kind == 'sweep' else 1
+    # Rotate order between repeats to reduce systematic cache/host-drift bias.
+    for repeat in range(repetitions):
+        ordered = payloads[repeat % len(payloads):] + payloads[:repeat % len(payloads)]
+        for payload in ordered:
+            capture = args.log.resolve() if args.log else output / f'payload-{payload}-run-{repeat + 1}.log'
+            capture.parent.mkdir(parents=True, exist_ok=True)
+            test = 'IsolatedThroughputBenchmarkTests' if args.kind == 'steady' else 'ProgressiveCapacityChaosTests'
+            if args.kind == 'chaos':
+                test = '*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests,ProcessCpuSamplerTests,CpuSaturationHoldTests,CapacityJfrTests'
+            if args.kind == 'large-batch':
+                test += '#progressivelyRampsFileProducersAndConsumersUntilTheRuntimeLimit'
+            command = ['bash', str(ROOT / 'mvnw'), '--batch-mode', '--no-transfer-progress', '-pl', 'setu-benchmark', '-am',
+                       '-Dtest=' + test, '-Dsurefire.failIfNoSpecifiedTests=false']
+            command += java_properties(budget, payload, args.data_directory)
+            command += [f'-Dsetu.benchmark.batch.records={batch}', '-Dsetu.benchmark.jfr=true']
+            if args.kind == 'capacity':
+                command += ['-Dsetu.benchmark.max.concurrency=0', '-Dsetu.benchmark.min.stages=8',
+                            '-Dsetu.benchmark.stage.millis=2000', '-Dsetu.benchmark.warmup.millis=2000',
+                            '-Dsetu.benchmark.cpu.hold.millis=10000']
+            elif args.kind not in ('steady', 'chaos'):
+                ceiling = 2 if args.kind == 'large-batch' else args.max_concurrency
+                command += [f'-Dsetu.benchmark.max.concurrency={ceiling}', f'-Dsetu.benchmark.min.stages={ceiling.bit_length()}',
+                            f'-Dsetu.benchmark.stage.millis={12000 if args.kind == "large-batch" else args.stage_millis}',
+                            f'-Dsetu.benchmark.warmup.millis={args.warmup_millis}', '-Dsetu.benchmark.cpu.hold.millis=0']
+            unit = 'setu-benchmark-' + uuid.uuid4().hex
+            with capture.open('w', encoding='utf-8') as stream:
+                stream.write('BENCHMARK_RESOURCES ' + json.dumps(snapshot) + '\n')
+                stream.flush()
+                try:
+                    result = subprocess.run(limited_command(command + ['test'], budget, unit), stdout=stream, stderr=subprocess.STDOUT)
+                except BaseException:
+                    subprocess.run(([] if os.geteuid() == 0 else ['sudo', '-n']) + ['systemctl', 'stop', unit], check=False)
+                    raise
+            print(f'BENCHMARK_CASE payload_bytes={payload} repeat={repeat + 1} exit={result.returncode} capture={capture}', flush=True)
+            if result.returncode:
+                raise RuntimeError(f'benchmark failed; inspect {capture} (resource-limit kills are failures, not throughput results)')
+            if args.kind == 'sweep':
+                rows += summarize_capture(capture.read_text(encoding='utf-8'), payload, args.max_concurrency)
+                (output / 'comparison.json').write_text(json.dumps(rows, indent=2) + '\n')
+                (output / 'comparison.txt').write_text(comparison_report(rows), encoding='utf-8')
+    if rows:
+        print(comparison_report(rows))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('Benchmark interrupted; worker service cleanup requested.', file=sys.stderr)
+        sys.exit(130)
+    except (ValueError, RuntimeError, OSError) as failure:
+        sys.exit(str(failure))
