@@ -151,8 +151,7 @@ public final class FileMessageLog implements MessageLog {
                 long recordEnd = offset + 1 == recordCount ? endPosition : positions[offset + 1];
                 if (length != recordEnd - positions[offset] - Integer.BYTES)
                     throw new IOException("Record length changed while reading offset " + offset);
-                byte[] value = new byte[length];
-                data.get(value);
+                MessageValue value = MessageValue.readFrom(data, length);
                 records.add(new LogRecord(offset++, value));
             }
         }

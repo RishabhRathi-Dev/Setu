@@ -1,16 +1,18 @@
 package io.setu.core.protocol;
 
-public record ProtocolRecord(long offset, byte[] value) {
-    public ProtocolRecord {
-        if (offset < 0) throw new IllegalArgumentException("offset must be non-negative");
-        value = value.clone();
+import io.setu.storage.log.MessageValue;
+
+public record ProtocolRecord(long offset, MessageValue payload) {
+    public ProtocolRecord(long offset, byte[] value) {
+        this(offset, MessageValue.copyOf(value));
     }
 
-    @Override
-    public byte[] value() { return value.clone(); }
+    public ProtocolRecord {
+        if (offset < 0) throw new IllegalArgumentException("offset must be non-negative");
+        java.util.Objects.requireNonNull(payload, "payload");
+    }
 
-    public int valueLength() { return value.length; }
+    public byte[] value() { return payload.copy(); }
 
-    // Package-private encoding access never exposes the owned array to callers.
-    byte[] valueForEncoding() { return value; }
+    public int valueLength() { return payload.length(); }
 }

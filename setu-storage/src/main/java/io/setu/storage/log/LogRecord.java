@@ -1,17 +1,20 @@
 package io.setu.storage.log;
 
-public record LogRecord(long offset, byte[] value) {
+public record LogRecord(long offset, MessageValue payload) {
+    public LogRecord(long offset, byte[] value) {
+        this(offset, MessageValue.copyOf(value));
+    }
+
     public LogRecord {
         if (offset < 0) {
             throw new IllegalArgumentException("offset must be non-negative");
         }
-        value = value.clone();
+        java.util.Objects.requireNonNull(payload, "payload");
     }
 
-    @Override
     public byte[] value() {
-        return value.clone();
+        return payload.copy();
     }
 
-    public int valueLength() { return value.length; }
+    public int valueLength() { return payload.length(); }
 }

@@ -72,7 +72,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/logs"
-          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests,ProcessCpuSamplerTests,CpuSaturationHoldTests' -Dsurefire.failIfNoSpecifiedTests=false -Dsetu.log.level=INFO test 2>&1 | tee "$RUNNER_TEMP/logs/bounded-chaos.log"
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests,ProcessCpuSamplerTests,CpuSaturationHoldTests,CapacityJfrTests' -Dsurefire.failIfNoSpecifiedTests=false -Dsetu.log.level=INFO test 2>&1 | tee "$RUNNER_TEMP/logs/bounded-chaos.log"
 
       - name: Verify benchmark report isolation
         run: python3 -m unittest discover -s scripts -p 'test_benchmark_badges.py'
@@ -85,7 +85,8 @@ jobs:
             '-Dtest=ProgressiveCapacityChaosTests#progressivelyRampsFileProducersAndConsumersUntilTheRuntimeLimit' \
             -Dsurefire.failIfNoSpecifiedTests=false -Dsetu.log.level=INFO \
             -Dsetu.benchmark.batch.records=4096 -Dsetu.benchmark.max.concurrency=2 \
-            -Dsetu.benchmark.warmup.millis=2000 -Dsetu.benchmark.stage.millis=12000 test \
+            -Dsetu.benchmark.warmup.millis=2000 -Dsetu.benchmark.stage.millis=12000 \
+            -Dsetu.benchmark.jfr=true -Dsetu.benchmark.memory.log.bytes=268435456 test \
             2>&1 | tee "$RUNNER_TEMP/logs/capacity-large-batch.log"
 
       - name: Run progressive capacity exhaustion last
@@ -97,6 +98,8 @@ jobs:
             -Dsetu.log.level=INFO -Dsetu.benchmark.batch.records=256 \
             -Dsetu.benchmark.stage.millis=2000 -Dsetu.benchmark.warmup.millis=2000 \
             -Dsetu.benchmark.cpu.hold.millis=10000 -Dsetu.benchmark.max.concurrency=0 \
+            -Dsetu.benchmark.min.stages=8 -Dsetu.benchmark.memory.log.bytes=268435456 \
+            -Dsetu.benchmark.jfr=true \
             test 2>&1 | tee "$RUNNER_TEMP/logs/capacity-default.log"
 
       - name: Generate badges from the latest capacity metrics
@@ -107,6 +110,7 @@ jobs:
           --repository "$GITHUB_REPOSITORY"
           --server-url "$GITHUB_SERVER_URL"
           --visibility "${{ github.event.repository.private && 'private' || 'public' }}"
+          --minimum-stages 8 --require-jfr
 
       - name: Retain benchmark logs and failure reports
         if: always()

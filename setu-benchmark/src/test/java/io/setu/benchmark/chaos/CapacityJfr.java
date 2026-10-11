@@ -1,0 +1,137 @@
+package io.setu.benchmark.chaos;
+
+import jdk.jfr.Configuration;
+import jdk.jfr.Event;
+import jdk.jfr.Label;
+import jdk.jfr.Name;
+import jdk.jfr.Recording;
+import jdk.jfr.consumer.RecordedEvent;
+import jdk.jfr.consumer.RecordedFrame;
+import jdk.jfr.consumer.RecordingFile;
+
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+/** Profile the worker, then analyze its recording in the parent JVM outside measured load. */
+final class CapacityJfr {
+    private static Recording recording;
+    private static Path destination;
+
+    static void start(Path path) throws Exception {
+        destination = path;
+        recording = new Recording(Configuration.getConfiguration("profile"));
+        recording.setMaxSize(128L * 1024 * 1024);
+        recording.setDumpOnExit(false);
+        recording.enable(Stage.class).withThreshold(java.time.Duration.ZERO);
+        recording.start();
+    }
+
+    static synchronized void checkpoint() throws java.io.IOException {
+        if (recording != null) {
+            Path temporary = destination.resolveSibling(destination.getFileName() + ".part");
+            recording.dump(temporary);
+            try {
+                java.nio.file.Files.move(temporary, destination, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+                java.nio.file.Files.move(temporary, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+    }
+
+    static void finish() throws java.io.IOException {
+        if (recording != null) {
+            recording.stop();
+            checkpoint();
+            recording.close();
+            recording = null;
+        }
+    }
+
+    static void emergencyDump() {
+        try { checkpoint(); }
+        catch (Throwable ignored) { /* Preserve the last completed checkpoint if heap exhaustion prevents a dump. */ }
+    }
+
+    @Name("io.setu.benchmark.Stage")
+    @Label("Setu measured capacity stage")
+    static final class Stage extends Event {
+        public String mode;
+        public int stage;
+    }
+
+    private static final class Summary {
+        final String mode;
+        final int stage;
+        final Instant start;
+        final Instant end;
+        long allocationBytes;
+        double gcPauseMillis;
+        long samples;
+        final Map<String, Long> methods = new HashMap<>();
+
+        Summary(RecordedEvent event) {
+            mode = event.getString("mode");
+            stage = event.getInt("stage");
+            start = event.getStartTime();
+            end = event.getEndTime();
+        }
+
+        boolean contains(Instant instant) { return !instant.isBefore(start) && instant.isBefore(end); }
+    }
+
+    static java.util.Set<Integer> report(Path path) throws java.io.IOException {
+        List<Summary> stages = new ArrayList<>();
+        try (RecordingFile file = new RecordingFile(path)) {
+            while (file.hasMoreEvents()) {
+                RecordedEvent event = file.readEvent();
+                if (event.getEventType().getName().equals("io.setu.benchmark.Stage") && event.getInt("stage") > 0)
+                    stages.add(new Summary(event));
+            }
+        }
+        // Recording events are not guaranteed to arrive in timestamp order.
+        try (RecordingFile file = new RecordingFile(path)) {
+            while (file.hasMoreEvents()) {
+                RecordedEvent event = file.readEvent();
+                String type = event.getEventType().getName();
+                if (!type.equals("jdk.ObjectAllocationSample") && !type.equals("jdk.ExecutionSample")
+                        && !type.equals("jdk.GCPhasePause")) continue;
+                for (Summary stage : stages) {
+                    if (type.equals("jdk.GCPhasePause")) {
+                        Instant start = event.getStartTime().isAfter(stage.start) ? event.getStartTime() : stage.start;
+                        Instant end = event.getEndTime().isBefore(stage.end) ? event.getEndTime() : stage.end;
+                        if (end.isAfter(start)) stage.gcPauseMillis += java.time.Duration.between(start, end).toNanos() / 1_000_000.0;
+                    } else if (stage.contains(event.getStartTime())) {
+                        if (type.equals("jdk.ObjectAllocationSample")) stage.allocationBytes += event.getLong("weight");
+                        else {
+                            stage.samples++;
+                            if (event.getStackTrace() != null) {
+                                List<RecordedFrame> frames = event.getStackTrace().getFrames();
+                                RecordedFrame frame = frames.stream().filter(f -> f.isJavaFrame()
+                                        && f.getMethod().getType().getName().startsWith("io.setu.")).findFirst()
+                                        .orElse(frames.isEmpty() ? null : frames.getFirst());
+                                if (frame != null && frame.isJavaFrame()) stage.methods.merge(
+                                        frame.getMethod().getType().getName() + "." + frame.getMethod().getName(), 1L, Long::sum);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stages.sort(java.util.Comparator.comparingInt(stage -> stage.stage));
+        for (Summary stage : stages) {
+            String hot = stage.methods.entrySet().stream().max(Map.Entry.comparingByValue())
+                    .map(Map.Entry::getKey).orElse("unavailable");
+            System.out.printf(Locale.ROOT, "CAPACITY_JFR mode=%s stage=%d duration_s=%.3f allocation_mb=%.3f gc_pause_ms=%.3f cpu_samples=%d hot_method=%s%n",
+                    stage.mode, stage.stage, java.time.Duration.between(stage.start, stage.end).toNanos() / 1_000_000_000.0,
+                    stage.allocationBytes / (1024.0 * 1024), stage.gcPauseMillis, stage.samples, hot);
+        }
+        if (stages.isEmpty()) throw new java.io.IOException("JFR capture contains no completed measured stage: " + path);
+        return stages.stream().map(stage -> stage.stage).collect(java.util.stream.Collectors.toSet());
+    }
+}

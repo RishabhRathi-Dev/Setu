@@ -1548,14 +1548,6 @@ Setu is successful when it can demonstrate:
 
 # 36. Latest Build Progress
 
-The production-module unit tests were run with Java 25 using:
+The generated CI badges and capacity tables at the top of this README are the source of published performance results. Successful default-branch runs refresh them from the default progressive capture; local measurements and the separate large-batch experiment do not replace them.
 
-```powershell
-.\mvnw.cmd -pl setu-storage,setu-core,setu-security,setu-client,setu-server -am test
-```
-
-**Production unit stage: BUILD SUCCESS.** Storage, core, security, client, and server passed 39 tests across storage (4), core (11), security (22), and server (2); the client module has no dedicated tests. The bounded chaos suite passed all five tests in both storage modes, and both progressive capacity tests completed successfully.
-
-The latest local bounded run used 256-record batches and measured about **2.14M produced / 1.95M consumed records/s** in memory mode and **285K produced / 469K consumed records/s** in file mode, with a **354 ms** file-broker restart. The latest progressive run used 512-byte records and 256-record batches. It peaked at **927K produced / 907K consumed records/s** in memory mode and **236K produced / 259K consumed records/s** in file mode. Memory mode exhausted the 768 MiB heap while preparing the stage after 8 producers and 8 consumers; file mode exhausted it during the 1,024-producer/consumer stage. These machine-specific results remain below the 10M/s and 1M/s objectives. The badges above now reflect that progressive run; successful default-branch CI runs continue to refresh and publish them.
-
-Before batched produce, an earlier local progressive run reached **4,096 producers and consumers** in both modes before JVM OOM; its best fan-out rates were about **1.51M records/s** in memory mode and **456K records/s** in file mode. Its earlier quick run reported **80.8K produced / 1.55M consumed records/s** in memory mode and **2.43K / 437K records/s** in file mode. Keep these as historical comparisons; benchmark figures vary by host and are not CI performance thresholds.
+The CI profile enables JFR for both storage modes, requires stages 1–8 (through 128 producers and 128 consumers), and continues through CPU saturation until a real runtime boundary. Its memory backlog budget and stage cleanup prevent earlier stages from exhausting the heap before connection scaling is measured. Per-stage allocation estimates, GC pauses, sampled hot methods, and backpressure waits are published with the rates; raw recordings remain in the benchmark-diagnostics artifact. The workflow validates the stage floor and JFR coverage before publishing any badge update.

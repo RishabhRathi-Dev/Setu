@@ -5,9 +5,9 @@
 ## Implemented
 
 - `MessageLog` exposes append, sequential read from an offset, next-offset lookup, and close operations.
-- `LogRecord` carries a zero-based offset and defensively copies its byte value.
+- `LogRecord` carries a zero-based offset and an immutable `MessageValue`. Byte-array constructors copy caller input, and `value()` returns a defensive copy. Storage snapshots, segment-offset translation, and protocol records share the immutable payload without cloning it at each boundary.
 - `FileMessageLog` stores records in one file, maintains an in-memory primitive `long[]` position index, and serializes operations with synchronized methods. Record lengths come from adjacent positions, avoiding a heap object per indexed record.
-- `SegmentedFileMessageLog` rotates a partition across length-prefixed files named by their first logical offset, keeping reads and offsets continuous across files.
+- `SegmentedFileMessageLog` rotates a partition across length-prefixed files named by their first logical offset, keeping reads and offsets continuous across files. Fetches locate their starting segment with binary search.
 - `InMemoryMessageLog` stores defensive copies in chunks of 1,024 record references and implements the same offset and read-budget behavior.
 - `MemoryLogBudget` can be shared across memory logs. Whole-batch reservations atomically check copied-payload and chunk capacity before append; capacity rejection raises `LogCapacityExceededException` without changing offsets or stored records. Partial reclamation releases payload accounting, complete reclamation also releases chunk accounting, and close releases the log's remaining allocation. Empty payloads still consume capacity.
 - In-memory logs retain their original logical offsets while removing acknowledged prefixes with `discardBefore`; `firstOffset` reports the retained boundary. Reclamation releases complete chunks and clears references in partially consumed chunks without shifting surviving records.
@@ -46,7 +46,7 @@ try (MessageLog log = new SegmentedFileMessageLog(partitionDirectory, 1024 * 102
 
 For ephemeral storage, use `new InMemoryMessageLog(maxRecordBytes)`. In-memory offsets start at zero and remain monotonic as acknowledged prefixes are reclaimed. `DefaultBroker(maxRecordBytes)` selects this mode; the existing `DefaultBroker(dataDirectory, maxRecordBytes)` constructor continues to select file storage. The three-argument broker constructor accepts an explicit `StorageMode`.
 
-Standalone memory logs retain their unlimited default for compatibility. Pass a shared `new MemoryLogBudget(maxBytes)` as the second constructor argument to bound them; zero disables the limit. `DefaultBroker` supplies a shared 256 MiB default budget. Accounting uses conservative payload-array and reference-chunk allowances, not a measurement of the entire JVM heap. Returned read copies and protocol buffers are outside this budget.
+Standalone memory logs retain their unlimited default for compatibility. Pass a shared `new MemoryLogBudget(maxBytes)` as the second constructor argument to bound them; zero disables the limit. `DefaultBroker` supplies a shared 256 MiB default budget. Accounting uses conservative payload-array, immutable-wrapper, and reference-chunk allowances, not a measurement of the entire JVM heap. Snapshots can keep payloads alive after log reclamation; these references and protocol buffers are outside this retained-log budget.
 
 `maxRecordBytes` is enforced by both implementations. A zero-byte read budget returns no records. If the first record is larger than the read budget, `read` returns an empty list; the caller must use a larger limit. The budget counts payload bytes and excludes per-record length headers. The broker's default file segment limit is `MessageLogs.DEFAULT_MAX_SEGMENT_BYTES` (1 GiB); its six-argument constructor accepts a custom segment limit.
 

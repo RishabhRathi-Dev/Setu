@@ -101,7 +101,8 @@ public final class SegmentedFileMessageLog implements MessageLog {
         long start = Math.max(offset, firstOffset);
         long bytesRead = 0;
         List<LogRecord> records = new ArrayList<>();
-        for (Segment segment : segments) {
+        for (int index = segmentIndex(start); index < segments.size(); index++) {
+            Segment segment = segments.get(index);
             long segmentEnd = segment.baseOffset + segment.log.nextOffset();
             if (segmentEnd <= start) continue;
             long localStart = Math.max(0, start - segment.baseOffset);
@@ -111,7 +112,7 @@ public final class SegmentedFileMessageLog implements MessageLog {
             if (part.isEmpty()) break;
             for (LogRecord record : part) {
                 if (records.size() >= MAX_RECORDS_PER_READ) return List.copyOf(records);
-                records.add(new LogRecord(segment.baseOffset + record.offset(), record.value()));
+                records.add(new LogRecord(segment.baseOffset + record.offset(), record.payload()));
                 bytesRead += record.valueLength();
             }
             start = segment.baseOffset + part.getLast().offset() + 1;
@@ -125,6 +126,17 @@ public final class SegmentedFileMessageLog implements MessageLog {
 
     @Override
     public synchronized long firstOffset() { return firstOffset; }
+
+    private int segmentIndex(long offset) {
+        int low = 0;
+        int high = segments.size() - 1;
+        while (low < high) {
+            int middle = (low + high + 1) >>> 1;
+            if (segments.get(middle).baseOffset <= offset) low = middle;
+            else high = middle - 1;
+        }
+        return low;
+    }
 
     private void recover() throws IOException {
         List<NamedSegment> files;

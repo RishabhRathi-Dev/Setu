@@ -41,7 +41,7 @@ class ProgressiveCapacityChaosTests {
         String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
         List<String> command = new ArrayList<>(List.of(executable, "-Xms64m", "-Xmx768m", "-XX:MaxDirectMemorySize=128m"));
         command.add("-DSETU_LOG_DIR=" + logDirectory.toAbsolutePath());
-        for (String property : List.of("setu.benchmark.batch.records", "setu.benchmark.stage.millis", "setu.benchmark.warmup.millis", "setu.benchmark.cpu.hold.millis", "setu.benchmark.max.concurrency", "setu.log.level", "logback.configurationFile")) {
+        for (String property : List.of("setu.benchmark.batch.records", "setu.benchmark.stage.millis", "setu.benchmark.warmup.millis", "setu.benchmark.cpu.hold.millis", "setu.benchmark.max.concurrency", "setu.benchmark.min.stages", "setu.benchmark.memory.log.bytes", "setu.benchmark.jfr", "setu.log.level", "logback.configurationFile")) {
             String value = System.getProperty(property);
             if (value != null) command.add("-D" + property + "=" + value);
         }
@@ -68,6 +68,22 @@ class ProgressiveCapacityChaosTests {
                     "Child stopped without a recognized capacity boundary:\n" + report);
             assertTrue(child.exitValue() == 0 || child.exitValue() == 42,
                     "Capacity worker terminated unexpectedly (exit " + child.exitValue() + "):\n" + report);
+            int minimumStages = Integer.getInteger("setu.benchmark.min.stages", 8);
+            int maximumConcurrency = Integer.getInteger("setu.benchmark.max.concurrency", 0);
+            if (maximumConcurrency == 0 || maximumConcurrency >= (1 << (minimumStages - 1)))
+                assertTrue(report.lines().anyMatch(line -> (line.startsWith("CAPACITY_STAGE mode=" + mode + " stage=" + minimumStages + " ")
+                                || line.startsWith("CAPACITY_STAGE_TOTAL mode=" + mode + " stage=" + minimumStages + " "))
+                                && line.endsWith("stop=ramp")),
+                        "Capacity worker stopped before completing the required stage " + minimumStages + ":\n" + report);
+            if (Boolean.parseBoolean(System.getProperty("setu.benchmark.jfr", "true"))) {
+                Path recording = logDirectory.resolve("capacity.jfr");
+                System.out.printf("CAPACITY_JFR_CAPTURE mode=%s path=%s terminal_capture=%s%n", mode,
+                        recording.toAbsolutePath(), child.exitValue() == 42 ? "best_effort" : "complete");
+                var recordedStages = CapacityJfr.report(recording);
+                if (maximumConcurrency == 0 || maximumConcurrency >= (1 << (minimumStages - 1)))
+                    for (int stage = 1; stage <= minimumStages; stage++)
+                        assertTrue(recordedStages.contains(stage), "JFR is missing completed stage " + stage + " for " + mode);
+            }
         } finally {
             if (child.isAlive()) child.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
         }

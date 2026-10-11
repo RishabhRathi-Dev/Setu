@@ -87,8 +87,8 @@ public final class InMemoryMessageLog implements MessageLog {
             Chunk chunk = entry.getValue();
             int from = (int) Math.max(0, start - entry.getKey());
             for (int i = from; i < chunk.count; i++) {
-                byte[] value = chunk.records[i];
-                int length = value.length;
+                MessageValue value = chunk.records[i];
+                int length = value.length();
                 if (bytesRead + length > maxBytes || result.size() == MAX_RECORDS_PER_READ)
                     return List.copyOf(result);
                 result.add(new LogRecord(entry.getKey() + i, value));
@@ -148,11 +148,16 @@ public final class InMemoryMessageLog implements MessageLog {
     }
 
     private static long recordMemoryBytes(byte[] value) {
-        return (value.length + 24L + 7) & ~7L;
+        // Array allowance plus the immutable payload wrapper.
+        return ((value.length + 24L + 7) & ~7L) + 24;
+    }
+
+    private static long recordMemoryBytes(MessageValue value) {
+        return ((value.length() + 24L + 7) & ~7L) + 24;
     }
 
     private long appendValidated(byte[] value) {
-        byte[] copy = value.clone();
+        MessageValue copy = MessageValue.copyOf(value);
         if (active == null || active.count == CHUNK_RECORDS) {
             Chunk created = new Chunk();
             chunks.put(nextOffset, created);
@@ -167,7 +172,7 @@ public final class InMemoryMessageLog implements MessageLog {
     }
 
     private static final class Chunk {
-        private final byte[][] records = new byte[CHUNK_RECORDS][];
+        private final MessageValue[] records = new MessageValue[CHUNK_RECORDS];
         private int count;
         private int discarded;
         private long payloadBytes;

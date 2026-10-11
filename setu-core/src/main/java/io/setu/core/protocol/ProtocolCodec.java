@@ -1,5 +1,7 @@
 package io.setu.core.protocol;
 
+import io.setu.storage.log.MessageValue;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -37,7 +39,7 @@ public final class ProtocolCodec {
             capacity = 24 + request.topic().length();
             for (int i = 0; i < request.valueCount(); i++) capacity += Integer.BYTES + request.valueLengthAt(i);
         }
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream(capacity);
+        EncodingBuffer bytes = new EncodingBuffer(capacity);
         DataOutputStream out = new DataOutputStream(bytes);
         writeHeader(out, REQUEST, request.command(), request.correlationId());
         switch (request.command()) {
@@ -84,7 +86,7 @@ public final class ProtocolCodec {
             }
             case METADATA -> { }
         }
-        return bytes.toByteArray();
+        return bytes.finish();
     }
 
     public static BrokerRequest decodeRequest(byte[] payload) throws ProtocolException {
@@ -237,28 +239,16 @@ public final class ProtocolCodec {
     }
 
     public static byte[] encodeResponse(BrokerResponse response) throws IOException {
-        int capacity = 32;
-        if (response.errorCode() == ErrorCode.NONE && response.command() == Command.FETCH) {
-            long required = 22L + response.errorMessage().getBytes(StandardCharsets.UTF_8).length;
-            for (ProtocolRecord record : response.records()) required += 12L + record.valueLength();
-            if (required > Integer.MAX_VALUE) throw new IOException("Fetch response is too large to encode");
-            capacity = (int) required;
-        }
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream(capacity);
+        if (response.errorCode() == ErrorCode.NONE && response.command() == Command.FETCH)
+            return encodeFetchResponse(response);
+        EncodingBuffer bytes = new EncodingBuffer(32);
         DataOutputStream out = new DataOutputStream(bytes);
         writeHeader(out, RESPONSE, response.command(), response.correlationId());
         out.writeShort(response.errorCode().id());
         writeString(out, response.errorMessage());
-        if (response.errorCode() != ErrorCode.NONE) return bytes.toByteArray();
+        if (response.errorCode() != ErrorCode.NONE) return bytes.finish();
         switch (response.command()) {
             case PRODUCE, PRODUCE_BATCH -> out.writeLong(response.offset());
-            case FETCH -> {
-                out.writeInt(response.records().size());
-                for (ProtocolRecord record : response.records()) {
-                    out.writeLong(record.offset());
-                    writeBytes(out, record.valueForEncoding());
-                }
-            }
             case METADATA -> {
                 out.writeInt(response.topics().size());
                 for (Map.Entry<String, Integer> topic : response.topics().entrySet()) {
@@ -268,7 +258,26 @@ public final class ProtocolCodec {
             }
             default -> { }
         }
-        return bytes.toByteArray();
+        return bytes.finish();
+    }
+
+    private static byte[] encodeFetchResponse(BrokerResponse response) throws IOException {
+        byte[] message = response.errorMessage().getBytes(StandardCharsets.UTF_8);
+        if (message.length > MAX_STRING_BYTES)
+            throw new IOException("String field exceeds " + MAX_STRING_BYTES + " bytes");
+        long required = 22L + message.length;
+        for (ProtocolRecord record : response.records()) required += 12L + record.valueLength();
+        if (required > Integer.MAX_VALUE) throw new IOException("Fetch response is too large to encode");
+        ByteBuffer output = ByteBuffer.allocate((int) required);
+        output.putInt(MAGIC).put((byte) VERSION).put((byte) RESPONSE)
+                .putShort((short) response.command().id()).putInt(response.correlationId())
+                .putShort((short) response.errorCode().id()).putInt(message.length).put(message)
+                .putInt(response.records().size());
+        for (ProtocolRecord record : response.records()) {
+            output.putLong(record.offset()).putInt(record.valueLength());
+            record.payload().copyTo(output);
+        }
+        return output.array();
     }
 
     public static BrokerResponse decodeResponse(byte[] payload) throws ProtocolException {
@@ -288,7 +297,15 @@ public final class ProtocolCodec {
                     case FETCH -> {
                         int count = boundedCount(in.readInt());
                         List<ProtocolRecord> decoded = new ArrayList<>(count);
-                        for (int i = 0; i < count; i++) decoded.add(new ProtocolRecord(in.readLong(), readBytes(in)));
+                        for (int i = 0; i < count; i++) {
+                            long recordOffset = in.readLong();
+                            int length = in.readInt();
+                            if (length < 0 || length > 16 * 1024 * 1024 || length > in.available())
+                                throw new IOException("Invalid byte field length: " + length);
+                            ByteBuffer value = ByteBuffer.wrap(payload, payload.length - in.available(), length);
+                            decoded.add(new ProtocolRecord(recordOffset, MessageValue.readFrom(value, length)));
+                            in.skipNBytes(length);
+                        }
                         records = List.copyOf(decoded);
                     }
                     case METADATA -> {
@@ -410,6 +427,14 @@ public final class ProtocolCodec {
     }
 
     private record Header(Command command, int correlationId) { }
+
+    private static final class EncodingBuffer extends ByteArrayOutputStream {
+        private EncodingBuffer(int capacity) { super(capacity); }
+
+        // Exact-sized batch encodings transfer their buffer; other commands return a trimmed copy.
+        // The stream is local to the encoder and is never used after this call.
+        private byte[] finish() { return count == buf.length ? buf : toByteArray(); }
+    }
     private record HeaderParts(Command command, int correlationId) { }
 
     private static final class ByteBufferReader {

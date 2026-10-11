@@ -33,6 +33,9 @@ final class CapacityStopReporter {
         emergencyReserve = null;
         try { stdout.write(marker); stdout.flush(); }
         catch (IOException ignored) { /* A broken stdout cannot be recovered during heap exhaustion. */ }
-        finally { runtime.halt(42); }
+        finally {
+            CapacityJfr.emergencyDump();
+            runtime.halt(42);
+        }
     }
 }

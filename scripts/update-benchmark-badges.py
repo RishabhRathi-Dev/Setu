@@ -132,7 +132,10 @@ def peak_rates(stages: list[dict[str, str]], cpu_holds: list[dict[str, str]], mo
 
 
 def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict[str, str],
-                     cpu_holds: list[dict[str, str]] | None = None) -> str:
+                     cpu_holds: list[dict[str, str]] | None = None,
+                     profiles: dict[tuple[str, int], dict[str, str]] | None = None,
+                     backpressure: dict[tuple[str, int], dict[str, str]] | None = None,
+                     configs: dict[str, dict[str, str]] | None = None) -> str:
     targets = {"IN_MEMORY": 10_000_000, "FILE": 1_000_000}
     names = {"IN_MEMORY": "In-memory", "FILE": "File"}
     lines = [
@@ -184,6 +187,26 @@ def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict
                 observed = produce = consume = cpu = "—"
                 outcome = f"Interrupted: {friendly_reason(stop_reasons.get(mode, 'unknown'))}"
             lines.append(f"| {names[mode]} | {hold['stage']} | {requested} | {observed} | {produce} | {consume} | {cpu} | {outcome} |")
+    if profiles:
+        lines.extend(["", "### JFR diagnostics", "",
+            "Allocation rates are estimates from JFR allocation samples within each measured stage; GC pause time is the overlap of recorded pauses with that stage. Warmup and stage cleanup are excluded. CPU samples cover broker and load clients together. Backpressure waits include producer pacing and memory-budget retries.", "",
+            "| Mode | Stage | Estimated allocation | GC pause | CPU samples | Hottest sampled method | Backpressure waits |",
+            "| --- | ---: | ---: | ---: | ---: | --- | ---: |",
+        ])
+        for (mode, stage), profile in sorted(profiles.items()):
+            seconds = float(profile["duration_s"])
+            allocation = float(profile["allocation_mb"]) / max(seconds, 0.001)
+            waits = int((backpressure or {}).get((mode, stage), {}).get("waits", "0"))
+            lines.append(f"| {names[mode]} | {stage} | {allocation:.1f} MiB/s | {float(profile['gc_pause_ms']):.2f} ms "
+                         f"| {int(profile['cpu_samples']):,} | `{profile['hot_method']}` | {waits:,} |")
+        lines.extend(["", "JFR recordings and raw captures are retained in the CI benchmark-diagnostics artifact. A resource crash may leave only the last completed stage checkpoint."])
+    if configs:
+        lines.extend(["", "### Measured profile", ""])
+        for mode, config in configs.items():
+            lines.append(f"- {names[mode]}: {config.get('record_bytes', '?')}-byte records, {config.get('batch_records', '?')}-record batches, "
+                         f"{config.get('stage_ms', '?')} ms stages, minimum {config.get('min_stages', '?')} stages, "
+                         f"memory-log budget {config.get('memory_log_budget', '?')} bytes, JFR {config.get('jfr', '?')}, "
+                         f"CPU stop {config.get('cpu_stop', '?')}.")
     lines.extend(["", "### Capacity badge color legend", "",
         "| Color | Meaning |",
         "| --- | --- |",
@@ -220,6 +243,8 @@ def main() -> None:
     )
     parser.add_argument("--output", type=Path, default=Path("benchmark-badges"))
     parser.add_argument("--readme", type=Path, default=Path("README.md"))
+    parser.add_argument("--minimum-stages", type=int, default=0)
+    parser.add_argument("--require-jfr", action="store_true")
     parser.add_argument(
         "--repository",
         default=os.environ.get("GITHUB_REPOSITORY", "RishabhRathi-Dev/Setu"),
@@ -244,11 +269,24 @@ def main() -> None:
     stop_reasons: dict[str, str] = {}
     cpu_holds: dict[tuple[str, int], dict[str, str]] = {}
     stage_totals: dict[tuple[str, int], dict[str, str]] = {}
+    profiles: dict[tuple[str, int], dict[str, str]] = {}
+    backpressure: dict[tuple[str, int], dict[str, str]] = {}
+    configs: dict[str, dict[str, str]] = {}
     badges: list[str] = []
     workflow_url = f"{args.server_url}/{args.repository}/actions/workflows/ci.yml"
 
     for line in output.splitlines():
-        if "CAPACITY_STAGE " in line:
+        if "CAPACITY_CONFIG " in line:
+            fields = parse_fields(line, "CAPACITY_CONFIG ")
+            if fields.get("mode") in stages:
+                configs[fields["mode"]] = fields
+        elif "CAPACITY_JFR " in line or "CAPACITY_BACKPRESSURE " in line:
+            marker = "CAPACITY_JFR " if "CAPACITY_JFR " in line else "CAPACITY_BACKPRESSURE "
+            fields = parse_fields(line, marker)
+            if fields.get("mode") in stages:
+                target = profiles if marker == "CAPACITY_JFR " else backpressure
+                target[(fields["mode"], int(fields["stage"]))] = fields
+        elif "CAPACITY_STAGE " in line:
             fields = parse_fields(line, "CAPACITY_STAGE ")
             if fields.get("mode") in stages:
                 stage_key = (fields["mode"], int(fields["stage"]))
@@ -270,6 +308,8 @@ def main() -> None:
                 key = (fields["mode"], int(fields["stage"]))
                 cpu_holds.setdefault(key, {}).update(fields)
 
+    # Validate both modes before touching any published output.
+    validate_capture(stages, stop_reasons, profiles, args.minimum_stages, args.require_jfr, stage_totals)
     for mode, values in stages.items():
         if not values:
             raise SystemExit(f"No capacity stage metrics found for {mode}; badges were not updated")
@@ -321,10 +361,34 @@ def main() -> None:
                 "https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml",
             )
         )
+        mode_profiles = [profile for (profile_mode, _), profile in profiles.items() if profile_mode == mode]
+        if mode_profiles:
+            profile = max(mode_profiles, key=lambda value: int(value["stage"]))
+            allocation = float(profile["allocation_mb"]) / max(float(profile["duration_s"]), 0.001) / 1024
+            message = f"stage {profile['stage']} · {allocation:.2f} GiB/s alloc · {float(profile['gc_pause_ms']):.1f}ms GC"
+            write_badge(args.output, f"{label}-jfr.json", f"{label} JFR", message, "blue")
+            badges.append(readme_badge(f"{badge_mode} JFR", message, "blue", workflow_url))
 
     update_readme_badges(badges, args.readme, workflow_url, args.visibility)
-    update_capacity_details(capacity_details(stages, stop_reasons, list(cpu_holds.values())), args.readme)
+    update_capacity_details(capacity_details(stages, stop_reasons, list(cpu_holds.values()), profiles, backpressure, configs), args.readme)
     print(f"Updated benchmark badges in {args.output}")
+
+
+def validate_capture(stages, stop_reasons, profiles, minimum_stages, require_jfr, stage_totals=None):
+    recognized = {"CPU_SATURATION", "JVM_OOM", "RESOURCE_LIMIT", "BROKER_OR_CLIENT_LIMIT",
+                  "CLIENT_STALL", "CONCURRENCY_COUNTER_LIMIT", "CONFIGURED_LIMIT"}
+    for mode, values in stages.items():
+        if not values or stop_reasons.get(mode) not in recognized:
+            raise SystemExit(f"Incomplete capacity capture for {mode}; badges were not updated")
+        completed = {int(value["stage"]) for value in values
+                     if (stage_totals or {}).get((mode, int(value["stage"])), value).get("stop", "ramp") == "ramp"}
+        if not set(range(1, minimum_stages + 1)).issubset(completed):
+            raise SystemExit(f"{mode} did not reach all required stages through {minimum_stages}; badges were not updated")
+        if minimum_stages > 0 and stop_reasons[mode] in {"CPU_SATURATION", "CONFIGURED_LIMIT"}:
+            raise SystemExit(f"{mode} stopped before a runtime boundary; badges were not updated")
+        required_profiles = set(range(1, max(1, minimum_stages) + 1))
+        if require_jfr and any((mode, stage) not in profiles for stage in required_profiles):
+            raise SystemExit(f"Missing measured JFR diagnostics for {mode}; badges were not updated")
 
 
 if __name__ == "__main__":

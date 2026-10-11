@@ -7,6 +7,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class InMemoryMessageLogTests {
     @Test
+    void fetchedSnapshotSurvivesReclamationAndCloseWithoutExposingItsPayload() throws Exception {
+        InMemoryMessageLog log = new InMemoryMessageLog(128);
+        byte[] input = {1, 2, 3};
+        log.append(input);
+        var snapshot = log.read(0, 128).getFirst();
+        input[0] = 9;
+        snapshot.value()[1] = 9;
+        var output = java.nio.ByteBuffer.allocate(3);
+        snapshot.payload().copyTo(output);
+        output.array()[2] = 9;
+        log.discardBefore(1);
+        log.close();
+        assertArrayEquals(new byte[]{1, 2, 3}, snapshot.value());
+    }
+
+    @Test
     void reclaimsPrefixesWithoutRenumberingOffsets() throws Exception {
         try (InMemoryMessageLog log = new InMemoryMessageLog(128)) {
             assertEquals(0, log.append("zero".getBytes()));

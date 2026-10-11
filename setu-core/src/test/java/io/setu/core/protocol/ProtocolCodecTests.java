@@ -8,6 +8,42 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ProtocolCodecTests {
     @Test
+    void fetchEncodingMatchesV1BytesAndDecodedRecordsOwnTheirPayloads() throws Exception {
+        var logRecord = new io.setu.storage.log.LogRecord(5, new byte[]{0, -1, 2});
+        var records = java.util.List.of(new ProtocolRecord(5, logRecord.payload()),
+                new ProtocolRecord(6, new byte[0]));
+        String message = "caf\u00e9";
+        BrokerResponse response = new BrokerResponse(17, Command.FETCH, ErrorCode.NONE, message,
+                -1, records, java.util.Map.of());
+        var expected = new java.io.ByteArrayOutputStream();
+        var out = new java.io.DataOutputStream(expected);
+        out.writeInt(ProtocolCodec.MAGIC);
+        out.writeByte(ProtocolCodec.VERSION);
+        out.writeByte(1);
+        out.writeShort(Command.FETCH.id());
+        out.writeInt(17);
+        out.writeShort(ErrorCode.NONE.id());
+        byte[] text = message.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        out.writeInt(text.length);
+        out.write(text);
+        out.writeInt(2);
+        for (ProtocolRecord record : records) {
+            out.writeLong(record.offset());
+            out.writeInt(record.valueLength());
+            out.write(record.value());
+        }
+        byte[] encoded = ProtocolCodec.encodeResponse(response);
+        assertArrayEquals(expected.toByteArray(), encoded);
+        var decoded = ProtocolCodec.decodeResponse(encoded);
+        java.util.Arrays.fill(encoded, (byte) 99);
+        decoded.records().getFirst().value()[0] = 99;
+        assertArrayEquals(new byte[]{0, -1, 2}, decoded.records().getFirst().value());
+        assertEquals(0, decoded.records().getLast().valueLength());
+        assertArrayEquals(expected.toByteArray(), ProtocolCodec.encodeResponse(response));
+        assertArrayEquals(new byte[]{0, -1, 2}, logRecord.value());
+    }
+
+    @Test
     void batchAndFetchEncodingPreserveOwnedPayloadsWhenCallersMutateCopies() throws Exception {
         byte[] input = {1, 2, 3};
         BrokerRequest batch = new BrokerRequest(12, Command.PRODUCE_BATCH, "orders", 0,

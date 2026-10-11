@@ -206,7 +206,7 @@ public final class DefaultBroker implements Broker {
                 startOffset = Math.max(startOffset, consumer.nextOffsets.getOrDefault(request.partition(), log.nextOffset()));
         }
         List<ProtocolRecord> records = log.read(startOffset, request.maxBytes()).stream()
-                .map(record -> new ProtocolRecord(record.offset(), record.value())).toList();
+                .map(record -> new ProtocolRecord(record.offset(), record.payload())).toList();
         if (consumer != null && !records.isEmpty())
             consumer.recordFetch(request.partition(), records.get(records.size() - 1).offset() + 1,
                     System.nanoTime());
