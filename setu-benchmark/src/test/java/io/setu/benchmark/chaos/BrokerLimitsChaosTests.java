@@ -29,6 +29,8 @@ class BrokerLimitsChaosTests {
     private static final int RECORDS_PER_PRODUCER = 1_000;
     private static final int RECORDS = PRODUCERS * RECORDS_PER_PRODUCER;
     private static final int WORKLOAD_TIMEOUT_SECONDS = 300;
+    // File fetches contend for disk, response admission, and CPU on shared CI runners.
+    private static final long ACK_TIMEOUT_MILLIS = 10_000;
     private static final int MAX_FRAME = 15 * 1024 * 1024;
     // Keep sixteen concurrent 1 KiB fanout readers inside the shared response admission budget.
     private static final int FETCH_PAGE_BYTES = 1024 * 1024;
@@ -45,7 +47,7 @@ class BrokerLimitsChaosTests {
     private void exerciseLimits(StorageMode mode) throws Exception {
         Path data = tempDir.resolve(mode.name());
         DefaultBroker broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null,
-                1024, 32 * 1024, 250, 600_000);
+                1024, 32 * 1024, ACK_TIMEOUT_MILLIS, 600_000);
         TcpServer server = start(broker);
         var consumers = new ArrayList<SetuClient>();
         SetuClient admin = null;
@@ -104,7 +106,8 @@ class BrokerLimitsChaosTests {
                         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WORKLOAD_TIMEOUT_SECONDS);
                         while (next < RECORDS) {
                             var batch = consumer.fetch(GROUP, member, TOPIC, 0, next, FETCH_PAGE_BYTES);
-                            assertEquals(ErrorCode.NONE, batch.errorCode());
+                            assertEquals(ErrorCode.NONE, batch.errorCode(),
+                                    "fetch failed for " + member + " in " + mode + " at offset " + next + ": " + batch.errorMessage());
                             if (batch.records().isEmpty()) {
                                 if (System.nanoTime() >= deadline)
                                     throw new AssertionError("consumer timed out at offset " + next);
@@ -114,7 +117,8 @@ class BrokerLimitsChaosTests {
                             consumed += batch.records().size();
                             next = batch.records().getLast().offset() + 1;
                             assertEquals(ErrorCode.NONE,
-                                    consumer.acknowledge(GROUP, member, TOPIC, 0, next).errorCode());
+                                    consumer.acknowledge(GROUP, member, TOPIC, 0, next).errorCode(),
+                                    "acknowledgement failed for " + member + " in " + mode + " at offset " + next);
                         }
                         return consumed;
                     });
@@ -136,16 +140,15 @@ class BrokerLimitsChaosTests {
             // The final member is deliberately slow and is then disconnected with a pending acknowledgement.
             String slowMember = "consumer-" + (CONSUMERS - 1);
             var slowBatch = consumers.getLast().fetch(GROUP, slowMember, TOPIC, 0, 0, 15 * 1024 * 1024);
+            assertEquals(ErrorCode.NONE, slowBatch.errorCode());
             assertFalse(slowBatch.records().isEmpty());
             consumers.getLast().close();
-            Thread.sleep(350);
-            try (SetuClient producer = connect(server)) {
-                assertEquals(ErrorCode.NONE,
-                        producer.produce(TOPIC, 0, "post-expiry-marker".getBytes(StandardCharsets.UTF_8)).errorCode());
-            }
             try (SetuClient observer = connect(server)) {
-                assertEquals(ErrorCode.BAD_REQUEST, observer.heartbeat(GROUP, slowMember).errorCode());
+                awaitEviction(observer, slowMember);
+                assertEquals(ErrorCode.NONE,
+                        observer.produce(TOPIC, 0, "post-expiry-marker".getBytes(StandardCharsets.UTF_8)).errorCode());
                 var last = observer.fetch(GROUP, "consumer-0", TOPIC, 0, RECORDS, 1024);
+                assertEquals(ErrorCode.NONE, last.errorCode());
                 assertEquals("post-expiry-marker", new String(last.records().getFirst().value(), StandardCharsets.UTF_8));
             }
 
@@ -154,7 +157,7 @@ class BrokerLimitsChaosTests {
             closeAll(consumers);
             consumers.clear();
             broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null,
-                    1024, 32 * 1024, 250, 600_000);
+                    1024, 32 * 1024, ACK_TIMEOUT_MILLIS, 600_000);
             server = start(broker);
             try (SetuClient recovered = connect(server)) {
                 if (mode == StorageMode.FILE) {
@@ -171,6 +174,19 @@ class BrokerLimitsChaosTests {
             broker.close();
             closeAll(consumers);
             closeQuietly(admin);
+        }
+    }
+
+    private static void awaitEviction(SetuClient observer, String member) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ACK_TIMEOUT_MILLIS)
+                + TimeUnit.SECONDS.toNanos(10);
+        while (true) {
+            var heartbeat = observer.heartbeat(GROUP, member);
+            if (heartbeat.errorCode() == ErrorCode.BAD_REQUEST) return;
+            assertEquals(ErrorCode.NONE, heartbeat.errorCode());
+            assertTrue(System.nanoTime() < deadline, "member with an unacknowledged fetch was not evicted: " + member);
+            // Heartbeats refresh inactivity, but must not extend the acknowledgement deadline.
+            Thread.sleep(25);
         }
     }
 
