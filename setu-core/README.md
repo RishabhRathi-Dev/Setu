@@ -74,7 +74,7 @@ The codec validates magic, version, message kind, known command, correlation ID,
 
 ## Build and tests
 
-From the repository root with the project-required Java 25 JDK:
+From the repository root with the project-required Java 26 JDK:
 
 ```powershell
 .\mvnw.cmd -pl setu-core -am test

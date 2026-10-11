@@ -206,7 +206,8 @@ def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict
             lines.append(f"- {names[mode]}: {config.get('record_bytes', '?')}-byte records, {config.get('batch_records', '?')}-record batches, "
                          f"{config.get('stage_ms', '?')} ms stages, minimum {config.get('min_stages', '?')} stages, "
                          f"memory-log budget {config.get('memory_log_budget', '?')} bytes, JFR {config.get('jfr', '?')}, "
-                         f"CPU stop {config.get('cpu_stop', '?')}.")
+                         f"CPU stop {config.get('cpu_stop', '?')}, collector {config.get('gc', 'unrecorded')}, "
+                         f"string deduplication {config.get('string_dedup', 'unrecorded')}.")
     lines.extend(["", "### Capacity badge color legend", "",
         "| Color | Meaning |",
         "| --- | --- |",

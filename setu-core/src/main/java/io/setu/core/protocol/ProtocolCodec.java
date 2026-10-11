@@ -10,6 +10,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.ByteBuffer;
+import java.nio.BufferUnderflowException;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.util.ArrayList;
@@ -300,45 +301,45 @@ public final class ProtocolCodec {
     public static BrokerResponse decodeResponse(byte[] payload) throws ProtocolException {
         int correlation = extractCorrelationId(payload);
         try {
-            DataInputStream in = new DataInputStream(new ByteArrayInputStream(payload));
+            // One cursor for the whole frame avoids per-record wrappers and synchronized stream reads.
+            ByteBuffer in = ByteBuffer.wrap(payload);
             Header header = readHeader(in, RESPONSE);
             correlation = header.correlationId;
-            ErrorCode errorCode = ErrorCode.fromId(in.readUnsignedShort());
+            ErrorCode errorCode = ErrorCode.fromId(Short.toUnsignedInt(in.getShort()));
             String message = readString(in);
             long offset = -1;
             List<ProtocolRecord> records = List.of();
             Map<String, Integer> topics = Map.of();
             if (errorCode == ErrorCode.NONE) {
                 switch (header.command) {
-                    case PRODUCE, PRODUCE_BATCH -> offset = in.readLong();
+                    case PRODUCE, PRODUCE_BATCH -> offset = in.getLong();
                     case FETCH -> {
-                        int count = boundedCount(in.readInt());
+                        int count = boundedCount(in.getInt());
+                        if (count > in.remaining() / 12) throw new EOFException("Truncated record headers");
                         List<ProtocolRecord> decoded = new ArrayList<>(count);
                         for (int i = 0; i < count; i++) {
-                            long recordOffset = in.readLong();
-                            int length = in.readInt();
-                            if (length < 0 || length > 16 * 1024 * 1024 || length > in.available())
+                            long recordOffset = in.getLong();
+                            int length = in.getInt();
+                            if (length < 0 || length > 16 * 1024 * 1024 || length > in.remaining())
                                 throw new IOException("Invalid byte field length: " + length);
-                            ByteBuffer value = ByteBuffer.wrap(payload, payload.length - in.available(), length);
-                            decoded.add(new ProtocolRecord(recordOffset, MessageValue.readFrom(value, length)));
-                            in.skipNBytes(length);
+                            decoded.add(new ProtocolRecord(recordOffset, MessageValue.readFrom(in, length)));
                         }
-                        records = List.copyOf(decoded);
+                        records = decoded; // BrokerResponse takes the immutable snapshot once.
                     }
                     case METADATA -> {
-                        int count = boundedCount(in.readInt());
+                        int count = boundedCount(in.getInt());
                         Map<String, Integer> decoded = new LinkedHashMap<>();
-                        for (int i = 0; i < count; i++) decoded.put(readString(in), in.readInt());
-                        topics = Map.copyOf(decoded);
+                        for (int i = 0; i < count; i++) decoded.put(readString(in), in.getInt());
+                        topics = decoded;
                     }
                     default -> { }
                 }
             }
-            if (in.available() != 0) throw bad("Trailing bytes in response", correlation);
+            if (in.hasRemaining()) throw bad("Trailing bytes in response", correlation);
             return new BrokerResponse(correlation, header.command, errorCode, message, offset, records, topics);
         } catch (ProtocolException e) {
             throw e;
-        } catch (EOFException e) {
+        } catch (EOFException | BufferUnderflowException e) {
             throw bad("Truncated response", correlation);
         } catch (IOException | IllegalArgumentException e) {
             throw bad("Malformed response: " + e.getMessage(), correlation);
@@ -378,6 +379,18 @@ public final class ProtocolCodec {
         return new Header(command, correlation);
     }
 
+    private static Header readHeader(ByteBuffer in, int expectedKind) throws IOException {
+        if (in.getInt() != MAGIC) throw bad("Invalid protocol magic", -1);
+        int version = Byte.toUnsignedInt(in.get());
+        if (version != VERSION) throw new ProtocolException(ErrorCode.UNSUPPORTED_VERSION,
+                "Unsupported protocol version: " + version);
+        if (Byte.toUnsignedInt(in.get()) != expectedKind) throw bad("Unexpected message kind", -1);
+        Command command = Command.fromId(Short.toUnsignedInt(in.getShort()));
+        int correlation = in.getInt();
+        if (correlation < 0) throw bad("correlationId must be non-negative", correlation);
+        return new Header(command, correlation);
+    }
+
     private static void writeString(DataOutputStream out, String value) throws IOException {
         if (value == null) throw new IOException("Required string field is null");
         byte[] data = value.getBytes(StandardCharsets.UTF_8);
@@ -399,11 +412,29 @@ public final class ProtocolCodec {
 
     private static String readString(DataInputStream in) throws IOException {
         byte[] bytes = readBytes(in, MAX_STRING_BYTES);
+        if (bytes.length == 0) return "";
         try {
             return StandardCharsets.UTF_8.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException malformed) {
+            throw new IOException("String field is not valid UTF-8", malformed);
+        }
+    }
+
+    private static String readString(ByteBuffer in) throws IOException {
+        int length = in.getInt();
+        if (length < 0 || length > MAX_STRING_BYTES || length > in.remaining())
+            throw new IOException("Invalid byte field length: " + length);
+        if (length == 0) return "";
+        try {
+            String value = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(in.slice(in.position(), length)).toString();
+            in.position(in.position() + length);
+            return value;
         } catch (CharacterCodingException malformed) {
             throw new IOException("String field is not valid UTF-8", malformed);
         }

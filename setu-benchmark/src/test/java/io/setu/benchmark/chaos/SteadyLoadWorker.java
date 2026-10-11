@@ -15,6 +15,7 @@ public final class SteadyLoadWorker {
     private static final int BATCH = 32;
     private static final int RECORD_BYTES = 512;
     public static void main(String[] args) throws Exception {
+        BenchmarkRuntime.verifyZgc(SteadyLoadWorker.class);
         int port = Integer.parseInt(args[0]), partitions = Integer.parseInt(args[1]);
         int rate = Integer.parseInt(args[2]), seconds = Integer.parseInt(args[3]);
         Path control = Path.of(args[4]);

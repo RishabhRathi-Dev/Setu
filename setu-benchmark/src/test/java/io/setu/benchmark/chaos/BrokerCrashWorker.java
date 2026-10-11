@@ -12,6 +12,7 @@ public final class BrokerCrashWorker {
     private BrokerCrashWorker() { }
 
     public static void main(String[] args) throws Exception {
+        BenchmarkRuntime.verifyZgc(BrokerCrashWorker.class);
         Path data = Path.of(args[0]);
         Path ready = Path.of(args[1]);
         int recordCount = Integer.parseInt(args[2]);

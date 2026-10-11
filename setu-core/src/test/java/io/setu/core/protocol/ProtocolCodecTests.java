@@ -8,6 +8,67 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ProtocolCodecTests {
     @Test
+    void responseDecoderRejectsEveryTruncatedPrefixAndTrailingData() throws Exception {
+        byte[] encoded = ProtocolCodec.encodeResponse(new BrokerResponse(23, Command.FETCH, ErrorCode.NONE,
+                "", -1, java.util.List.of(new ProtocolRecord(7, new byte[]{1, 2, 3})), java.util.Map.of()));
+        for (int length = 0; length < encoded.length; length++) {
+            byte[] truncated = java.util.Arrays.copyOf(encoded, length);
+            var failure = org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                    () -> ProtocolCodec.decodeResponse(truncated), "prefix length " + length);
+            assertEquals(ErrorCode.BAD_REQUEST, failure.errorCode());
+            if (length >= 12) assertEquals(23, failure.correlationId());
+        }
+        org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                () -> ProtocolCodec.decodeResponse(java.util.Arrays.copyOf(encoded, encoded.length + 1)));
+    }
+
+    @Test
+    void responseDecoderRejectsInvalidCountsLengthsOffsetsAndUtf8() throws Exception {
+        byte[] encoded = ProtocolCodec.encodeResponse(new BrokerResponse(23, Command.FETCH, ErrorCode.NONE,
+                "", -1, java.util.List.of(new ProtocolRecord(7, new byte[]{1, 2, 3})), java.util.Map.of()));
+        for (int count : new int[]{-1, 2, 10_001, Integer.MAX_VALUE}) {
+            byte[] invalid = encoded.clone();
+            java.nio.ByteBuffer.wrap(invalid).putInt(18, count);
+            assertBadResponse(invalid);
+        }
+        for (int length : new int[]{-1, 4, 16 * 1024 * 1024 + 1}) {
+            byte[] invalid = encoded.clone();
+            java.nio.ByteBuffer.wrap(invalid).putInt(30, length);
+            assertBadResponse(invalid);
+        }
+        byte[] invalidOffset = encoded.clone();
+        java.nio.ByteBuffer.wrap(invalidOffset).putLong(22, -1);
+        assertBadResponse(invalidOffset);
+        byte[] invalidText = ProtocolCodec.encodeResponse(BrokerResponse.error(23, Command.FETCH,
+                ErrorCode.INTERNAL_ERROR, "x"));
+        invalidText[18] = (byte) 0xff;
+        assertBadResponse(invalidText);
+    }
+
+    private static void assertBadResponse(byte[] payload) {
+        var failure = org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                () -> ProtocolCodec.decodeResponse(payload));
+        assertEquals(ErrorCode.BAD_REQUEST, failure.errorCode());
+        assertEquals(23, failure.correlationId());
+    }
+
+    @Test
+    void responseDecoderPreservesMetadataErrorsAndEmptyCommandBodies() throws Exception {
+        var metadata = new BrokerResponse(11, Command.METADATA, ErrorCode.NONE, "caf\u00e9", -1,
+                java.util.List.of(), java.util.Map.of("orders", 4, "\u96ea", 2));
+        assertEquals(metadata, ProtocolCodec.decodeResponse(ProtocolCodec.encodeResponse(metadata)));
+        for (Command command : Command.values()) {
+            var error = BrokerResponse.error(12, command, ErrorCode.QUOTA_EXCEEDED, "caf\u00e9");
+            assertEquals(error, ProtocolCodec.decodeResponse(ProtocolCodec.encodeResponse(error)));
+            if (command != Command.FETCH && command != Command.METADATA
+                    && command != Command.PRODUCE && command != Command.PRODUCE_BATCH) {
+                var ok = BrokerResponse.ok(13, command);
+                assertEquals(ok, ProtocolCodec.decodeResponse(ProtocolCodec.encodeResponse(ok)));
+            }
+        }
+    }
+
+    @Test
     void fetchEncodingMatchesV1BytesAndDecodedRecordsOwnTheirPayloads() throws Exception {
         var logRecord = new io.setu.storage.log.LogRecord(5, new byte[]{0, -1, 2});
         var records = java.util.List.of(new ProtocolRecord(5, logRecord.payload()),

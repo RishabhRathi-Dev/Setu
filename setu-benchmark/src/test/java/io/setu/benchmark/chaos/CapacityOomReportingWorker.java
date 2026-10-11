@@ -5,6 +5,7 @@ import java.util.ArrayList;
 /** Tiny-heap fixture that exercises real allocation failure in caught and uncaught paths. */
 final class CapacityOomReportingWorker {
     public static void main(String[] args) {
+        BenchmarkRuntime.verifyZgc(CapacityOomReportingWorker.class);
         CapacityStopReporter reporter = new CapacityStopReporter(args[0]);
         reporter.prepareStage(3, 4);
         Thread.setDefaultUncaughtExceptionHandler((thread, failure) -> {

@@ -1,5 +1,13 @@
 # Setu benchmarks and chaos tests
 
+All benchmark JVMs use `-XX:+UseZGC -XX:+UseStringDeduplication`, including the isolated capacity, steady broker/client, crash, and OOM workers. Child workers check both options and print `BENCHMARK_RUNTIME ... string_dedup=true gc=...` before starting. Their `ProcessBuilder` commands supply the options explicitly because child JVMs do not inherit Maven's JVM flags. Capacity reports include both settings; older captures without those fields are labeled `unrecorded`. Broker AOT caches are generated from packaged JARs by the server launcher; tests use reactor class directories and measure their own JVM processes. Compare runs using their runtime and workload configuration.
+
+## Local decoder and GC review
+
+A Java 25.0.2 comparison on Windows 11 with 12 available processors used 512-byte records, 256-record batches, a two-second warmup, four three-second stages through eight producers/eight consumers, a 768 MiB maximum heap, and JFR. In the final stage, G1 versus the updated decoder with ZGC recorded file GC pause overlap of 188.658 versus 1.682 ms and memory overlap of 352.286 versus 8.888 ms. File ingestion measured 655,798 versus 727,508 records/s; memory ingestion measured 631,594 versus 530,322 records/s. Pause overlap is accumulated time inside the stage, not the longest pause. Throughput was mixed; these short runs do not establish terminal capacity or a consistent ingestion gain.
+
+An isolated fetch decoder comparison measured median rates of 15.17 versus 18.96 million records/s across three warmed two-second rounds, approximately 25% faster. Allocation remained essentially unchanged at about 153 KiB per 256-record frame; private payload arrays dominate. These historical measurements predate the Java 26 upgrade, string deduplication, and broker AOT workflow. Raw captures are in the ignored `metrics-*.log` files and `logs/benchmarks/capacity/`. Remaining sampled costs include payload copies, file reads, and fetch encoding.
+
 `IsolatedThroughputBenchmarkTests` measures sustainable load separately from the exhaustion ramp: broker and clients run in different JVMs, four producers target 10,000 records/s, and one consumer reads either one or four partitions without broadcast amplification. It reports independent produce/fetch/ack histograms, scheduling delay, missed offered slots, drain time, and broker-only CPU/heap metrics. CI retains `steady-throughput.log` and the captures under `logs/benchmarks/steady/`.
 
 Server request/response admission and bounded file write queues can now stop the exhaustion ramp with a clean quota rejection or connection close before JVM OOM. These are configured resource boundaries, not evidence of a physical connection/thread limit; stage counts are not directly comparable to older runs without those controls.
@@ -36,7 +44,7 @@ The top-level README uses self-contained Shields badge URLs, so metrics remain v
 
 Functional end-to-end requirements belong to `setu-integration-tests`; crash, expiry, malformed traffic, concurrent stress, and resource exhaustion are benchmark chaos cases. CI runs unit tests, all integration tests, then every bounded chaos test. It runs progressive capacity tests last so their CPU and memory exhaustion cannot interfere with bounded test deadlines. Maven builds upstream modules to resolve reactor dependencies, while Surefire filters execution to the integration or chaos classes for each stage.
 
-Run it from the repository root with Java 25:
+Run it from the repository root with Java 26:
 
 ```powershell
 .\mvnw.cmd -pl setu-benchmark -am '-Dtest=*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test

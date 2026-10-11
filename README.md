@@ -108,7 +108,7 @@ File capacity stop: **broker/client limit**.
 In-memory capacity stop: **JVM OOM**.
 <!-- benchmark-capacity-details:end -->
 
-**Setu** is a distributed message broker built from scratch in **Java 25**, inspired by systems such as Kafka.
+**Setu** is a distributed message broker built from scratch in **Java 26**, inspired by systems such as Kafka.
 
 The project focuses on the engineering problems behind high-throughput messaging systems:
 
@@ -175,7 +175,7 @@ Failure Recovery
 
 ## Build and test
 
-The root `pom.xml` is the Maven reactor for all modules. Use the checked-in Maven Wrapper from the repository root, with a Java 25 JDK installed:
+The root `pom.xml` is the Maven reactor for all modules. Use the checked-in Maven Wrapper from the repository root, with a Java 26 JDK installed:
 
 ```powershell
 .\mvnw.cmd test
@@ -188,6 +188,8 @@ The root `pom.xml` is the Maven reactor for all modules. Use the checked-in Mave
 On macOS/Linux, use `bash ./mvnw test` (or `./mvnw test` when the checkout marks the script executable).
 
 The first invocation downloads the pinned Maven distribution. The wrapper supplies Maven; it does not install Java.
+
+The wrapper JVM, forked tests, and broker launchers use `-XX:+UseZGC -XX:+UseStringDeduplication`. Benchmark child JVMs verify both options at startup. Java 26 supports AOT caching with ZGC: after packaging, run `./scripts/start-broker.ps1 --train-aot` (PowerShell) or `bash ./scripts/start-broker.sh --train-aot` (macOS/Linux). Subsequent launcher runs use the generated cache. See [the server launch instructions](setu-server/README.md#standalone-jar).
 
 ---
 
@@ -1491,7 +1493,7 @@ Security should be exposed as interfaces so that the core broker does not become
 
 # 32. Technology Stack
 
-* **Java 25**
+* **Java 26**
 * **Maven**
 * Java NIO
 * Java Foreign Function & Memory API

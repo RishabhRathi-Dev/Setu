@@ -17,6 +17,7 @@ public final class MessageValue {
     public static MessageValue readFrom(ByteBuffer input, int length) {
         if (length < 0 || length > input.remaining())
             throw new IllegalArgumentException("length must fit in the input buffer");
+        if (length == 0) return EMPTY;
         byte[] bytes = new byte[length];
         input.get(bytes);
         return new MessageValue(bytes);
@@ -29,6 +30,7 @@ public final class MessageValue {
     /** Creates a private payload array directly from the decoder. */
     public static MessageValue readFrom(java.io.DataInput input, int length) throws java.io.IOException {
         if (length < 0) throw new IllegalArgumentException("negative length");
+        if (length == 0) return EMPTY;
         byte[] bytes = new byte[length];
         input.readFully(bytes);
         return new MessageValue(bytes);

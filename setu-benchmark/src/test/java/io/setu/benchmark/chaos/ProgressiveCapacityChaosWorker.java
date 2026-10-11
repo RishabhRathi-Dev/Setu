@@ -49,12 +49,13 @@ final class ProgressiveCapacityChaosWorker {
     private ProgressiveCapacityChaosWorker() { }
 
     public static void main(String[] args) {
+        BenchmarkRuntime.verifyZgc(ProgressiveCapacityChaosWorker.class);
         if (args.length != 2) throw new IllegalArgumentException("Expected <storage-mode> <data-directory>");
         StorageMode mode = StorageMode.valueOf(args[0]);
         stopReporter = new CapacityStopReporter(mode.name());
         if (MAX_CONCURRENCY != 0 && Integer.bitCount(MAX_CONCURRENCY) != 1)
             throw new IllegalArgumentException("setu.benchmark.max.concurrency must be zero or a power of two");
-        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d cpu_hold_ms=%d max_concurrency=%d min_stages=%d security_quotas=disabled memory_log_budget=%d cpu_stop=false jfr=%s cpu_metric=process_time_per_available_cpu%n",
+        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d cpu_hold_ms=%d max_concurrency=%d min_stages=%d security_quotas=disabled memory_log_budget=%d cpu_stop=false jfr=%s gc=ZGC string_dedup=true cpu_metric=process_time_per_available_cpu%n",
                 mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, WARMUP_MILLIS, CPU_HOLD_MILLIS, MAX_CONCURRENCY,
                 MIN_STAGES, MEMORY_LOG_BYTES, System.getProperty("setu.benchmark.jfr", "true"));
         Path dataRoot = Path.of(args[1]);

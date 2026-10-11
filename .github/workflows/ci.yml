@@ -17,15 +17,27 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Set up Java 25
+      - name: Set up Java 26
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '26'
           cache: maven
 
       - name: Build and test production modules
         run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-storage,setu-core,setu-security,setu-client,setu-server -am test
+
+      - name: Package broker and verify AOT caching with ZGC
+        shell: bash
+        run: |
+          set -o pipefail
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-server -am -DskipTests package
+          bash ./scripts/start-broker.sh --train-aot
+          java -XX:+UseZGC -XX:+UseStringDeduplication -XX:AOTMode=on \
+            -XX:AOTCache=setu-server/target/setu-server.aot -Xlog:aot=info \
+            -jar setu-server/target/setu-server-1.0.0-SNAPSHOT.jar --aot-train \
+            2>&1 | tee "$RUNNER_TEMP/aot-validation.log"
+          python3 -c 'import os, pathlib; report = (pathlib.Path(os.environ["RUNNER_TEMP"]) / "aot-validation.log").read_text(); assert "Using AOT-linked classes: true" in report, "AOT-linked classes were not enabled"'
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -36,11 +48,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Set up Java 25
+      - name: Set up Java 26
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '26'
           cache: maven
 
       - name: Run end-to-end application integration tests
@@ -60,11 +72,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Set up Java 25
+      - name: Set up Java 26
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '26'
           cache: maven
 
       - name: Run bounded broker chaos tests

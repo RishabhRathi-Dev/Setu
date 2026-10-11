@@ -23,12 +23,16 @@ public final class SetuServerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length == 1 && args[0].equals("--help")) {
-            System.out.println("Usage: java -jar setu-server-1.0.0-SNAPSHOT.jar [--config <properties-file>]");
+            System.out.println("Usage: java -XX:+UseZGC -XX:+UseStringDeduplication -jar setu-server-1.0.0-SNAPSHOT.jar [--config <properties-file> | --aot-train]");
             System.out.println("Default: plaintext 127.0.0.1:9092, file storage in ./data, rolling logs in ./logs.");
             return;
         }
+        if (args.length == 1 && args[0].equals("--aot-train")) {
+            BrokerAotTraining.run();
+            return;
+        }
         if (args.length != 0 && (args.length != 2 || !args[0].equals("--config")))
-            throw new IllegalArgumentException("Expected --config <properties-file> or --help");
+            throw new IllegalArgumentException("Expected --config <properties-file>, --aot-train, or --help");
         Properties properties = new Properties();
         if (args.length == 2) {
             try (var input = Files.newInputStream(Path.of(args[1]))) { properties.load(input); }
@@ -52,6 +56,11 @@ public final class SetuServerMain {
         if (!Set.of("blocking", "selector").contains(transport))
             throw new IllegalArgumentException("transport must be blocking or selector");
         var logger = LoggerFactory.getLogger(SetuServerMain.class);
+        logger.info("JVM garbage collectors: {}", java.lang.management.ManagementFactory.getGarbageCollectorMXBeans()
+                .stream().map(java.lang.management.GarbageCollectorMXBean::getName).toList());
+        logger.info("JVM string deduplication: {}", java.lang.management.ManagementFactory
+                .getPlatformMXBean(com.sun.management.HotSpotDiagnosticMXBean.class)
+                .getVMOption("UseStringDeduplication").getValue());
         try (DefaultBroker broker = new DefaultBroker(mode, mode == StorageMode.FILE
                 ? Path.of(properties.getProperty("data.dir", "data")) : null,
                 Math.toIntExact(number(properties, "record.max.bytes", 1024 * 1024)),

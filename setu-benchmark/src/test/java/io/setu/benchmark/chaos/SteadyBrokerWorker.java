@@ -12,6 +12,7 @@ import com.sun.management.OperatingSystemMXBean;
 /** Independent broker JVM for the fixed-rate benchmark; clients never share its CPU or heap metrics. */
 public final class SteadyBrokerWorker {
     public static void main(String[] args) throws Exception {
+        BenchmarkRuntime.verifyZgc(SteadyBrokerWorker.class);
         StorageMode mode = StorageMode.valueOf(args[0]);
         Path control = Path.of(args[1]);
         Path data = args.length > 2 ? Path.of(args[2]) : control.resolve("data");

@@ -45,7 +45,7 @@ Calls on one client object are serialized. There is no pipelining or concurrent 
 
 ## Build and integration tests
 
-From the repository root with the project-required Java 25 JDK:
+From the repository root with the project-required Java 26 JDK:
 
 ```powershell
 .\mvnw.cmd -pl setu-client -am package

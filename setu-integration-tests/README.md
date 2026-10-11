@@ -2,7 +2,7 @@
 
 This module verifies application requirements through public client and server APIs across real TCP connections. It covers broker behavior in both storage modes, acknowledgement-based in-memory reclamation, file-history reads, join-time offsets for new in-memory members, and mTLS authentication and authorization. These tests validate expected behavior at controlled scale; they do not try to saturate or exhaust the broker.
 
-Run it from the repository root with Java 25:
+Run it from the repository root with Java 26:
 
 ```powershell
 .\mvnw.cmd -pl setu-integration-tests -am '-Dtest=*IntegrationTests' -Dsurefire.failIfNoSpecifiedTests=false test

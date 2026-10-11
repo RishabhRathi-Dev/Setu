@@ -84,9 +84,14 @@ class BenchmarkCaptureTests(unittest.TestCase):
                        hot_method="io.setu.core.protocol.ProtocolCodec.decodeRequest")
         details = badges.capacity_details({"FILE": [stage]}, {"FILE": "JVM_OOM"},
                                           profiles={("FILE", 8): profile},
-                                          backpressure={("FILE", 8): dict(waits="12")})
+                                          backpressure={("FILE", 8): dict(waits="12")},
+                                          configs={"FILE": dict(gc="ZGC", string_dedup="true"), "IN_MEMORY": {}})
         self.assertIn("128.0 MiB/s | 1.50 ms | 42", details)
         self.assertIn("ProtocolCodec.decodeRequest` | 12", details)
+        self.assertIn("collector ZGC", details)
+        self.assertIn("collector unrecorded", details)
+        self.assertIn("string deduplication true", details)
+        self.assertIn("string deduplication unrecorded", details)
 
     def test_peak_rates_include_completed_holds_but_exclude_partial_and_zero_duration_windows(self):
         stages = [dict(produce_per_s="100", consume_per_s="90")]

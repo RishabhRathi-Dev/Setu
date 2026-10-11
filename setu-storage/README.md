@@ -65,7 +65,7 @@ Recovery treats the first invalid length or incomplete final record as a tail an
 
 ## Build and tests
 
-From the repository root with the project-required Java 25 JDK:
+From the repository root with the project-required Java 26 JDK:
 
 ```powershell
 .\mvnw.cmd -pl setu-storage test
