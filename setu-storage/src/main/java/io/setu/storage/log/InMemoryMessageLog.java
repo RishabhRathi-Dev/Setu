@@ -13,6 +13,10 @@ public final class InMemoryMessageLog implements MessageLog {
     private static final int MAX_RECORDS_PER_READ = 10_000;
     private final int maxRecordBytes;
     private static final int CHUNK_RECORDS = 1024;
+    // Conservative reference-array, map-entry, key, and chunk-object allowance.
+    private static final long CHUNK_MEMORY_BYTES = CHUNK_RECORDS * (long) Long.BYTES + 128;
+    private final MemoryLogBudget budget;
+    private long retainedBytes;
     private final NavigableMap<Long, Chunk> chunks = new TreeMap<>();
     private Chunk active;
     private long firstOffset;
@@ -20,8 +24,13 @@ public final class InMemoryMessageLog implements MessageLog {
     private boolean closed;
 
     public InMemoryMessageLog(int maxRecordBytes) {
+        this(maxRecordBytes, new MemoryLogBudget(0));
+    }
+
+    public InMemoryMessageLog(int maxRecordBytes, MemoryLogBudget budget) {
         if (maxRecordBytes < 0) throw new IllegalArgumentException("maxRecordBytes must be non-negative");
         this.maxRecordBytes = maxRecordBytes;
+        this.budget = Objects.requireNonNull(budget, "budget");
     }
 
     @Override
@@ -30,7 +39,11 @@ public final class InMemoryMessageLog implements MessageLog {
         Objects.requireNonNull(value, "value");
         if (value.length > maxRecordBytes)
             throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
-        return appendValidated(value);
+        long reservation = recordMemoryBytes(value) + chunkReservation(1);
+        budget.reserve(reservation);
+        long before = retainedBytes;
+        try { return appendValidated(value); }
+        finally { budget.release(reservation - (retainedBytes - before)); }
     }
 
     @Override
@@ -39,15 +52,19 @@ public final class InMemoryMessageLog implements MessageLog {
         Objects.requireNonNull(values, "values");
         if (values.isEmpty()) throw new IllegalArgumentException("values must not be empty");
         long first = nextOffset;
+        long reservation = chunkReservation(values.size());
         for (byte[] value : values) {
             Objects.requireNonNull(value, "value");
             if (value.length > maxRecordBytes)
                 throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
+            reservation += recordMemoryBytes(value);
         }
-        for (byte[] value : values) {
-            appendValidated(value);
-        }
-        return first;
+        budget.reserve(reservation);
+        long before = retainedBytes;
+        try {
+            for (byte[] value : values) appendValidated(value);
+            return first;
+        } finally { budget.release(reservation - (retainedBytes - before)); }
     }
 
     @Override
@@ -92,9 +109,11 @@ public final class InMemoryMessageLog implements MessageLog {
         if (offset < 0 || offset > nextOffset)
             throw new IllegalArgumentException("offset must be between first and next offset");
         long target = Math.max(firstOffset, offset);
+        long releasedBytes = 0;
         while (!chunks.isEmpty()) {
             var first = chunks.firstEntry();
             if (first.getKey() + first.getValue().count > target) break;
+            releasedBytes += CHUNK_MEMORY_BYTES + first.getValue().payloadBytes;
             chunks.pollFirstEntry();
         }
         if (chunks.isEmpty()) active = null;
@@ -102,19 +121,41 @@ public final class InMemoryMessageLog implements MessageLog {
             var first = chunks.firstEntry();
             Chunk chunk = first.getValue();
             int removed = (int) (target - first.getKey());
+            for (int i = chunk.discarded; i < removed; i++) {
+                long bytes = recordMemoryBytes(chunk.records[i]);
+                releasedBytes += bytes;
+                chunk.payloadBytes -= bytes;
+            }
             Arrays.fill(chunk.records, chunk.discarded, removed, null);
             chunk.discarded = removed;
         }
         firstOffset = target;
+        retainedBytes -= releasedBytes;
+        budget.release(releasedBytes);
+    }
+
+    private long chunkReservation(int count) {
+        int available = active == null ? 0 : CHUNK_RECORDS - active.count;
+        long newChunks = (Math.max(0L, count - (long) available) + CHUNK_RECORDS - 1) / CHUNK_RECORDS;
+        return newChunks * CHUNK_MEMORY_BYTES;
+    }
+
+    private static long recordMemoryBytes(byte[] value) {
+        return (value.length + 24L + 7) & ~7L;
     }
 
     private long appendValidated(byte[] value) {
         byte[] copy = value.clone();
         if (active == null || active.count == CHUNK_RECORDS) {
-            active = new Chunk();
-            chunks.put(nextOffset, active);
+            Chunk created = new Chunk();
+            chunks.put(nextOffset, created);
+            active = created;
+            retainedBytes += CHUNK_MEMORY_BYTES;
         }
         active.records[active.count++] = copy;
+        long bytes = recordMemoryBytes(copy);
+        active.payloadBytes += bytes;
+        retainedBytes += bytes;
         return nextOffset++;
     }
 
@@ -122,6 +163,7 @@ public final class InMemoryMessageLog implements MessageLog {
         private final byte[][] records = new byte[CHUNK_RECORDS][];
         private int count;
         private int discarded;
+        private long payloadBytes;
     }
 
     private void ensureOpen() throws IOException {
@@ -134,5 +176,7 @@ public final class InMemoryMessageLog implements MessageLog {
         chunks.clear();
         active = null;
         firstOffset = nextOffset;
+        budget.release(retainedBytes);
+        retainedBytes = 0;
     }
 }

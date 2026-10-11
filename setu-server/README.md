@@ -98,6 +98,8 @@ The runnable JAR requires its adjacent `target/lib/` directory, which Maven fill
 
 `config/server.properties` exposes the bind address, storage mode (`FILE` or `IN_MEMORY`), data directory, segment and record size, connection cap, backlog, timeouts, and transport (`blocking` or `selector`). This launcher serves plaintext; the existing secure embedding API below provides TLS/mTLS, authentication, authorization, and quotas. The capacity workload also uses the plaintext path and bypasses quotas, so raising quota rates cannot change its throughput.
 
+For `IN_MEMORY`, `memory.log.max.bytes` bounds retained log payload/chunk accounting across all partitions (256 MiB by default; zero disables it). If a single record or complete batch would exceed the remaining budget, produce returns `QUOTA_EXCEEDED` before appending it. The connection remains usable, and fetch/acknowledgement requests can free capacity so producers can retry with backoff. This budget covers retained message logs; concurrent protocol buffers and file indexes need separate admission limits.
+
 The packaged Logback configuration persists operational logs as `logs/setu.log`, rotates at 100 MB or daily, retains up to 14 days, and caps archives at 2 GB. Set `SETU_LOG_DIR` to change the log directory, or use `-Dlogback.configurationFile=<path>` before `-jar` to provide a different logging configuration. Operational logs and durable message segment files are separate artifacts. See [server.properties](../config/server.properties) and [logback.xml](../config/logback.xml).
 
 Packaging keeps Java bytecode on the JVM. It provides a launchable distribution; performance claims come from benchmarks.
@@ -366,7 +368,8 @@ Once framing has produced a body, protocol and application failures use the stru
 | Partial frame header/body, negative frame length, or oversized frame | The frame codec cannot trust a complete request; the connection is closed. |
 | Malformed protocol body or unsupported protocol version | An error response is sent. The connection remains open. |
 | Unknown topic/partition, out-of-range offset, or duplicate topic | A broker error response is sent. |
-| Authorization denial or quota exceedance | `AUTHORIZATION_DENIED` or `QUOTA_EXCEEDED` is sent; broker dispatch is skipped. |
+| Authorization denial or security quota exceedance | `AUTHORIZATION_DENIED` or `QUOTA_EXCEEDED` is sent; broker dispatch is skipped. |
+| Produce exceeds the shared retained-memory log budget | `QUOTA_EXCEEDED` is sent before any part of that append is stored; fetching and acknowledging remain available to release capacity. |
 | Broker storage failure | An `INTERNAL_ERROR` response is sent for built-in dispatch. |
 | TLS socket timeout or blocking server read timeout | The connection is closed. |
 | Acceptor fails while server is running | The server logs the accept failure and closes the server. |

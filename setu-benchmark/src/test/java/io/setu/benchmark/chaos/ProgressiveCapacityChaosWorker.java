@@ -48,7 +48,7 @@ final class ProgressiveCapacityChaosWorker {
         StorageMode mode = StorageMode.valueOf(args[0]);
         if (MAX_CONCURRENCY != 0 && Integer.bitCount(MAX_CONCURRENCY) != 1)
             throw new IllegalArgumentException("setu.benchmark.max.concurrency must be zero or a power of two");
-        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d max_concurrency=%d quotas=disabled%n",
+        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d max_concurrency=%d quotas=disabled memory_log_budget=unlimited%n",
                 mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, MAX_CONCURRENCY);
         Path dataRoot = Path.of(args[1]);
         AtomicBoolean outOfMemory = new AtomicBoolean();
@@ -72,7 +72,7 @@ final class ProgressiveCapacityChaosWorker {
         OperatingSystemMXBean os = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
         Path brokerData = mode == StorageMode.FILE ? dataRoot.resolve("broker-data") : null;
         DefaultBroker broker = new DefaultBroker(mode, brokerData, 1024, 64L * 1024 * 1024,
-                60 * 60 * 1000L, 2 * 60 * 60 * 1000L);
+                60 * 60 * 1000L, 2 * 60 * 60 * 1000L, 0);
         TcpServer server = new TcpServer(new java.net.InetSocketAddress("127.0.0.1", 0),
                 new FramedConnectionHandler(new BrokerRequestHandler(broker)),
                 new TcpServerOptions(65_536, 65_536, 0));

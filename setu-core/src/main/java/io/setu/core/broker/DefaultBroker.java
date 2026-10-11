@@ -7,6 +7,8 @@ import io.setu.core.protocol.ProtocolRecord;
 import io.setu.storage.log.MessageLog;
 import io.setu.storage.log.MessageLogs;
 import io.setu.storage.log.StorageMode;
+import io.setu.storage.log.MemoryLogBudget;
+import io.setu.storage.log.LogCapacityExceededException;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -25,6 +27,7 @@ public final class DefaultBroker implements Broker {
     private static final int MAX_PARTITIONS_PER_TOPIC = 1_024;
     public static final long DEFAULT_ACK_TIMEOUT_MILLIS = 30_000;
     public static final long DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS = 60_000;
+    public static final long DEFAULT_MAX_RETAINED_MEMORY_BYTES = 256L * 1024 * 1024;
     private static final long CONSUMER_EXPIRATION_SCAN_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(10);
     private final Path dataDirectory;
     private final int maxRecordBytes;
@@ -32,6 +35,7 @@ public final class DefaultBroker implements Broker {
     private final long maxSegmentBytes;
     private final long ackTimeoutNanos;
     private final long consumerInactivityTimeoutNanos;
+    private final MemoryLogBudget memoryBudget;
     private final Map<String, TopicState> topics = new ConcurrentHashMap<>();
     private final Map<String, Long> committedOffsets = new ConcurrentHashMap<>();
     private final Map<String, Map<String, String>> groupMembers = new ConcurrentHashMap<>();
@@ -70,6 +74,14 @@ public final class DefaultBroker implements Broker {
     public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
                          long maxSegmentBytes, long ackTimeoutMillis,
                          long consumerInactivityTimeoutMillis) throws IOException {
+        this(storageMode, dataDirectory, maxRecordBytes, maxSegmentBytes, ackTimeoutMillis,
+                consumerInactivityTimeoutMillis, DEFAULT_MAX_RETAINED_MEMORY_BYTES);
+    }
+
+    /** Shares one memory-log budget across all partitions; zero disables this limit. */
+    public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
+                         long maxSegmentBytes, long ackTimeoutMillis,
+                         long consumerInactivityTimeoutMillis, long maxRetainedMemoryBytes) throws IOException {
         this.storageMode = Objects.requireNonNull(storageMode, "storageMode");
         if (storageMode == StorageMode.FILE && dataDirectory == null)
             throw new IllegalArgumentException("dataDirectory is required for file storage");
@@ -83,11 +95,15 @@ public final class DefaultBroker implements Broker {
         this.maxSegmentBytes = maxSegmentBytes;
         this.ackTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(ackTimeoutMillis);
         this.consumerInactivityTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(consumerInactivityTimeoutMillis);
+        this.memoryBudget = new MemoryLogBudget(maxRetainedMemoryBytes);
         if (storageMode == StorageMode.FILE) {
             Files.createDirectories(this.dataDirectory);
             recoverTopics();
         }
     }
+
+    /** Accounted memory-log payload/chunk bytes, including append reservations; excludes protocol buffers and file indexes. */
+    public long retainedInMemoryBytes() { return memoryBudget.usedBytes(); }
 
     @Override
     public BrokerResponse execute(BrokerRequest request) throws IOException {
@@ -126,7 +142,7 @@ public final class DefaultBroker implements Broker {
                     Files.createDirectories(partitionDir);
                     file = partitionDir.resolve("000000000000.log");
                 }
-                partitions.add(MessageLogs.open(storageMode, file, maxRecordBytes, maxSegmentBytes));
+                partitions.add(MessageLogs.open(storageMode, file, maxRecordBytes, maxSegmentBytes, memoryBudget));
             }
             topics.put(request.topic(), new TopicState(List.copyOf(partitions)));
         } catch (IOException | RuntimeException failure) {
@@ -137,10 +153,15 @@ public final class DefaultBroker implements Broker {
     }
 
     private BrokerResponse produce(BrokerRequest request) throws IOException {
-        if (request.value().length > maxRecordBytes)
+        byte[] value = request.value();
+        if (value.length > maxRecordBytes)
             throw new BrokerException(ErrorCode.BAD_REQUEST, "Record exceeds configured maximum size");
         MessageLog log = partition(request.topic(), request.partition());
-        long offset = log.append(request.value());
+        long offset;
+        try { offset = log.append(value); }
+        catch (LogCapacityExceededException exhausted) {
+            throw new BrokerException(ErrorCode.QUOTA_EXCEEDED, exhausted.getMessage(), exhausted);
+        }
         if (storageMode == StorageMode.IN_MEMORY) reclaimConsumed(request.topic(), request.partition());
         return new BrokerResponse(request.correlationId(), request.command(), ErrorCode.NONE, "", offset, List.of(), Map.of());
     }
@@ -153,7 +174,11 @@ public final class DefaultBroker implements Broker {
                 throw new BrokerException(ErrorCode.BAD_REQUEST, "Record exceeds configured maximum size");
         }
         MessageLog log = partition(request.topic(), request.partition());
-        long firstOffset = log.appendBatch(values);
+        long firstOffset;
+        try { firstOffset = log.appendBatch(values); }
+        catch (LogCapacityExceededException exhausted) {
+            throw new BrokerException(ErrorCode.QUOTA_EXCEEDED, exhausted.getMessage(), exhausted);
+        }
         if (storageMode == StorageMode.IN_MEMORY) reclaimConsumed(request.topic(), request.partition());
         return new BrokerResponse(request.correlationId(), request.command(), ErrorCode.NONE, "", firstOffset,
                 List.of(), Map.of());
@@ -333,7 +358,7 @@ public final class DefaultBroker implements Broker {
                         int partitionId = Integer.parseInt(partitionPaths.get(i).getFileName().toString().substring(10));
                         if (partitionId != i) throw new IOException("Partition directories must be contiguous for topic " + name);
                         logs.add(MessageLogs.open(storageMode,
-                                partitionPaths.get(i).resolve("000000000000.log"), maxRecordBytes, maxSegmentBytes));
+                                partitionPaths.get(i).resolve("000000000000.log"), maxRecordBytes, maxSegmentBytes, memoryBudget));
                     }
                     topics.put(name, new TopicState(List.copyOf(logs)));
                 } catch (IOException | RuntimeException failure) {
