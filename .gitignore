@@ -144,3 +144,5 @@ modules.xml
 /data/
 /logs/
 /docs/
+__pycache__/
+*.py[cod]

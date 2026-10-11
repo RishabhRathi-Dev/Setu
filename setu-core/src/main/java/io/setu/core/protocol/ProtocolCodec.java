@@ -31,20 +31,26 @@ public final class ProtocolCodec {
 
     public static byte[] encodeRequest(BrokerRequest request) throws IOException {
         validateRequest(request);
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        int capacity = 32;
+        if (request.command() == Command.PRODUCE_BATCH) {
+            // Validated topic names are ASCII; the complete batch is already bounded to 14 MiB.
+            capacity = 24 + request.topic().length();
+            for (int i = 0; i < request.valueCount(); i++) capacity += Integer.BYTES + request.valueLengthAt(i);
+        }
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(capacity);
         DataOutputStream out = new DataOutputStream(bytes);
         writeHeader(out, REQUEST, request.command(), request.correlationId());
         switch (request.command()) {
             case PRODUCE -> {
                 writeString(out, request.topic());
                 out.writeInt(request.partition());
-                writeBytes(out, request.value());
+                writeBytes(out, request.valueForEncoding());
             }
             case PRODUCE_BATCH -> {
                 writeString(out, request.topic());
                 out.writeInt(request.partition());
                 out.writeInt(request.valueCount());
-                for (int i = 0; i < request.valueCount(); i++) writeBytes(out, request.valueAt(i));
+                for (int i = 0; i < request.valueCount(); i++) writeBytes(out, request.valueForEncoding(i));
             }
             case FETCH -> {
                 writeString(out, request.topic());
@@ -175,8 +181,7 @@ public final class ProtocolCodec {
                     throw bad("batch must contain between 1 and " + MAX_RESPONSE_ITEMS + " records", request.correlationId());
                 long bytes = 0;
                 for (int i = 0; i < request.valueCount(); i++) {
-                    byte[] value = request.valueAt(i);
-                    bytes += value.length;
+                    bytes += request.valueLengthAt(i);
                     if (bytes > MAX_BATCH_BYTES) throw bad("produce batch exceeds maximum bytes", request.correlationId());
                 }
             }
@@ -232,7 +237,14 @@ public final class ProtocolCodec {
     }
 
     public static byte[] encodeResponse(BrokerResponse response) throws IOException {
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        int capacity = 32;
+        if (response.errorCode() == ErrorCode.NONE && response.command() == Command.FETCH) {
+            long required = 22L + response.errorMessage().getBytes(StandardCharsets.UTF_8).length;
+            for (ProtocolRecord record : response.records()) required += 12L + record.valueLength();
+            if (required > Integer.MAX_VALUE) throw new IOException("Fetch response is too large to encode");
+            capacity = (int) required;
+        }
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(capacity);
         DataOutputStream out = new DataOutputStream(bytes);
         writeHeader(out, RESPONSE, response.command(), response.correlationId());
         out.writeShort(response.errorCode().id());
@@ -244,7 +256,7 @@ public final class ProtocolCodec {
                 out.writeInt(response.records().size());
                 for (ProtocolRecord record : response.records()) {
                     out.writeLong(record.offset());
-                    writeBytes(out, record.value());
+                    writeBytes(out, record.valueForEncoding());
                 }
             }
             case METADATA -> {

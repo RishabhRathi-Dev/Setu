@@ -32,6 +32,7 @@ final class ProgressiveCapacityChaosWorker {
     private static final int RECORD_BYTES = 512;
     private static final int MAX_FRAME_BYTES = 15 * 1024 * 1024;
     private static final long STAGE_MILLIS = configuredInt("setu.benchmark.stage.millis", 2_000, 250, 60_000);
+    private static final int WARMUP_MILLIS = configuredInt("setu.benchmark.warmup.millis", 2_000, 0, 60_000);
     private static final int MAX_CONCURRENCY = configuredInt("setu.benchmark.max.concurrency", 0, 0, 32_768);
     private static final int BATCH_RECORDS = configuredInt("setu.benchmark.batch.records", 256, 1, 10_000);
     private static final long SAMPLE_MILLIS = 250;
@@ -50,8 +51,8 @@ final class ProgressiveCapacityChaosWorker {
         stopReporter = new CapacityStopReporter(mode.name());
         if (MAX_CONCURRENCY != 0 && Integer.bitCount(MAX_CONCURRENCY) != 1)
             throw new IllegalArgumentException("setu.benchmark.max.concurrency must be zero or a power of two");
-        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d max_concurrency=%d quotas=disabled memory_log_budget=unlimited%n",
-                mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, MAX_CONCURRENCY);
+        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d max_concurrency=%d quotas=disabled memory_log_budget=unlimited cpu_metric=process_time_per_available_cpu%n",
+                mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, WARMUP_MILLIS, MAX_CONCURRENCY);
         Path dataRoot = Path.of(args[1]);
         System.out.printf(Locale.ROOT, "CAPACITY_RUNTIME java=%s os=%s cpus=%d max_heap_mb=%d log_level=%s log_directory=%s tcp_nodelay=true%n",
                 System.getProperty("java.version"), System.getProperty("os.name").replace(' ', '_'),
@@ -78,6 +79,9 @@ final class ProgressiveCapacityChaosWorker {
 
     private static void run(StorageMode mode, Path dataRoot, AtomicBoolean outOfMemory) throws Exception {
         Files.createDirectories(dataRoot);
+        var fileStore = Files.getFileStore(dataRoot);
+        System.out.printf("CAPACITY_STORAGE mode=%s directory=%s filesystem=%s usable_mb=%d%n", mode,
+                dataRoot.toAbsolutePath(), fileStore.type(), fileStore.getUsableSpace() / (1024 * 1024));
         OperatingSystemMXBean os = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
         Path brokerData = mode == StorageMode.FILE ? dataRoot.resolve("broker-data") : null;
         DefaultBroker broker = new DefaultBroker(mode, brokerData, 1024, 64L * 1024 * 1024,
@@ -92,13 +96,25 @@ final class ProgressiveCapacityChaosWorker {
             server.start();
             List<SetuClient> producers = new ArrayList<>();
             List<SetuClient> consumers = new ArrayList<>();
+            if (WARMUP_MILLIS > 0) {
+                StageResult warmup = runStage(mode, 0, 1, server, producers, consumers, clients, os,
+                        outOfMemory, WARMUP_MILLIS, false);
+                System.out.printf("CAPACITY_WARMUP mode=%s duration_ms=%d produced=%d consumed=%d stop=%s%n",
+                        mode, warmup.elapsedNanos / 1_000_000, warmup.produced, warmup.consumed, warmup.reason);
+                if (warmup.reason != null) {
+                    stop(mode, warmup.reason, 0, 1, warmup.detail);
+                    return;
+                }
+                requireSuccess(consumers.getFirst().leaveGroup("capacity-group-0", "member-0"), "leave warmup group");
+            }
             while (true) {
                 stage++;
                 stopReporter.prepareStage(stage, concurrency);
                 System.out.printf("CAPACITY_PREPARE mode=%s stage=%d producers=%d consumers=%d%n", mode, stage, concurrency, concurrency);
                 StageResult result;
                 try {
-                    result = runStage(mode, stage, concurrency, server, producers, consumers, clients, os, outOfMemory);
+                    result = runStage(mode, stage, concurrency, server, producers, consumers, clients, os, outOfMemory,
+                            STAGE_MILLIS, MAX_CONCURRENCY == 0);
                 } catch (OutOfMemoryError exhausted) {
                     stopReporter.heapExhausted();
                     return;
@@ -139,7 +155,7 @@ final class ProgressiveCapacityChaosWorker {
     private static StageResult runStage(StorageMode mode, int stage, int concurrency, TcpServer server,
                                         List<SetuClient> producers, List<SetuClient> consumers,
                                         List<SetuClient> clients, OperatingSystemMXBean os,
-                                        AtomicBoolean outOfMemory) throws Exception {
+                                        AtomicBoolean outOfMemory, long durationMillis, boolean stopOnCpu) throws Exception {
         String topic = "capacity-" + stage;
         String group = "capacity-group-" + stage;
         ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
@@ -172,6 +188,8 @@ final class ProgressiveCapacityChaosWorker {
                 requireSuccess(consumers.get(i).joinGroup(group, topic, "member-" + i), "join consumer");
 
             started = System.nanoTime();
+            ProcessCpuSampler cpuSampler = new ProcessCpuSampler(Runtime.getRuntime().availableProcessors(),
+                    started, os.getProcessCpuTime());
             for (int i = 0; i < concurrency; i++) {
                 SetuClient producer = producers.get(i);
                 workers.execute(() -> produceUntilStopped(producer, topic, running, outOfMemory,
@@ -187,7 +205,8 @@ final class ProgressiveCapacityChaosWorker {
             int saturatedSamples = 0;
             double cpuTotal = 0;
             int cpuSamples = 0;
-            long deadline = started + STAGE_MILLIS * 1_000_000L;
+            long deadline = started + durationMillis * 1_000_000L;
+            long nextDiagnostic = started + 1_000_000_000L;
             while (System.nanoTime() < deadline && running.get()) {
                 Thread.sleep(SAMPLE_MILLIS);
                 if (outOfMemory.get()) { reason = "JVM_OOM"; break; }
@@ -197,13 +216,13 @@ final class ProgressiveCapacityChaosWorker {
                     detail = failure.toString();
                     break;
                 }
-                double cpu = os.getProcessCpuLoad();
+                double cpu = cpuSampler.sample(System.nanoTime(), os.getProcessCpuTime());
                 if (cpu >= 0) {
                     cpuTotal += cpu;
                     cpuSamples++;
                     cpuMaximum = Math.max(cpuMaximum, cpu);
                     saturatedSamples = cpu >= CPU_SATURATION ? saturatedSamples + 1 : 0;
-                    if (saturatedSamples >= SATURATED_SAMPLES_TO_STOP) {
+                    if (stopOnCpu && saturatedSamples >= SATURATED_SAMPLES_TO_STOP) {
                         reason = "CPU_SATURATION";
                         detail = String.format(Locale.ROOT, "process CPU remained at or above %.0f%%", CPU_SATURATION * 100);
                         break;
@@ -211,7 +230,8 @@ final class ProgressiveCapacityChaosWorker {
                 }
                 MemoryUsage usage = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
                 heapUsed = usage.getUsed();
-                if (cpuSamples % 4 == 0) {
+                if (System.nanoTime() >= nextDiagnostic) {
+                    nextDiagnostic += 1_000_000_000L;
                     System.out.printf(Locale.ROOT,
                             "CAPACITY_SAMPLE mode=%s stage=%d elapsed_ms=%d produced=%d consumed=%d cpu=%.3f heap_mb=%.1f%n",
                             mode, stage, (System.nanoTime() - started) / 1_000_000, produced.sum(), consumed.sum(),

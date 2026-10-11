@@ -31,4 +31,13 @@ public record BrokerRequest(int correlationId, Command command, String topic, in
     public int valueCount() { return values.size(); }
 
     public byte[] valueAt(int index) { return values.get(index).clone(); }
+
+    public int valueLength() { return value.length; }
+
+    public int valueLengthAt(int index) { return values.get(index).length; }
+
+    // Only the protocol encoder reads these owned arrays; public accessors still return copies.
+    byte[] valueForEncoding() { return value; }
+
+    byte[] valueForEncoding(int index) { return values.get(index); }
 }

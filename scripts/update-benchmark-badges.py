@@ -19,8 +19,11 @@ def parse_fields(line: str, marker: str) -> dict[str, str]:
 
 def read_benchmark_output(log_path: Path | None, reports_dir: Path) -> str:
     chunks: list[str] = []
-    if log_path is not None and log_path.is_file():
-        chunks.append(log_path.read_text(encoding="utf-8", errors="replace"))
+    if log_path is not None:
+        if not log_path.is_file():
+            raise SystemExit(f"Benchmark log does not exist: {log_path}")
+        # An explicit capture identifies one profile; stale XML from other runs must not fill gaps.
+        return log_path.read_text(encoding="utf-8", errors="replace")
 
     for report in reports_dir.glob("TEST-*.xml"):
         try:

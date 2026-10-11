@@ -6,6 +6,8 @@ import io.setu.server.dispatcher.RequestProcessor;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.nio.channels.SocketChannel;
 import java.util.Objects;
@@ -60,8 +62,8 @@ public final class FramedConnectionHandler implements ConnectionHandler {
                      ? "anonymous" : session.identity().principal().toString())) {
             if (LOG.isDebugEnabled()) LOG.debug("Session opened peer={} max_frame_bytes={} tcp_nodelay={}", peer, maxFrameSize,
                     channel.socket().getTcpNoDelay());
-            DataInputStream input = new DataInputStream(session.input());
-            DataOutputStream output = new DataOutputStream(session.output());
+            DataInputStream input = new DataInputStream(new BufferedInputStream(session.input()));
+            DataOutputStream output = new DataOutputStream(new BufferedOutputStream(session.output()));
             while (channel.isOpen()) {
                 byte[] request = FrameCodec.readFrame(input, maxFrameSize);
                 if (request == null) {

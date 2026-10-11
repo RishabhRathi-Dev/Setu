@@ -104,6 +104,8 @@ The packaged Logback configuration persists operational logs as `logs/setu.log`,
 
 Operational logging defaults to `DEBUG`. Use `SETU_LOG_LEVEL=INFO` or `-Dsetu.log.level=INFO` before `-jar` to reduce request logging; the JVM property takes precedence. DEBUG records command, correlation ID, topic/partition, offsets, frame sizes, result counts, and elapsed request/append times. Connection events identify sessions and peers; security decisions identify principals and resources. Recovery reports segment counts and offsets, and warns when an invalid tail is truncated. Unexpected failures retain their complete exception chain and stack trace in the logs while clients receive the existing structured errors. Record payloads, passwords, and private keys are not logged.
 
+The synchronous client and blocking server buffer socket reads/writes to amortize frame-header I/O while retaining TCP_NODELAY and a flush after every complete response/request. Protocol validation inspects payload lengths without cloning, and the encoder reads owned payloads internally and sizes batch/fetch buffers before writing. Public payload accessors continue to return defensive copies. These changes retain the wire format, record ordering, memory admission, and forced file durability.
+
 Packaging keeps Java bytecode on the JVM. It provides a launchable distribution; performance claims come from benchmarks.
 
 ## Embedded TCP server lifecycle

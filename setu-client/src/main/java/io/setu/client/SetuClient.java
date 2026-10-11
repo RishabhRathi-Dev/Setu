@@ -13,6 +13,8 @@ import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -37,8 +39,8 @@ public final class SetuClient implements AutoCloseable {
         this.socket = socket;
         socket.setTcpNoDelay(true);
         this.maxFrameSize = maxFrameSize;
-        this.input = new DataInputStream(socket.getInputStream());
-        this.output = new DataOutputStream(socket.getOutputStream());
+        this.input = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+        this.output = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
         if (LOG.isDebugEnabled()) LOG.debug("Client connected peer={} local={} max_frame_bytes={} read_timeout_ms={} tcp_nodelay={}",
                 socket.getRemoteSocketAddress(), socket.getLocalSocketAddress(), maxFrameSize,
                 socket.getSoTimeout(), socket.getTcpNoDelay());

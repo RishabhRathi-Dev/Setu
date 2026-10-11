@@ -8,4 +8,9 @@ public record ProtocolRecord(long offset, byte[] value) {
 
     @Override
     public byte[] value() { return value.clone(); }
+
+    public int valueLength() { return value.length; }
+
+    // Package-private encoding access never exposes the owned array to callers.
+    byte[] valueForEncoding() { return value; }
 }

@@ -8,6 +8,31 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ProtocolCodecTests {
     @Test
+    void batchAndFetchEncodingPreserveOwnedPayloadsWhenCallersMutateCopies() throws Exception {
+        byte[] input = {1, 2, 3};
+        BrokerRequest batch = new BrokerRequest(12, Command.PRODUCE_BATCH, "orders", 0,
+                -1, -1, null, 0, null, null, java.util.List.of(input));
+        input[0] = 9;
+        batch.values().getFirst()[1] = 9;
+        batch.valueAt(0)[2] = 9;
+        assertEquals(3, batch.valueLengthAt(0));
+        byte[] encoded = ProtocolCodec.encodeRequest(batch);
+        assertArrayEquals(new byte[]{1, 2, 3}, ProtocolCodec.decodeRequest(encoded).valueAt(0));
+        assertArrayEquals(encoded, ProtocolCodec.encodeRequest(batch));
+
+        byte[] fetched = {4, 5, 6};
+        ProtocolRecord record = new ProtocolRecord(7, fetched);
+        fetched[0] = 9;
+        record.value()[1] = 9;
+        BrokerResponse response = new BrokerResponse(13, Command.FETCH, ErrorCode.NONE, "", -1,
+                java.util.List.of(record), java.util.Map.of());
+        assertEquals(3, record.valueLength());
+        assertArrayEquals(new byte[]{4, 5, 6}, ProtocolCodec.decodeResponse(
+                ProtocolCodec.encodeResponse(response)).records().getFirst().value());
+        assertArrayEquals(new byte[]{4, 5, 6}, record.value());
+    }
+
+    @Test
     void roundTripsProduceAndStructuredErrorResponses() throws Exception {
         BrokerRequest request = new BrokerRequest(19, Command.PRODUCE, "orders", 2,
                 -1, -1, new byte[] { 1, 2, 3 }, 0, null, null);
