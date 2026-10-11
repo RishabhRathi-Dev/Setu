@@ -2,10 +2,10 @@
 
 [CI workflow](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:start -->
-[![In-Memory Capacity from latest benchmark](https://img.shields.io/badge/1%C3%971%20%C2%B7%20CPU%20saturation%20%C2%B7%20peak%20CPU%20100%25%20%C2%B7%20148%20MB%20%C2%B7%20p99%208ms-orange?label=in-memory%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![In-Memory Peak Rates from latest benchmark](https://img.shields.io/badge/212.37K%20prod%2Fs%20%C2%B7%20203.70K%20consumed%2Fs-blue?label=in-memory%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File Capacity from latest benchmark](https://img.shields.io/badge/1%C3%971%20%C2%B7%20CPU%20saturation%20%C2%B7%20peak%20CPU%2096%25%20%C2%B7%2072%20MB%20%C2%B7%20p99%208ms-orange?label=file%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File Peak Rates from latest benchmark](https://img.shields.io/badge/112.09K%20prod%2Fs%20%C2%B7%20111.95K%20consumed%2Fs-blue?label=file%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-Memory Capacity from latest benchmark](https://img.shields.io/badge/1%C3%971%20%C2%B7%20CPU%20saturation%20%C2%B7%20peak%20CPU%20100%25%20%C2%B7%20164%20MB%20%C2%B7%20p99%204ms-orange?label=in-memory%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-Memory Peak Rates from latest benchmark](https://img.shields.io/badge/536.50K%20prod%2Fs%20%C2%B7%20537.42K%20consumed%2Fs-blue?label=in-memory%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![File Capacity from latest benchmark](https://img.shields.io/badge/512%C3%97512%20%C2%B7%20JVM%20OOM%20%C2%B7%20peak%20CPU%2094%25%20%C2%B7%20718%20MB%20%C2%B7%20p99%202.1s-red?label=file%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![File Peak Rates from latest benchmark](https://img.shields.io/badge/352.44K%20prod%2Fs%20%C2%B7%20268.91K%20consumed%2Fs-blue?label=file%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:end -->
 
 Benchmark badges show terminal capacity, peak CPU, heap, p99 latency, and peak producer/consumer rates for each storage mode. Their metric values are embedded directly in Shields URLs, so they render without access to repository-hosted JSON. For private repositories, the workflow status image is replaced by a link because GitHub workflow badges are not externally accessible; metric badges continue to update from successful runs on the default branch. The JSON snapshots are committed for traceability.
@@ -19,15 +19,30 @@ The table is generated from every stage of the latest successful default-branch 
 
 | Storage mode | Target produce rate | Peak observed | Target progress |
 | --- | ---: | ---: | ---: |
-| In-memory | 10,000,000 records/s | 212.37K records/s | 2.1% |
-| File | 1,000,000 records/s | 112.09K records/s | 11.2% |
+| In-memory | 10,000,000 records/s | 536.50K records/s | 5.4% |
+| File | 1,000,000 records/s | 352.44K records/s | 35.2% |
 
 ### Progressive capacity stages
 
 | Mode | Stage | Producers | Consumers | Duration | Produced | Produce/s | Consumed | Consume/s | Avg CPU | Peak CPU | Heap | p99 request | Stage result |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| In-memory | 1 | 1 | 1 | 2.04s | 432,384 | 212.37K | 414,720 | 203.70K | 84.8% | 100.0% | 147.9 MB | 8.389 ms | CPU saturation |
-| File | 1 | 1 | 1 | 1.78s | 199,424 | 112.09K | 199,168 | 111.95K | 80.0% | 95.9% | 71.5 MB | 8.389 ms | CPU saturation |
+| In-memory | 1 | 1 | 1 | 1.00s | 298,752 | 298.49K | 288,768 | 288.52K | 96.9% | 97.9% | 78.7 MB | 8.389 ms | cpu hold |
+| File | 1 | 1 | 1 | 2.01s | 397,568 | 198.09K | 397,056 | 197.84K | 80.5% | 89.9% | 77.1 MB | 8.389 ms | Ramping |
+| File | 2 | 2 | 2 | 2.00s | 553,472 | 276.12K | 491,008 | 244.96K | 71.9% | 81.9% | 72.1 MB | 8.389 ms | Ramping |
+| File | 3 | 4 | 4 | 2.01s | 641,536 | 319.86K | 439,808 | 219.28K | 66.4% | 69.9% | 85.3 MB | 16.777 ms | Ramping |
+| File | 4 | 8 | 8 | 2.01s | 634,880 | 316.61K | 427,520 | 213.20K | 66.4% | 71.9% | 117.1 MB | 67.109 ms | Ramping |
+| File | 5 | 16 | 16 | 2.00s | 706,304 | 352.44K | 414,208 | 206.69K | 72.1% | 75.9% | 170.7 MB | 67.109 ms | Ramping |
+| File | 6 | 32 | 32 | 2.01s | 682,496 | 339.96K | 415,744 | 207.09K | 73.5% | 77.9% | 140.6 MB | 268.435 ms | Ramping |
+| File | 7 | 64 | 64 | 2.03s | 654,848 | 323.14K | 409,600 | 202.12K | 77.0% | 84.3% | 390.6 MB | 536.871 ms | Ramping |
+| File | 8 | 128 | 128 | 2.01s | 562,688 | 279.87K | 465,920 | 231.74K | 81.3% | 89.0% | 263.1 MB | 1073.742 ms | Ramping |
+| File | 9 | 256 | 256 | 2.01s | 501,248 | 249.54K | 540,160 | 268.91K | 85.4% | 93.9% | 446.1 MB | 1073.742 ms | Ramping |
+| File | 10 | 512 | 512 | 2.02s | 431,872 | 214.01K | 498,176 | 246.86K | 87.8% | 93.8% | 718.3 MB | 2147.484 ms | Ramping |
+
+### CPU saturation hold
+
+| Mode | Stage | Requested hold | Observed hold | Produce/s | Consume/s | Avg CPU | Outcome |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| In-memory | 1 | 10.00s | 10.04s | 536.50K | 537.42K | 96.7% | Completed |
 
 ### Capacity badge color legend
 
@@ -38,7 +53,7 @@ The table is generated from every stage of the latest successful default-branch 
 | 🔴 Red | Capacity ramp reached JVM heap exhaustion or an operating-system resource limit. |
 | 🟡 Yellow | Capacity ramp stopped at a broker/client limit or client stall. |
 
-File capacity stop: **CPU saturation**.
+File capacity stop: **JVM OOM**.
 
 In-memory capacity stop: **CPU saturation**.
 <!-- benchmark-capacity-details:end -->
