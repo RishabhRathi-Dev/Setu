@@ -1,5 +1,7 @@
 package io.setu.core.protocol;
 
+import io.setu.storage.log.MessageValue;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -11,16 +13,27 @@ public final class FrameCodec {
     private FrameCodec() { }
 
     public static byte[] readFrame(DataInputStream input, int maxFrameSize) throws IOException {
-        Objects.requireNonNull(input, "input");
-        validate(maxFrameSize);
-        int first = input.read();
-        if (first < 0) return null;
-        int length = (first << 24) | input.readUnsignedByte() << 16
-                | input.readUnsignedByte() << 8 | input.readUnsignedByte();
-        if (length < 0 || length > maxFrameSize) throw new IOException("Invalid frame length: " + length);
+        int length = readLength(input, maxFrameSize);
+        if (length < 0) return null;
         byte[] body = new byte[length];
         input.readFully(body);
         return body;
+    }
+
+    public static MessageValue.Frame readOwnedFrame(DataInputStream input, int maxFrameSize) throws IOException {
+        int length = readLength(input, maxFrameSize);
+        return length < 0 ? null : MessageValue.Frame.readFrom(input, length);
+    }
+
+    private static int readLength(DataInputStream input, int maxFrameSize) throws IOException {
+        Objects.requireNonNull(input, "input");
+        validate(maxFrameSize);
+        int first = input.read();
+        if (first < 0) return -1;
+        int length = (first << 24) | input.readUnsignedByte() << 16
+                | input.readUnsignedByte() << 8 | input.readUnsignedByte();
+        if (length < 0 || length > maxFrameSize) throw new IOException("Invalid frame length: " + length);
+        return length;
     }
 
     public static void writeFrame(DataOutputStream output, byte[] body, int maxFrameSize) throws IOException {

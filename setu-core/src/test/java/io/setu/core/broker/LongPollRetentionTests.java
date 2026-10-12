@@ -7,6 +7,36 @@ import java.util.concurrent.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class LongPollRetentionTests {
+    @Test void racingLongPollRegistrationAndAppendNeverLosesAWakeup() throws Exception {
+        try (var broker = new DefaultBroker(1024); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            broker.execute(request(Command.CREATE_TOPIC, 0, null));
+            broker.execute(request(Command.JOIN_GROUP, 0, "reader"));
+            for (int i = 0; i < 200; i++) {
+                int offset = i;
+                var start = new CyclicBarrier(2);
+                var fetch = workers.submit(() -> { start.await(); return broker.execute(request(Command.FETCH, offset, "reader").withWaitMillis(5000)); });
+                var append = workers.submit(() -> { start.await(); return broker.execute(request(Command.PRODUCE, 0, null)); });
+                assertEquals(offset, append.get(2, TimeUnit.SECONDS).offset());
+                var records = fetch.get(2, TimeUnit.SECONDS).records();
+                assertEquals(1, records.size());
+                assertEquals(offset, records.getFirst().offset());
+                broker.execute(request(Command.COMMIT_OFFSET, offset + 1, "reader"));
+            }
+            assertEquals(0, broker.retainedInMemoryBytes());
+        }
+    }
+    @Test void leavingAGroupWakesAndRejectsItsPendingLongPoll() throws Exception {
+        try (var broker = new DefaultBroker(1024); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            broker.execute(request(Command.CREATE_TOPIC, 0, null));
+            broker.execute(request(Command.JOIN_GROUP, 0, "reader"));
+            var fetch = workers.submit(() -> broker.execute(request(Command.FETCH, 0, "reader").withWaitMillis(30000)));
+            assertThrows(TimeoutException.class, () -> fetch.get(50, TimeUnit.MILLISECONDS));
+            broker.execute(request(Command.LEAVE_GROUP, 0, "reader"));
+            var failure = assertThrows(ExecutionException.class, () -> fetch.get(2, TimeUnit.SECONDS));
+            assertInstanceOf(BrokerException.class, failure.getCause());
+            assertEquals(ErrorCode.BAD_REQUEST, ((BrokerException) failure.getCause()).errorCode());
+        }
+    }
     @Test void closingTheBrokerWakesLongPolls() throws Exception {
         var broker = new DefaultBroker(1024);
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {

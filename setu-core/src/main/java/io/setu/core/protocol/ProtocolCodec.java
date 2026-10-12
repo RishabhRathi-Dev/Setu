@@ -32,6 +32,24 @@ public final class ProtocolCodec {
 
     private ProtocolCodec() { }
 
+    /** Copies caller payloads directly into their final wire frame. */
+    public static byte[] encodeProduceBatch(int correlation, String topic, int partition, List<byte[]> values) throws IOException {
+        requireTopic(topic);
+        if (correlation < 0 || partition < 0) throw bad("correlation and partition must be non-negative", correlation);
+        List<byte[]> snapshot = List.copyOf(values);
+        if (snapshot.isEmpty() || snapshot.size() > MAX_RESPONSE_ITEMS)
+            throw bad("batch must contain between 1 and " + MAX_RESPONSE_ITEMS + " records", correlation);
+        long payloadBytes = 0;
+        for (byte[] value : snapshot) payloadBytes += value.length;
+        if (payloadBytes > MAX_BATCH_BYTES) throw bad("produce batch exceeds maximum bytes", correlation);
+        byte[] name = topic.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer out = ByteBuffer.allocate(Math.toIntExact(24L + name.length + 4L * snapshot.size() + payloadBytes));
+        out.putInt(MAGIC).put((byte) VERSION).put((byte) REQUEST).putShort((short) Command.PRODUCE_BATCH.id()).putInt(correlation);
+        out.putInt(name.length).put(name).putInt(partition).putInt(snapshot.size());
+        for (byte[] value : snapshot) out.putInt(value.length).put(value);
+        return out.array();
+    }
+
     public static byte[] encodeRequest(BrokerRequest request) throws IOException {
         validateRequest(request);
         int capacity = 32;
@@ -95,11 +113,11 @@ public final class ProtocolCodec {
     public static BrokerRequest decodeRequest(byte[] payload) throws ProtocolException {
         int correlation = extractCorrelationId(payload);
         try {
-            DataInputStream in = new DataInputStream(new ByteArrayInputStream(payload));
+            ByteBuffer in = ByteBuffer.wrap(payload);
             Header header = readHeader(in, REQUEST);
             correlation = header.correlationId;
             BrokerRequest request = switch (header.command) {
-                case PRODUCE -> new BrokerRequest(correlation, header.command, readString(in), in.readInt(),
+                case PRODUCE -> new BrokerRequest(correlation, header.command, readString(in), in.getInt(),
                         -1, -1, readValue(in), 0, null, null, List.of(), 0);
                 case PRODUCE_BATCH -> decodeProduceBatch(in, correlation);
                 case FETCH -> decodeFetch(in, correlation);
@@ -108,55 +126,55 @@ public final class ProtocolCodec {
                 case LEAVE_GROUP, HEARTBEAT -> new BrokerRequest(correlation, header.command, null, -1, -1, -1,
                         null, 0, readString(in), readString(in));
                 case CREATE_TOPIC -> new BrokerRequest(correlation, header.command, readString(in), -1, -1, -1,
-                        null, in.readInt(), null, null);
+                        null, in.getInt(), null, null);
                 case METADATA -> new BrokerRequest(correlation, header.command, null, -1, -1, -1,
                         null, 0, null, null);
             };
-            if (in.available() != 0) throw bad("Trailing bytes in request", correlation);
+            if (in.hasRemaining()) throw bad("Trailing bytes in request", correlation);
             validateRequest(request);
             return request;
         } catch (ProtocolException e) {
             throw e;
         } catch (BufferBudget.Exhausted e) {
             throw new ProtocolException(ErrorCode.QUOTA_EXCEEDED, e.getMessage(), correlation);
-        } catch (EOFException e) {
+        } catch (EOFException | BufferUnderflowException e) {
             throw bad("Truncated request", correlation);
         } catch (IOException | IllegalArgumentException e) {
             throw bad("Malformed request: " + e.getMessage(), correlation);
         }
     }
 
-    private static BrokerRequest decodeCommit(DataInputStream in, int correlation) throws IOException {
+    private static BrokerRequest decodeCommit(ByteBuffer in, int correlation) throws IOException {
         String group = readString(in);
         String topic = readString(in);
-        int partition = in.readInt();
-        long offset = in.readLong();
-        String member = in.available() > 0 ? readString(in) : null;
+        int partition = in.getInt();
+        long offset = in.getLong();
+        String member = in.hasRemaining() ? readString(in) : null;
         return new BrokerRequest(correlation, Command.COMMIT_OFFSET, topic, partition, offset,
                 0, null, 0, group, member);
     }
 
-    private static BrokerRequest decodeFetch(DataInputStream in, int correlation) throws IOException {
+    private static BrokerRequest decodeFetch(ByteBuffer in, int correlation) throws IOException {
         String topic = readString(in);
-        int partition = in.readInt();
-        long offset = in.readLong();
-        int maxBytes = in.readInt();
+        int partition = in.getInt();
+        long offset = in.getLong();
+        int maxBytes = in.getInt();
         String group = null;
         String member = null;
-        if (in.available() > 0) {
+        if (in.hasRemaining()) {
             group = readString(in);
             member = readString(in);
         }
-        int wait = in.available() > 0 ? in.readInt() : 0;
+        int wait = in.hasRemaining() ? in.getInt() : 0;
         if (wait > 0 && "".equals(group) && "".equals(member)) { group = null; member = null; }
         return new BrokerRequest(correlation, Command.FETCH, topic, partition,
                 offset, maxBytes, MessageValue.empty(), 0, group, member, List.of(), wait);
     }
 
-    private static BrokerRequest decodeProduceBatch(DataInputStream in, int correlation) throws IOException {
+    private static BrokerRequest decodeProduceBatch(ByteBuffer in, int correlation) throws IOException {
         String topic = readString(in);
-        int partition = in.readInt();
-        int count = boundedCount(in.readInt());
+        int partition = in.getInt();
+        int count = boundedCount(in.getInt());
         RequestBuffers.reserveObjects(64L * count);
         List<MessageValue> values = new ArrayList<>(count);
         long bytes = 0;
@@ -170,7 +188,7 @@ public final class ProtocolCodec {
                 -1, MessageValue.empty(), 0, null, null, values, 0);
     }
 
-    private static BrokerRequest decodeJoin(DataInputStream in, int correlation) throws IOException {
+    private static BrokerRequest decodeJoin(ByteBuffer in, int correlation) throws IOException {
         String group = readString(in);
         String topic = readString(in);
         String member = readString(in);
@@ -299,10 +317,19 @@ public final class ProtocolCodec {
     }
 
     public static BrokerResponse decodeResponse(byte[] payload) throws ProtocolException {
-        int correlation = extractCorrelationId(payload);
+        return decodeResponse(ByteBuffer.wrap(payload), extractCorrelationId(payload), null);
+    }
+
+    /** Decodes immutable slices; retaining a record also retains its response frame. */
+    public static BrokerResponse decodeResponse(MessageValue.Frame frame) throws ProtocolException {
+        ByteBuffer cursor = frame.cursor();
+        int correlation = cursor.remaining() >= 12 ? cursor.getInt(8) : -1;
+        return decodeResponse(cursor, correlation, frame);
+    }
+
+    private static BrokerResponse decodeResponse(ByteBuffer in, int correlation, MessageValue.Frame frame) throws ProtocolException {
         try {
             // One cursor for the whole frame avoids per-record wrappers and synchronized stream reads.
-            ByteBuffer in = ByteBuffer.wrap(payload);
             Header header = readHeader(in, RESPONSE);
             correlation = header.correlationId;
             ErrorCode errorCode = ErrorCode.fromId(Short.toUnsignedInt(in.getShort()));
@@ -322,7 +349,13 @@ public final class ProtocolCodec {
                             int length = in.getInt();
                             if (length < 0 || length > 16 * 1024 * 1024 || length > in.remaining())
                                 throw new IOException("Invalid byte field length: " + length);
-                            decoded.add(new ProtocolRecord(recordOffset, MessageValue.readFrom(in, length)));
+                            MessageValue value;
+                            if (frame == null) value = MessageValue.readFrom(in, length);
+                            else {
+                                value = frame.valueAt(in.position(), length);
+                                in.position(in.position() + length);
+                            }
+                            decoded.add(new ProtocolRecord(recordOffset, value));
                         }
                         records = decoded; // BrokerResponse takes the immutable snapshot once.
                     }
@@ -367,18 +400,6 @@ public final class ProtocolCodec {
         out.writeInt(correlation);
     }
 
-    private static Header readHeader(DataInputStream in, int expectedKind) throws IOException {
-        if (in.readInt() != MAGIC) throw bad("Invalid protocol magic", -1);
-        int version = in.readUnsignedByte();
-        if (version != VERSION) throw new ProtocolException(ErrorCode.UNSUPPORTED_VERSION,
-                "Unsupported protocol version: " + version);
-        if (in.readUnsignedByte() != expectedKind) throw bad("Unexpected message kind", -1);
-        Command command = Command.fromId(in.readUnsignedShort());
-        int correlation = in.readInt();
-        if (correlation < 0) throw bad("correlationId must be non-negative", correlation);
-        return new Header(command, correlation);
-    }
-
     private static Header readHeader(ByteBuffer in, int expectedKind) throws IOException {
         if (in.getInt() != MAGIC) throw bad("Invalid protocol magic", -1);
         int version = Byte.toUnsignedInt(in.get());
@@ -403,26 +424,12 @@ public final class ProtocolCodec {
         value.writeTo(out);
     }
 
-    private static MessageValue readValue(DataInputStream in) throws IOException {
-        int length = in.readInt();
-        if (length < 0 || length > 16 * 1024 * 1024 || length > in.available())
+    private static MessageValue readValue(ByteBuffer in) throws IOException {
+        int length = in.getInt();
+        if (length < 0 || length > 16 * 1024 * 1024 || length > in.remaining())
             throw new IOException("Invalid byte field length: " + length);
-        return MessageValue.readFrom((java.io.DataInput) in, length);
+        return MessageValue.readFrom(in, length);
     }
-
-    private static String readString(DataInputStream in) throws IOException {
-        byte[] bytes = readBytes(in, MAX_STRING_BYTES);
-        if (bytes.length == 0) return "";
-        try {
-            return StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(bytes)).toString();
-        } catch (CharacterCodingException malformed) {
-            throw new IOException("String field is not valid UTF-8", malformed);
-        }
-    }
-
     private static String readString(ByteBuffer in) throws IOException {
         int length = in.getInt();
         if (length < 0 || length > MAX_STRING_BYTES || length > in.remaining())
@@ -443,18 +450,6 @@ public final class ProtocolCodec {
     private static void writeBytes(DataOutputStream out, byte[] data) throws IOException {
         out.writeInt(data.length);
         out.write(data);
-    }
-
-    private static byte[] readBytes(DataInputStream in) throws IOException {
-        return readBytes(in, 16 * 1024 * 1024);
-    }
-
-    private static byte[] readBytes(DataInputStream in, int limit) throws IOException {
-        int length = in.readInt();
-        if (length < 0 || length > limit || length > in.available()) throw new IOException("Invalid byte field length: " + length);
-        byte[] value = new byte[length];
-        in.readFully(value);
-        return value;
     }
 
     private static int boundedCount(int count) throws IOException {

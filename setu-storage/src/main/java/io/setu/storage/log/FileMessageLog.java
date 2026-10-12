@@ -153,18 +153,19 @@ public final class FileMessageLog implements MessageLog {
                 end++;
             }
             if (end == offset) break;
-            // File window + private payload arrays + encoded reply and record metadata.
-            admission.reserve(3L * bytesRead + 96L * (records.size() + end - offset) + 22);
-            ByteBuffer data = ByteBuffer.allocate(Math.toIntExact(windowEnd - positions[offset]));
+            // Immutable file windows + encoded reply and record metadata, reserved before reading.
+            admission.reserve(2L * bytesRead + 160L * (records.size() + end - offset) + 22);
             channel.position(positions[offset]);
-            if (!readFully(data)) throw new IOException("Unexpected end of log while reading offset " + offset);
-            data.flip();
+            MessageValue.Frame frame = MessageValue.Frame.readFrom(channel,
+                    Math.toIntExact(windowEnd - positions[offset]));
+            ByteBuffer data = frame.cursor();
             while (offset < end) {
                 int length = data.getInt();
                 long recordEnd = offset + 1 == recordCount ? endPosition : positions[offset + 1];
                 if (length != recordEnd - positions[offset] - Integer.BYTES)
                     throw new IOException("Record length changed while reading offset " + offset);
-                MessageValue value = MessageValue.readFrom(data, length);
+                MessageValue value = frame.valueAt(data.position(), length);
+                data.position(data.position() + length);
                 records.add(new LogRecord(offset++, value));
             }
         }

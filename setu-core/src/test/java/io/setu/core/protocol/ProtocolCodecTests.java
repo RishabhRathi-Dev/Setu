@@ -7,6 +7,93 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ProtocolCodecTests {
+    private static io.setu.storage.log.MessageValue.Frame owned(byte[] bytes) throws Exception {
+        return io.setu.storage.log.MessageValue.Frame.readFrom(
+                new java.io.DataInputStream(new java.io.ByteArrayInputStream(bytes)), bytes.length);
+    }
+
+    @Test
+    void ownedFrameReaderEnforcesLimitsAndDistinguishesEofFromTruncation() throws Exception {
+        try (var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(new byte[0]))) {
+            assertNull(FrameCodec.readOwnedFrame(input, 1024));
+        }
+        for (byte[] invalid : java.util.List.of(new byte[]{0}, new byte[]{0, 0, 0, 2, 1},
+                new byte[]{-1, -1, -1, -1}, new byte[]{0, 0, 4, 1})) {
+            try (var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(invalid))) {
+                org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+                        () -> FrameCodec.readOwnedFrame(input, 1024));
+            }
+        }
+        try (var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(new byte[4]))) {
+            assertEquals(0, FrameCodec.readOwnedFrame(input, 0).length());
+        }
+    }
+
+    @Test
+    void requestCursorRejectsTruncatedBatchAndPreservesDefensivePayloadOwnership() throws Exception {
+        byte[] encoded = ProtocolCodec.encodeProduceBatch(37, "orders", 0,
+                java.util.List.of(new byte[]{1, 2, 3}, new byte[0], new byte[]{4, 5}));
+        for (int length = 0; length < encoded.length; length++) {
+            byte[] truncated = java.util.Arrays.copyOf(encoded, length);
+            var failure = org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                    () -> ProtocolCodec.decodeRequest(truncated), "prefix length " + length);
+            assertEquals(ErrorCode.BAD_REQUEST, failure.errorCode());
+            if (length >= 12) assertEquals(37, failure.correlationId());
+        }
+        var decoded = ProtocolCodec.decodeRequest(encoded);
+        java.util.Arrays.fill(encoded, (byte) 99);
+        assertArrayEquals(new byte[]{1, 2, 3}, decoded.valueAt(0));
+        assertArrayEquals(new byte[]{4, 5}, decoded.valueAt(2));
+    }
+
+    @Test
+    void directBatchEncodingMatchesCanonicalEncodingAndOwnsItsBytes() throws Exception {
+        var values = java.util.List.of(new byte[]{1, 2, 3}, new byte[0], new byte[1024]);
+        var request = new BrokerRequest(43, Command.PRODUCE_BATCH, "orders", 2, -1, -1,
+                null, 0, null, null, values);
+        byte[] encoded = ProtocolCodec.encodeProduceBatch(43, "orders", 2, values);
+        assertArrayEquals(ProtocolCodec.encodeRequest(request), encoded);
+        values.getFirst()[0] = 99;
+        assertArrayEquals(new byte[]{1, 2, 3}, ProtocolCodec.decodeRequest(encoded).valueAt(0));
+        org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                () -> ProtocolCodec.encodeProduceBatch(1, "orders", 0, java.util.List.of()));
+        org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                () -> ProtocolCodec.encodeProduceBatch(1, "bad/topic", 0, values));
+        org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                () -> ProtocolCodec.encodeProduceBatch(1, "orders", -1, values));
+        org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                () -> ProtocolCodec.encodeProduceBatch(1, "orders", 0,
+                        java.util.Collections.nCopies(10_001, new byte[0])));
+        org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                () -> ProtocolCodec.encodeProduceBatch(1, "orders", 0,
+                        java.util.List.of(new byte[14 * 1024 * 1024 + 1])));
+    }
+
+    @Test
+    void ownedResponseSlicesAreImmutableAndCopyOnlyTheirValueRange() throws Exception {
+        byte[] encoded = ProtocolCodec.encodeResponse(new BrokerResponse(23, Command.FETCH, ErrorCode.NONE,
+                "", -1, java.util.List.of(new ProtocolRecord(7, new byte[]{1, 2, 3}),
+                        new ProtocolRecord(8, new byte[]{4, 5}), new ProtocolRecord(9, new byte[0])), java.util.Map.of()));
+        var frame = owned(encoded);
+        var decoded = ProtocolCodec.decodeResponse(frame);
+        org.junit.jupiter.api.Assertions.assertThrows(java.nio.ReadOnlyBufferException.class,
+                () -> frame.cursor().put(0, (byte) 99));
+        org.junit.jupiter.api.Assertions.assertFalse(frame.cursor().hasArray());
+        java.util.Arrays.fill(encoded, (byte) 99);
+        decoded.records().getFirst().value()[0] = 99;
+        assertArrayEquals(new byte[]{1, 2, 3}, decoded.records().getFirst().value());
+        var second = decoded.records().get(1).payload();
+        var buffer = java.nio.ByteBuffer.allocate(2);
+        second.copyTo(buffer);
+        assertArrayEquals(new byte[]{4, 5}, buffer.array());
+        var output = new java.io.ByteArrayOutputStream();
+        second.writeTo(new java.io.DataOutputStream(output));
+        assertArrayEquals(buffer.array(), output.toByteArray());
+        assertEquals(0, decoded.records().getLast().valueLength());
+        assertArrayEquals(ProtocolCodec.encodeResponse(decoded),
+                ProtocolCodec.encodeResponse(ProtocolCodec.decodeResponse(frame)));
+    }
+
     @Test
     void responseDecoderRejectsEveryTruncatedPrefixAndTrailingData() throws Exception {
         byte[] encoded = ProtocolCodec.encodeResponse(new BrokerResponse(23, Command.FETCH, ErrorCode.NONE,
@@ -17,9 +104,15 @@ class ProtocolCodecTests {
                     () -> ProtocolCodec.decodeResponse(truncated), "prefix length " + length);
             assertEquals(ErrorCode.BAD_REQUEST, failure.errorCode());
             if (length >= 12) assertEquals(23, failure.correlationId());
+            var ownedFailure = org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                    () -> ProtocolCodec.decodeResponse(owned(truncated)), "owned prefix length " + length);
+            assertEquals(failure.errorCode(), ownedFailure.errorCode());
+            assertEquals(failure.correlationId(), ownedFailure.correlationId());
         }
         org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
                 () -> ProtocolCodec.decodeResponse(java.util.Arrays.copyOf(encoded, encoded.length + 1)));
+        org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                () -> ProtocolCodec.decodeResponse(owned(java.util.Arrays.copyOf(encoded, encoded.length + 1))));
     }
 
     @Test
@@ -50,6 +143,10 @@ class ProtocolCodecTests {
                 () -> ProtocolCodec.decodeResponse(payload));
         assertEquals(ErrorCode.BAD_REQUEST, failure.errorCode());
         assertEquals(23, failure.correlationId());
+        var ownedFailure = org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                () -> ProtocolCodec.decodeResponse(owned(payload)));
+        assertEquals(failure.errorCode(), ownedFailure.errorCode());
+        assertEquals(failure.correlationId(), ownedFailure.correlationId());
     }
 
     @Test
@@ -57,9 +154,11 @@ class ProtocolCodecTests {
         var metadata = new BrokerResponse(11, Command.METADATA, ErrorCode.NONE, "caf\u00e9", -1,
                 java.util.List.of(), java.util.Map.of("orders", 4, "\u96ea", 2));
         assertEquals(metadata, ProtocolCodec.decodeResponse(ProtocolCodec.encodeResponse(metadata)));
+        assertEquals(metadata, ProtocolCodec.decodeResponse(owned(ProtocolCodec.encodeResponse(metadata))));
         for (Command command : Command.values()) {
             var error = BrokerResponse.error(12, command, ErrorCode.QUOTA_EXCEEDED, "caf\u00e9");
             assertEquals(error, ProtocolCodec.decodeResponse(ProtocolCodec.encodeResponse(error)));
+            assertEquals(error, ProtocolCodec.decodeResponse(owned(ProtocolCodec.encodeResponse(error))));
             if (command != Command.FETCH && command != Command.METADATA
                     && command != Command.PRODUCE && command != Command.PRODUCE_BATCH) {
                 var ok = BrokerResponse.ok(13, command);

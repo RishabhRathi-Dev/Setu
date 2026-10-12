@@ -118,7 +118,7 @@ public final class SegmentedFileMessageLog implements MessageLog {
             long localStart = Math.max(0, start - segment.baseOffset);
             int remainingBytes = (int) Math.max(0, maxBytes - bytesRead);
             if (remainingBytes == 0) break;
-            long priorBytes = 3L * bytesRead + 96L * records.size();
+            long priorBytes = 2L * bytesRead + 160L * records.size();
             List<LogRecord> part = segment.log.read(localStart, remainingBytes,
                     bytes -> admission.reserve(priorBytes + bytes));
             if (part.isEmpty()) break;

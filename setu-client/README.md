@@ -34,6 +34,8 @@ Each call writes one length-prefixed request body, reads one response body, deco
 
 `produceBatch(topic, partition, values)` sends multiple records in one request and returns the first assigned offset. Records receive contiguous offsets in list order. Batches must be non-empty and fit within the protocol frame limit. File-backed storage forces each touched segment once before returning success.
 
+The batch convenience method copies caller payloads directly into the final wire frame. Responses are read into a private frame; fetched records share immutable slices of it. `value()` still returns a defensive copy. Retaining one record also retains its complete response frame, so callers keeping a small subset for a long time can copy those values into separate records and release the original response.
+
 Calls on one client object are serialized. There is no pipelining or concurrent in-flight request support. The synchronous client is suitable for protocol integration and simple use, not yet a high-throughput producer/consumer API. Group-aware `fetch` identifies the member, and `acknowledge` sends the next offset after records have been processed; in-memory storage uses these acknowledgements to reclaim records safely. Send `HEARTBEAT` while the member is active; the broker removes members that exceed its acknowledgement or inactivity deadline.
 
 ## Not implemented

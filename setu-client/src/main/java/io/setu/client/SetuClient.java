@@ -7,6 +7,7 @@ import io.setu.core.protocol.FrameCodec;
 import io.setu.core.protocol.ProtocolCodec;
 import io.setu.security.tls.TlsConfiguration;
 import io.setu.security.tls.TlsContextFactory;
+import io.setu.storage.log.MessageValue;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
@@ -109,32 +110,36 @@ public final class SetuClient implements AutoCloseable {
     }
 
     public synchronized BrokerResponse request(BrokerRequest request) throws IOException {
+        return exchange(request.command(), request.correlationId(), request.topic(), request.partition(),
+                request.offset(), ProtocolCodec.encodeRequest(request));
+    }
+
+    private synchronized BrokerResponse exchange(Command command, int correlation, String topic, int partition,
+                                                  long offset, byte[] requestBytes) throws IOException {
         long started = LOG.isDebugEnabled() ? System.nanoTime() : 0;
         try {
-            byte[] requestBytes = ProtocolCodec.encodeRequest(request);
             if (LOG.isDebugEnabled()) LOG.debug("Sending command={} correlation={} peer={} topic={} partition={} offset={} frame_bytes={}",
-                    request.command(), request.correlationId(), socket.getRemoteSocketAddress(),
-                    request.topic(), request.partition(), request.offset(), requestBytes.length);
+                    command, correlation, socket.getRemoteSocketAddress(), topic, partition, offset, requestBytes.length);
             FrameCodec.writeFrame(output, requestBytes, maxFrameSize);
-            byte[] responseBytes = FrameCodec.readFrame(input, maxFrameSize);
+            MessageValue.Frame responseBytes = FrameCodec.readOwnedFrame(input, maxFrameSize);
             if (responseBytes == null) throw new EOFException("Broker closed the connection before replying");
             BrokerResponse response = ProtocolCodec.decodeResponse(responseBytes);
-            if (response.correlationId() != request.correlationId())
+            if (response.correlationId() != correlation)
                 throw new IOException("Response correlation id does not match request");
-            if (response.command() != request.command())
+            if (response.command() != command)
                 throw new IOException("Response command does not match request");
             if (LOG.isDebugEnabled()) LOG.debug("Received command={} correlation={} error={} offset={} records={} frame_bytes={} elapsed_us={}",
                     response.command(), response.correlationId(), response.errorCode(), response.offset(),
-                    response.records().size(), responseBytes.length, (System.nanoTime() - started) / 1000);
+                    response.records().size(), responseBytes.length(), (System.nanoTime() - started) / 1000);
             if (response.errorCode() != io.setu.core.protocol.ErrorCode.NONE)
                 LOG.warn("Broker rejected command={} correlation={} peer={} topic={} partition={} error={} reason={}",
-                        request.command(), request.correlationId(), socket.getRemoteSocketAddress(),
-                        request.topic(), request.partition(), response.errorCode(), response.errorMessage());
+                        command, correlation, socket.getRemoteSocketAddress(),
+                        topic, partition, response.errorCode(), response.errorMessage());
             return response;
         } catch (IOException | RuntimeException failure) {
             LOG.error("Client request failed command={} correlation={} peer={} topic={} partition={} offset={}",
-                    request.command(), request.correlationId(), socket.getRemoteSocketAddress(),
-                    request.topic(), request.partition(), request.offset(), failure);
+                    command, correlation, socket.getRemoteSocketAddress(),
+                    topic, partition, offset, failure);
             throw failure;
         }
     }
@@ -150,9 +155,10 @@ public final class SetuClient implements AutoCloseable {
     }
 
     /** Writes a contiguous batch; the response offset is the first assigned offset. */
-    public BrokerResponse produceBatch(String topic, int partition, List<byte[]> values) throws IOException {
-        return request(new BrokerRequest(nextId(), Command.PRODUCE_BATCH, topic, partition, -1,
-                -1, null, 0, null, null, values));
+    public synchronized BrokerResponse produceBatch(String topic, int partition, List<byte[]> values) throws IOException {
+        int correlation = nextId();
+        return exchange(Command.PRODUCE_BATCH, correlation, topic, partition, -1,
+                ProtocolCodec.encodeProduceBatch(correlation, topic, partition, values));
     }
 
     public BrokerResponse fetch(String topic, int partition, long offset, int maxBytes) throws IOException {

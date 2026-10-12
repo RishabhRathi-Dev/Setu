@@ -120,13 +120,8 @@ public final class DefaultBroker implements Broker {
             try {
                 expireConsumers(System.nanoTime());
                 if (storageMode == StorageMode.IN_MEMORY && memoryRetentionNanos > 0 && !closed)
-                    for (TopicState topic : topics.values()) for (int i = 0; i < topic.partitions.size(); i++) {
-                        PartitionProgress progress = topic.progress.get(i);
-                        progress.lock.lock();
-                        try { ((io.setu.storage.log.InMemoryMessageLog) topic.partitions.get(i))
-                                .discardExpired(System.nanoTime(), memoryRetentionNanos); }
-                        finally { progress.lock.unlock(); }
-                    }
+                    for (TopicState topic : topics.values()) for (MessageLog log : topic.partitions)
+                        ((io.setu.storage.log.InMemoryMessageLog) log).discardExpired(System.nanoTime(), memoryRetentionNanos);
             } catch (Exception e) { if (!closed) LOG.warn("Consumer maintenance failed", e); }
         }, 10, 10, java.util.concurrent.TimeUnit.MILLISECONDS);
         LOG.info("Broker opened storage={} data_directory={} recovered_topics={} max_record_bytes={} segment_bytes={} memory_log_budget_bytes={} ack_timeout_ms={} inactivity_timeout_ms={}",
@@ -194,7 +189,7 @@ public final class DefaultBroker implements Broker {
         catch (LogCapacityExceededException exhausted) {
             throw new BrokerException(ErrorCode.QUOTA_EXCEEDED, exhausted.getMessage(), exhausted);
         }
-        if (storageMode == StorageMode.IN_MEMORY) reclaimConsumed(request.topic(), request.partition());
+        if (storageMode == StorageMode.IN_MEMORY) reclaimAfterAppend(request.topic(), request.partition());
         signalData(request.topic(), request.partition());
         return new BrokerResponse(request.correlationId(), request.command(), ErrorCode.NONE, "", offset, List.of(), Map.of());
     }
@@ -212,7 +207,7 @@ public final class DefaultBroker implements Broker {
         catch (LogCapacityExceededException exhausted) {
             throw new BrokerException(ErrorCode.QUOTA_EXCEEDED, exhausted.getMessage(), exhausted);
         }
-        if (storageMode == StorageMode.IN_MEMORY) reclaimConsumed(request.topic(), request.partition());
+        if (storageMode == StorageMode.IN_MEMORY) reclaimAfterAppend(request.topic(), request.partition());
         signalData(request.topic(), request.partition());
         return new BrokerResponse(request.correlationId(), request.command(), ErrorCode.NONE, "", firstOffset,
                 List.of(), Map.of());
@@ -233,25 +228,47 @@ public final class DefaultBroker implements Broker {
                 startOffset = Math.max(startOffset, consumer.nextOffsets.getOrDefault(request.partition(), log.nextOffset()));
         }
         PartitionProgress progress = topics.get(request.topic()).progress.get(request.partition());
-        progress.lock.lock();
+        if (request.waitMillis() > 0 && request.maxBytes() > 0 && startOffset >= log.nextOffset()) {
+            progress.lock.lock();
+            try {
+                // Register before rechecking the published offset. Producers may skip
+                // signalling only when there are no registered long polls.
+                progress.waiters++;
+                long remaining = TimeUnit.MILLISECONDS.toNanos(request.waitMillis());
+                while (!closed && startOffset >= log.nextOffset() && remaining > 0) {
+                    if (consumer != null) {
+                        if (consumers.get(new ConsumerKey(request.groupId(), request.memberId())) != consumer) break;
+                        consumer.touch(System.nanoTime());
+                    }
+                    try { remaining = progress.appended.awaitNanos(remaining); }
+                    catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("Fetch interrupted", e); }
+                }
+            } finally { progress.waiters--; progress.lock.unlock(); }
+        }
+        ensureOpen();
+        if (consumer != null && consumers.get(new ConsumerKey(request.groupId(), request.memberId())) != consumer)
+            throw new BrokerException(ErrorCode.BAD_REQUEST, "Slow consumer was evicted; rejoin the group");
+        if (storageMode == StorageMode.IN_MEMORY && memoryRetentionNanos > 0 && startOffset < log.firstOffset())
+            throw new BrokerException(ErrorCode.OFFSET_OUT_OF_RANGE,
+                    "Message retention expired; resume at offset " + log.firstOffset());
+        // Memory fetches use immutable snapshots outside the coordination lock.
+        // File indexes/I/O still serialize: keep their existing fetch scheduling
+        // boundary so group writers cannot gain throughput by starving consumers.
         List<ProtocolRecord> records;
+        if (storageMode == StorageMode.FILE) progress.lock.lock();
         try {
-            long remaining = TimeUnit.MILLISECONDS.toNanos(request.waitMillis());
-            while (!closed && request.maxBytes() > 0 && startOffset >= log.nextOffset() && remaining > 0) {
-                if (consumer != null) consumer.touch(System.nanoTime());
-                try { remaining = progress.appended.awaitNanos(remaining); }
-                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("Fetch interrupted", e); }
-            }
-            ensureOpen();
-            if (consumer != null && consumers.get(new ConsumerKey(request.groupId(), request.memberId())) != consumer)
-                throw new BrokerException(ErrorCode.BAD_REQUEST, "Slow consumer was evicted; rejoin the group");
-            if (storageMode == StorageMode.IN_MEMORY && memoryRetentionNanos > 0 && startOffset < log.firstOffset())
-                throw new BrokerException(ErrorCode.OFFSET_OUT_OF_RANGE,
-                        "Message retention expired; resume at offset " + log.firstOffset());
-            // Reserve fetch materialization and encoding before reading payloads from file storage.
             records = log.read(startOffset, request.maxBytes(), io.setu.core.protocol.ResponseBuffers::reserve).stream()
                 .map(record -> new ProtocolRecord(record.offset(), record.payload())).toList();
-        } finally { progress.lock.unlock(); }
+        } finally { if (storageMode == StorageMode.FILE) progress.lock.unlock(); }
+        if (storageMode == StorageMode.IN_MEMORY && memoryRetentionNanos > 0) {
+            // Expiry may win between the boundary check and snapshot capture.
+            // Preserve a snapshot that starts at the requested offset, but report
+            // a gap if read had to clamp its start to a newer retained boundary.
+            long retained = records.isEmpty() ? log.firstOffset() : records.getFirst().offset();
+            if (startOffset < retained)
+                throw new BrokerException(ErrorCode.OFFSET_OUT_OF_RANGE,
+                        "Message retention expired; resume at offset " + retained);
+        }
         if (consumer != null && !records.isEmpty())
             consumer.recordFetch(request.partition(), records.get(records.size() - 1).offset() + 1,
                     System.nanoTime());
@@ -380,6 +397,13 @@ public final class DefaultBroker implements Broker {
         finally { progress.lock.unlock(); }
     }
 
+    private void reclaimAfterAppend(String topic, int partition) throws IOException {
+        PartitionProgress progress = topics.get(topic).progress.get(partition);
+        // With members present, only acknowledgement/removal can advance the
+        // reclamation boundary; those paths already reclaim under the metadata lock.
+        if (!progress.hasMembers) reclaimConsumed(topic, partition);
+    }
+
     private void updateProgress(String topic, int partition, ConsumerKey key, long offset) {
         PartitionProgress progress = topics.get(topic).progress.get(partition);
         progress.lock.lock();
@@ -387,6 +411,7 @@ public final class DefaultBroker implements Broker {
             Long previous = progress.members.put(key, offset);
             if (previous != null) progress.removeOffset(previous);
             progress.offsets.merge(offset, 1, Integer::sum);
+            progress.hasMembers = true;
             reclaimConsumed(topic, partition);
         } catch (IOException e) { throw new IllegalStateException(e); }
         finally { progress.lock.unlock(); }
@@ -401,6 +426,7 @@ public final class DefaultBroker implements Broker {
             try {
                 Long previous = progress.members.remove(key);
                 if (previous != null) progress.removeOffset(previous);
+                progress.hasMembers = !progress.members.isEmpty();
                 reclaimConsumed(consumer.topic, i);
                 progress.appended.signalAll();
             } catch (IOException e) { throw new IllegalStateException(e); }
@@ -410,6 +436,7 @@ public final class DefaultBroker implements Broker {
 
     private void signalData(String topic, int partition) {
         PartitionProgress progress = topics.get(topic).progress.get(partition);
+        if (storageMode == StorageMode.IN_MEMORY && progress.waiters == 0) return;
         progress.lock.lock();
         try { progress.appended.signalAll(); }
         finally { progress.lock.unlock(); }
@@ -517,6 +544,8 @@ public final class DefaultBroker implements Broker {
         }
     }
     private static final class PartitionProgress {
+        volatile int waiters;
+        volatile boolean hasMembers;
         final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
         final java.util.concurrent.locks.Condition appended = lock.newCondition();
         final java.util.TreeMap<Long, Integer> offsets = new java.util.TreeMap<>();
