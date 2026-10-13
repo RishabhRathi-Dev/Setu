@@ -2,112 +2,16 @@
 
 [CI workflow](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:start -->
-[![In-Memory Capacity from latest benchmark](https://img.shields.io/badge/2%2C048%C3%972%2C048%20%C2%B7%20OS%20limit%20%C2%B7%20peak%20CPU%20100%25%20%C2%B7%201252%20MB%20%C2%B7%20p99%202.1s-red?label=in-memory%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![In-Memory Peak Rates from latest benchmark](https://img.shields.io/badge/433.95K%20prod%2Fs%20%C2%B7%20872.32K%20consumed%2Fs-blue?label=in-memory%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![In-Memory Jfr from latest benchmark](https://img.shields.io/badge/stage%2012%20%C2%B7%201.31%20GiB%2Fs%20alloc%20%C2%B7%201.8ms%20GC-blue?label=in-memory%20JFR&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File Capacity from latest benchmark](https://img.shields.io/badge/256%C3%97256%20%C2%B7%20broker%2Fclient%20limit%20%C2%B7%20peak%20CPU%20100%25%20%C2%B7%20750%20MB%20%C2%B7%20p99%201.1s-yellow?label=file%20capacity&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File Peak Rates from latest benchmark](https://img.shields.io/badge/205.50K%20prod%2Fs%20%C2%B7%20178.53K%20consumed%2Fs-blue?label=file%20peak%20rates&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File Jfr from latest benchmark](https://img.shields.io/badge/stage%209%20%C2%B7%201.92%20GiB%2Fs%20alloc%20%C2%B7%200.0ms%20GC-blue?label=file%20JFR&cacheSeconds=300)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![In-memory sustained target](https://img.shields.io/badge/in--memory-500K%2Fs%20target%20%C2%B7%20sustained%20unverified-lightgrey)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![File sustained target](https://img.shields.io/badge/file-250K%2Fs%20target%20%C2%B7%20sustained%20unverified-lightgrey)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:end -->
 
-Benchmark badges show terminal capacity, peak CPU, heap, p99 latency, and peak producer/consumer rates for each storage mode. Their metric values are embedded directly in Shields URLs, so they render without access to repository-hosted JSON. For private repositories, the workflow status image is replaced by a link because GitHub workflow badges are not externally accessible; metric badges continue to update from successful runs on the default branch. The JSON snapshots are committed for traceability.
+Badges show qualified sustained throughput against a **500K records/s in-memory** or **250K records/s file** target at 1 KiB per record. A full run needs three independent repetitions, at least 30 measured seconds per stage, at least 95% unique consumption, zero errors/timeouts, measured HDR latency, stable heap within 1 GiB, and average CPU at most 85%. Short smoke runs and historical exhaustion peaks cannot update these badges. File acknowledgments follow a force of every touched segment in each group commit.
 
-## Latest capacity benchmark details
-
-The table is generated from every stage of the latest successful default-branch capacity run. CPU is process CPU load; p99 is the approximate request-latency histogram reported by the load worker.
+## Latest sustained benchmark details
 
 <!-- benchmark-capacity-details:start -->
-### Target progress
-
-| Storage mode | Target produce rate | Peak observed | Payload bytes | Peak payload MiB/s | Target progress |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| In-memory | 10,000,000 records/s | 433.95K records/s | 1024 | 423.78 | 4.3% |
-| File | 1,000,000 records/s | 205.50K records/s | 1024 | 200.69 | 20.6% |
-
-### Progressive capacity stages
-
-| Mode | Stage | Producers | Consumers | Duration | Produced | Produce/s | Consumed | Consume/s | Avg CPU | Peak CPU | Heap | p99 request | Stage result |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| In-memory | 1 | 1 | 1 | 2.01s | 347,648 | 173.30K | 229,632 | 114.47K | 96.4% | 100.0% | 1240.0 MB | 33.554 ms | Ramping |
-| In-memory | 2 | 2 | 2 | 2.02s | 400,640 | 198.49K | 219,904 | 108.95K | 98.6% | 100.0% | 934.0 MB | 33.554 ms | Ramping |
-| In-memory | 3 | 4 | 4 | 2.03s | 505,856 | 249.75K | 648,704 | 320.27K | 96.1% | 100.0% | 902.0 MB | 33.554 ms | Ramping |
-| In-memory | 4 | 8 | 8 | 2.02s | 411,904 | 204.21K | 712,192 | 353.09K | 97.0% | 100.0% | 964.0 MB | 33.554 ms | Ramping |
-| In-memory | 5 | 16 | 16 | 2.03s | 394,752 | 194.89K | 978,432 | 483.06K | 97.9% | 100.0% | 1550.0 MB | 67.109 ms | Ramping |
-| In-memory | 6 | 32 | 32 | 2.03s | 351,232 | 172.98K | 1,166,848 | 574.68K | 97.6% | 100.0% | 636.0 MB | 67.109 ms | Ramping |
-| In-memory | 7 | 64 | 64 | 2.02s | 359,424 | 177.83K | 1,055,744 | 522.36K | 97.8% | 100.0% | 1472.0 MB | 134.218 ms | Ramping |
-| In-memory | 8 | 128 | 128 | 1.01s | 368,128 | 366.16K | 485,632 | 483.03K | 98.3% | 100.0% | 966.0 MB | 268.435 ms | cpu hold |
-| In-memory | 9 | 256 | 256 | 1.01s | 374,528 | 371.85K | 399,616 | 396.76K | 99.3% | 100.0% | 2774.0 MB | 268.435 ms | cpu hold |
-| In-memory | 10 | 512 | 512 | 1.01s | 407,808 | 405.78K | 281,856 | 280.45K | 97.8% | 100.0% | 1586.0 MB | 536.871 ms | cpu hold |
-| In-memory | 11 | 1,024 | 1,024 | 1.02s | 440,832 | 433.95K | 102,656 | 101.05K | 99.2% | 100.0% | 1586.0 MB | 1073.742 ms | cpu hold |
-| In-memory | 12 | 2,048 | 2,048 | 1.01s | 350,464 | 345.88K | 0 | 0 | 98.7% | 100.0% | 1744.0 MB | 33.554 ms | cpu hold |
-| File | 1 | 1 | 1 | 2.01s | 162,816 | 81.04K | 162,816 | 81.04K | 97.2% | 100.0% | 642.0 MB | 33.554 ms | Ramping |
-| File | 2 | 2 | 2 | 2.01s | 193,024 | 96.05K | 228,352 | 113.63K | 97.9% | 100.0% | 2232.0 MB | 33.554 ms | Ramping |
-| File | 3 | 4 | 4 | 2.01s | 413,440 | 205.50K | 359,168 | 178.53K | 92.3% | 100.0% | 798.0 MB | 33.554 ms | Ramping |
-| File | 4 | 8 | 8 | 2.01s | 404,224 | 201.30K | 332,288 | 165.47K | 62.1% | 69.9% | 1486.0 MB | 67.109 ms | Ramping |
-| File | 5 | 16 | 16 | 2.01s | 408,576 | 203.18K | 297,984 | 148.19K | 77.4% | 97.6% | 1796.0 MB | 134.218 ms | Ramping |
-| File | 6 | 32 | 32 | 2.01s | 406,784 | 202.76K | 183,552 | 91.49K | 56.5% | 79.9% | 1786.0 MB | 536.871 ms | Ramping |
-| File | 7 | 64 | 64 | 2.01s | 411,136 | 204.82K | 169,216 | 84.30K | 52.9% | 84.9% | 1888.0 MB | 1073.742 ms | Ramping |
-| File | 8 | 128 | 128 | 1.01s | 202,752 | 201.54K | 14,592 | 14.51K | 97.6% | 100.0% | 1128.0 MB | 536.871 ms | cpu hold |
-| File | 9 | 256 | 256 | 0.76s | 150,016 | 198.07K | 0 | 0 | 94.5% | 100.0% | 750.0 MB | 1073.742 ms | broker/client limit |
-
-### CPU saturation hold
-
-| Mode | Stage | Requested hold | Observed hold | Produce/s | Consume/s | Avg CPU | Outcome |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| File | 8 | 10.00s | 10.09s | 200.59K | 55.79K | 86.2% | Completed |
-| In-memory | 8 | 10.00s | 10.09s | 51 | 840.90K | 97.6% | Completed |
-| In-memory | 9 | 10.00s | 10.06s | 0 | 872.32K | 97.3% | Completed |
-| In-memory | 10 | 10.00s | 10.07s | 0 | 871.38K | 97.6% | Completed |
-| In-memory | 11 | 10.00s | 10.07s | 0 | 803.38K | 97.2% | Completed |
-| In-memory | 12 | 10.00s | 10.09s | 0 | 551.60K | 97.4% | Completed |
-
-### JFR diagnostics
-
-Allocation rates are estimates from JFR allocation samples within each measured stage; GC pause time is the overlap of recorded pauses with that stage. Warmup and stage cleanup are excluded. CPU samples cover broker and load clients together. Backpressure waits include producer pacing and memory-budget retries.
-
-| Mode | Stage | Estimated allocation | GC pause | CPU samples | Hottest sampled method | Backpressure waits |
-| --- | ---: | ---: | ---: | ---: | --- | ---: |
-| File | 1 | 572.6 MiB/s | 0.12 ms | 54 | `io.setu.storage.log.GroupCommitMessageLog.writeLoop` | 0 |
-| File | 2 | 818.2 MiB/s | 0.00 ms | 50 | `io.setu.server.connection.FramedConnectionHandler.handle` | 0 |
-| File | 3 | 1439.7 MiB/s | 0.07 ms | 61 | `io.setu.server.connection.FramedConnectionHandler.handle` | 0 |
-| File | 4 | 1384.9 MiB/s | 0.03 ms | 47 | `io.setu.storage.log.FileMessageLog.appendValues` | 0 |
-| File | 5 | 1337.7 MiB/s | 0.10 ms | 46 | `io.setu.storage.log.FileMessageLog.appendValues` | 0 |
-| File | 6 | 1069.6 MiB/s | 0.04 ms | 33 | `io.setu.storage.log.FileMessageLog.appendValues` | 0 |
-| File | 7 | 1165.8 MiB/s | 0.03 ms | 27 | `io.setu.storage.log.FileMessageLog.appendValues` | 0 |
-| File | 8 | 1838.0 MiB/s | 0.43 ms | 325 | `io.setu.storage.log.FileMessageLog.appendValues` | 11,494 |
-| File | 9 | 1966.4 MiB/s | 0.04 ms | 31 | `io.setu.core.protocol.ProtocolCodec.readValue` | 1,058 |
-| In-memory | 1 | 809.6 MiB/s | 0.06 ms | 63 | `io.setu.core.protocol.FrameCodec.readLength` | 0 |
-| In-memory | 2 | 897.3 MiB/s | 0.04 ms | 57 | `io.setu.core.protocol.ProtocolCodec.readValue` | 0 |
-| In-memory | 3 | 1500.1 MiB/s | 0.12 ms | 55 | `io.setu.server.connection.FramedConnectionHandler.handle` | 1,291 |
-| In-memory | 4 | 1424.4 MiB/s | 0.24 ms | 80 | `io.setu.server.connection.FramedConnectionHandler.handle` | 1,140 |
-| In-memory | 5 | 1670.1 MiB/s | 0.27 ms | 59 | `io.setu.core.protocol.ProtocolCodec.encodeFetchResponse` | 1,162 |
-| In-memory | 6 | 1832.2 MiB/s | 0.26 ms | 79 | `io.setu.server.connection.FramedConnectionHandler.handle` | 60 |
-| In-memory | 7 | 1781.5 MiB/s | 0.21 ms | 65 | `io.setu.server.connection.FramedConnectionHandler.handle` | 64 |
-| In-memory | 8 | 1924.6 MiB/s | 0.60 ms | 386 | `io.setu.server.connection.FramedConnectionHandler.handle` | 128 |
-| In-memory | 9 | 2010.9 MiB/s | 0.63 ms | 450 | `io.setu.core.protocol.ProtocolCodec.encodeFetchResponse` | 776 |
-| In-memory | 10 | 1988.9 MiB/s | 0.72 ms | 421 | `io.setu.core.broker.DefaultBroker$ConsumerState.expired` | 511 |
-| In-memory | 11 | 1839.1 MiB/s | 1.03 ms | 386 | `io.setu.server.connection.FramedConnectionHandler.handle` | 1,023 |
-| In-memory | 12 | 1345.4 MiB/s | 1.82 ms | 421 | `io.setu.server.connection.FramedConnectionHandler.handle` | 35,597 |
-
-JFR recordings and raw captures are retained in the CI benchmark-diagnostics artifact. A resource crash may leave only the last completed stage checkpoint.
-
-### Measured profile
-
-- File: 1024-byte records, 256-record batches, 2000 ms stages, minimum 8 stages, memory-log budget 751828992 bytes, JFR true, CPU stop false, collector ZGC, string deduplication true.
-- In-memory: 1024-byte records, 256-record batches, 2000 ms stages, minimum 8 stages, memory-log budget 751828992 bytes, JFR true, CPU stop false, collector ZGC, string deduplication true.
-
-### Capacity badge color legend
-
-| Color | Meaning |
-| --- | --- |
-| 🔵 Blue | Peak producer/consumer rates; throughput values are observations, not pass/fail thresholds. |
-| 🟠 Orange | Capacity ramp stopped after sustained CPU saturation. |
-| 🔴 Red | Capacity ramp reached JVM heap exhaustion or an operating-system resource limit. |
-| 🟡 Yellow | Capacity ramp stopped at a broker/client limit or client stall. |
-
-File capacity stop: **broker/client limit**.
-
-In-memory capacity stop: **OS limit**.
+No qualifying full-profile result has been published yet. Previous capacity captures measured short bursts and consumer fanout; they do not establish sustained throughput under the new criteria. Historical JSON snapshots remain in `benchmark-badges/`.
 <!-- benchmark-capacity-details:end -->
 
 **Setu** is a distributed message broker built from scratch in **Java 26**, inspired by systems such as Kafka.
@@ -153,7 +57,7 @@ Setu aims to provide:
 * Observability and metrics
 * Performance and failure benchmarking
 
-The current throughput objectives are **10 million records/s in memory** and **1 million records/s with file storage**. The standard benchmark and AOT-training payload is now **1,024 bytes**; the progressive profile keeps 256-record batches. These goals are observations to work toward, not pass/fail thresholds, and depend on the host. The generated measured-profile section records the payload size used by each published run; older 512-byte results are not directly comparable. A local batching experiment exceeded the file-ingestion target with 4,096-record batches over a 12-second stage, while consumers accumulated backlog; the memory target remains open.
+The single-node throughput targets are **500,000 records/s in memory** (~488 MiB/s at 1 KiB) and **250,000 records/s with file storage** (~244 MiB/s), with stretch targets of 1M/s and 500K/s respectively. The full CI profile gates 1 KiB runs at 200K/s in memory and 150K/s with file storage, subject to the same sustainability criteria. Broker and load clients share the host. Performance is reported per allocated CPU core and with hardware, durability, backlog and resource usage; targets are not claims of measured performance. See [benchmark profiles and qualification](setu-benchmark/README.md).
 
 The project is primarily concerned with the trade-offs between:
 
@@ -1447,7 +1351,7 @@ setu/
 | `setu-security`  | Current: TLS configuration/authentication, ACL interfaces and in-memory authorizer, quotas |
 | `setu-server`    | Current: TCP/TLS connections, framing, request authorization, dispatch, plaintext selector transport |
 | `setu-client`    | Current: synchronous protocol v1 socket client. Target: producer/consumer APIs |
-| `setu-benchmark` | Real-TCP throughput, recovery, expiry, malformed-traffic, concurrency, and progressive capacity exhaustion tests in `src/test/java/io/setu/benchmark/chaos`; doubles producer and consumer counts until CPU saturation, JVM OOM, or a host resource limit |
+| `setu-benchmark` | Real-TCP sustained throughput, fixed-load HDR latency, recovery and chaos tests; concurrency is capped near twice the CPU budget. The legacy exhaustion ramp remains an explicit diagnostic. |
 | `setu-integration-tests` | Functional cross-module TCP and mTLS requirement tests for both storage modes; no saturation or chaos workloads |
 
 # 31. Current Implementation Snapshot
@@ -1471,7 +1375,7 @@ The later numbered sections remain design goals unless the snapshot above or a m
 
 Functional cross-module TCP and mTLS scenarios live in `setu-integration-tests`; the tests create temporary certificates with the JDK `keytool`. For local development certificates, run `bash ./scripts/generate-certs.sh` on macOS/Linux or `./scripts/generate-certs.ps1` in PowerShell (optional output directory; `SETU_CERT_PASSWORD` overrides the development password). Generated material is ignored under `certs/generated/` and must not be used in production. Chaos and capacity workloads are kept under `setu-benchmark/src/test/java/io/setu/benchmark/chaos`.
 
-CI runs three ordered stages: production unit tests, all integration test classes, then all benchmark chaos tests. The bounded TCP chaos workload measures 20,000 records with sixteen producers and sixteen consumers in each storage mode; producers send 256 records per batch. The broker-limits workload also drives sixteen producers and sixteen consumers through 16,000 records. These cases exercise batch offset assignment, acknowledgement expiry, fetch paging, file-segment rotation, and broker restart. Other chaos cases cover record-size limits, truncated TCP frames, concurrent consumer progress, and forced broker recovery. Bounded workload deadlines are five minutes, while the progressive capacity test runs last in its own Maven invocation. It launches one heap-capped child JVM per storage mode, doubles producer and consumer counts at each stage, and reports records per second, approximate p99 request latency, process CPU, and heap until sustained CPU saturation, JVM OOM, or an OS resource limit. Its output is diagnostic and does not apply machine-sensitive throughput thresholds. The CI badges above track the full ordered workflow, including the capacity stage; the observed-capacity badge summarizes the latest local run.
+CI runs production unit tests, integration tests, then bounded chaos and sustained smoke benchmarks. A manually dispatched full benchmark adds eight jobs covering two storage modes and four payloads, with three independent repetitions each. It stops the concurrency ramp at the first failed sustainability stage and measures latency at 50%, 80% and 100% of the highest qualifying rate. Full 1 KiB jobs enforce throughput gates; successful full default-branch runs publish sustained badges and tables. The legacy exhaustion ramp is available via `--kind capacity` for explicit diagnostics and does not feed sustained badges.
 
 Dependency direction:
 
@@ -1602,8 +1506,6 @@ Setu is successful when it can demonstrate:
 
 # 36. Latest Build Progress
 
-The generated CI badges and capacity tables at the top of this README are the source of published performance results. Successful default-branch runs refresh them from the default progressive capture; local measurements and the separate large-batch experiment do not replace them.
+The generated CI badges and sustained tables at the top of this README are the source of published performance results. The new full profile has not been certified by the short local smoke checks. It uses one topic per producer/consumer pair so consumed records represent unique delivery, warmup at each concurrency, measured HDR percentiles, and bounded resource-aware concurrency. Historical burst and fanout results remain diagnostic only.
 
-The CI profile enables JFR for both storage modes, requires stages 1–8 (through 128 producers and 128 consumers), and continues through CPU saturation until a real runtime boundary. Its memory backlog budget and stage cleanup prevent earlier stages from exhausting the heap before connection scaling is measured. Per-stage allocation estimates, GC pauses, sampled hot methods, and backpressure waits are published with the rates; raw recordings remain in the benchmark-diagnostics artifact. The workflow validates the stage floor and JFR coverage before publishing any badge update.
-
-Memory-log operations now use immutable chunk/index snapshots published with CAS; file group-commit admission and queue publication also use CAS. Memory fetches materialize outside the partition coordination lock, and memory producers skip wakeup locking when no long poll is registered. Membership bookkeeping, long-poll waits, file-fetch scheduling, and file I/O still require coordination. These changes are steps toward the throughput objectives, not evidence that the 10M/1M records/s targets have been reached. Local comparison results are recorded in [setu-benchmark/lock-free-results.md](setu-benchmark/lock-free-results.md).
+Memory-log operations use immutable chunk/index snapshots published with CAS; file group-commit admission and queue publication also use CAS. Memory fetches materialize outside the partition coordination lock, and memory producers skip wakeup locking when no long poll is registered. Membership bookkeeping, long-poll waits, file-fetch scheduling, and file I/O still require coordination. Local comparison results are recorded in [setu-benchmark/lock-free-results.md](setu-benchmark/lock-free-results.md).

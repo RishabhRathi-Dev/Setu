@@ -1,17 +1,17 @@
-name: Build, integration tests, and capacity benchmark
+name: Build, integration tests, and sustained benchmark
 
 on:
   push:
   pull_request:
   workflow_dispatch:
     inputs:
+      full_benchmark:
+        description: 'Run the full three-repeat sustained comparison and 1 KiB performance gates'
+        default: false
+        type: boolean
       resource_fraction:
         description: 'Share of detected available CPU, memory and free disk (0 < share <= 1)'
         default: '0.8'
-        type: string
-      payload_sizes:
-        description: 'Payload comparison sizes in bytes, comma separated'
-        default: '256,512,1024,4096'
         type: string
 
 permissions:
@@ -93,14 +93,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: integration-tests
     timeout-minutes: 60
-    concurrency:
-      group: benchmark-badges-${{ github.repository }}-${{ github.ref }}
-      cancel-in-progress: false
-    permissions:
-      contents: write
     env:
       BENCHMARK_FRACTION: ${{ inputs.resource_fraction || vars.SETU_BENCHMARK_FRACTION || '0.8' }}
-      BENCHMARK_PAYLOADS: ${{ inputs.payload_sizes || vars.SETU_BENCHMARK_PAYLOADS || '256,512,1024,4096' }}
 
     steps:
       - name: Check out repository
@@ -131,59 +125,91 @@ jobs:
           python3 scripts/run-benchmarks.py --kind steady --payload-sizes 1024 \
             --fraction "$BENCHMARK_FRACTION" --log "$RUNNER_TEMP/logs/steady-throughput.log"
 
-      - name: Compare payload sizes with a shared host resource budget
-        shell: bash
-        run: |
-          python3 scripts/run-benchmarks.py --kind sweep --fraction "$BENCHMARK_FRACTION" \
-            --payload-sizes "$BENCHMARK_PAYLOADS" --repeats 3 --max-concurrency 8 \
-            --stage-millis 3000 --warmup-millis 2000
-          cat logs/benchmarks/resources/sweep-*/comparison.txt >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Measure bounded file ingestion with larger batches
-        shell: bash
-        run: |
-          set -o pipefail
-          python3 scripts/run-benchmarks.py --kind large-batch --payload-sizes 1024 \
-            --fraction "$BENCHMARK_FRACTION" --log "$RUNNER_TEMP/logs/capacity-large-batch.log"
-
-      - name: Run progressive capacity exhaustion last
-        shell: bash
-        run: |
-          set -o pipefail
-          python3 scripts/run-benchmarks.py --kind capacity --payload-sizes 1024 \
-            --fraction "$BENCHMARK_FRACTION" --log "$RUNNER_TEMP/logs/capacity-default.log"
-
-      - name: Generate badges from the latest capacity metrics
-        if: success() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      - name: Run the short sustained smoke profile
         run: >-
-          python3 scripts/update-benchmark-badges.py
-          --log "$RUNNER_TEMP/logs/capacity-default.log"
-          --repository "$GITHUB_REPOSITORY"
-          --server-url "$GITHUB_SERVER_URL"
-          --visibility "${{ github.event.repository.private && 'private' || 'public' }}"
-          --minimum-stages 8 --require-jfr
+          python3 scripts/run-benchmarks.py --kind sustained --measurement smoke
+          --payload-sizes 1024 --fraction "$BENCHMARK_FRACTION"
 
       - name: Retain benchmark logs and failure reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-diagnostics-${{ github.run_attempt }}
+          name: benchmark-smoke-${{ github.run_attempt }}
           path: |
             logs/
             ${{ runner.temp }}/logs/
             **/target/surefire-reports/
           retention-days: 14
 
-      - name: Publish latest benchmark badges
-        if: success() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        shell: bash
+  sustained-full:
+    if: github.event_name == 'workflow_dispatch' && inputs.full_benchmark
+    needs: chaos-benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [IN_MEMORY, FILE]
+        payload: [256, 512, 1024, 4096]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '26'
+          cache: maven
+      - name: Measure independent full repetitions
+        env:
+          BENCHMARK_FRACTION: ${{ inputs.resource_fraction || vars.SETU_BENCHMARK_FRACTION || '0.8' }}
+          BENCHMARK_MODE: ${{ matrix.mode }}
+          BENCHMARK_PAYLOAD: ${{ matrix.payload }}
+        run: >-
+          python3 scripts/run-benchmarks.py --kind sustained --measurement full
+          --storage-mode "$BENCHMARK_MODE" --payload-sizes "$BENCHMARK_PAYLOAD"
+          --fraction "$BENCHMARK_FRACTION"
+      - name: Summarize measurements, including failed gates
+        if: always()
+        run: find logs/benchmarks/resources -name comparison.txt -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain raw captures and report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sustained-${{ matrix.mode }}-${{ matrix.payload }}-${{ github.run_attempt }}
+          path: |
+            logs/
+            **/target/surefire-reports/
+          retention-days: 14
+
+  publish-sustained:
+    needs: sustained-full
+    if: success() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: benchmark-badges-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sustained-*-1024-${{ github.run_attempt }}
+          path: reports
+      - name: Publish only validated sustained results
+        env:
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/ci.yml
+        run: python3 scripts/publish-sustained-badges.py --input reports --workflow-url "$WORKFLOW_URL"
+      - name: Commit measured badge data
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.md benchmark-badges/*.json
           if git diff --cached --quiet; then
-            echo "Benchmark badge metrics are unchanged."
             exit 0
           fi
-          git commit -m "Update benchmark metric badges [skip ci]"
-          git push origin "HEAD:${{ github.event.repository.default_branch }}"
+          git commit -m "Update sustained benchmark badges [skip ci]"
+          git push origin "HEAD:$DEFAULT_BRANCH"

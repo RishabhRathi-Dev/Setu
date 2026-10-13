@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import signal
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -43,6 +44,30 @@ class ResourceBudgetTests(unittest.TestCase):
         for invalid in ('nan', 'inf', '0', '-.1', '1.1'):
             with self.assertRaises(Exception):
                 resources.fraction(invalid)
+
+    def test_full_profile_defaults_and_cpu_ceiling_are_in_the_dry_run_plan(self):
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        with patch.object(resources, 'detect_host', return_value=self.host(cores=2)), \
+             patch.object(sys, 'argv', ['run-benchmarks', '--measurement', 'full', '--dry-run',
+                                       '--data-directory', str(Path(__file__).parent)]), \
+             patch('builtins.print') as output:
+            resources.main()
+        snapshot = json.loads(output.call_args.args[0].split(' ', 1)[1])
+        self.assertEqual('sustained', snapshot['kind'])
+        self.assertEqual(3, snapshot['repeats'])
+        self.assertEqual(10000, snapshot['warmup_millis'])
+        self.assertEqual(30000, snapshot['stage_millis'])
+        self.assertEqual(2, snapshot['max_concurrency'])
+        self.assertLessEqual(snapshot['budget']['heap_mib'], 1024)
+
+    def test_full_profile_rejects_smoke_timings_or_incomplete_repetitions(self):
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        for flag, value in (('--repeats', '1'), ('--warmup-millis', '2000'), ('--stage-millis', '3000')):
+            with patch.object(sys, 'argv', ['run-benchmarks', '--measurement', 'full', flag, value]), \
+                 patch('sys.stderr'), self.assertRaises(SystemExit):
+                resources.main()
 
     def test_detection_respects_ancestor_quotas_and_remaining_cgroup_memory(self):
         with tempfile.TemporaryDirectory() as directory:

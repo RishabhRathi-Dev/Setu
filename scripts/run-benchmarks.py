@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Detect host limits, enforce a shared Linux budget, and compare payloads sequentially."""
 import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 import math
 import os
@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+import sustained_report
 
 MIB = 1024 ** 2
 GIB = 1024 ** 3
@@ -61,11 +62,21 @@ def detect_host(data_directory, proc=Path('/proc'), cgroups=Path('/sys/fs/cgroup
             available = min(available, max(0, limit - int((group / 'memory.current').read_text())))
     cpuinfo = (proc / 'cpuinfo').read_text()
     model = re.search(r'^model name\s*:\s*(.*)', cpuinfo, re.M)
+    disk_type = 'unknown'
+    if shutil.which('findmnt'):
+        mount = subprocess.run(['findmnt', '-n', '-o', 'SOURCE,FSTYPE', '-T', str(data_directory)],
+                               capture_output=True, text=True, check=False)
+        disk_type = mount.stdout.strip() or 'unknown'
+        if mount.returncode == 0 and mount.stdout.strip() and shutil.which('lsblk'):
+            device = mount.stdout.split()[0].split('[')[0]
+            rotation = subprocess.run(['lsblk', '-ndo', 'ROTA', device], capture_output=True, text=True, check=False)
+            disk_type += ' (' + {'0': 'non-rotational', '1': 'rotational'}.get(rotation.stdout.strip(), 'media unknown') + ')'
     return dict(platform=sys.platform, kernel=platform.release(), architecture=platform.machine(),
                 cpu_model=model.group(1) if model else 'unknown',
                 logical_cpus=os.cpu_count(), affinity=affinity, available_cpu_cores=cpus,
                 memory_total_bytes=total, memory_available_bytes=available,
-                data_directory=str(data_directory.resolve()), filesystem_free_bytes=shutil.disk_usage(data_directory).free)
+                data_directory=str(data_directory.resolve()), disk_type=disk_type,
+                filesystem_free_bytes=shutil.disk_usage(data_directory).free)
 
 
 @dataclass(frozen=True)
@@ -198,17 +209,19 @@ def main():
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--kind', choices=('sweep', 'capacity', 'steady', 'large-batch', 'chaos'), default='sweep')
+    parser.add_argument('--kind', choices=('sustained', 'sweep', 'capacity', 'steady', 'large-batch', 'chaos'), default='sustained')
+    parser.add_argument('--measurement', choices=('smoke', 'full'), default='smoke')
+    parser.add_argument('--storage-mode', choices=('both', 'IN_MEMORY', 'FILE'), default='both')
     parser.add_argument('--profile', choices=('host', 'github-private', 'github-public'), default='host')
     parser.add_argument('--fraction', type=fraction, default=.8)
     parser.add_argument('--cpu-fraction', type=fraction)
     parser.add_argument('--memory-fraction', type=fraction)
     parser.add_argument('--disk-fraction', type=fraction)
     parser.add_argument('--payload-sizes', default='256,512,1024,4096')
-    parser.add_argument('--repeats', type=int, default=3)
-    parser.add_argument('--max-concurrency', type=int, default=8)
-    parser.add_argument('--stage-millis', type=int, default=3000)
-    parser.add_argument('--warmup-millis', type=int, default=2000)
+    parser.add_argument('--repeats', type=int)
+    parser.add_argument('--max-concurrency', type=int)
+    parser.add_argument('--stage-millis', type=int)
+    parser.add_argument('--warmup-millis', type=int)
     parser.add_argument('--heap-mib', type=int)
     parser.add_argument('--direct-mib', type=int)
     parser.add_argument('--memory-log-mib', type=int)
@@ -217,10 +230,19 @@ def main():
     parser.add_argument('--log', type=Path, help='explicit single-profile capture (capacity/steady/large-batch)')
     parser.add_argument('--dry-run', action='store_true', help='detect and print the plan without launching anything')
     args = parser.parse_args()
+    full = args.kind == 'sustained' and args.measurement == 'full'
+    args.repeats = args.repeats if args.repeats is not None else (3 if full or args.kind == 'sweep' else 1)
+    args.stage_millis = args.stage_millis if args.stage_millis is not None else (30000 if full else 3000)
+    args.warmup_millis = args.warmup_millis if args.warmup_millis is not None else (10000 if full else 2000)
+    args.max_concurrency = args.max_concurrency if args.max_concurrency is not None else (32768 if args.kind == 'sustained' else 8)
+    if full and (args.repeats != 3 or args.stage_millis < 30000 or args.warmup_millis < 10000):
+        parser.error('full measurements require three repetitions, >=10000 ms warmup and >=30000 ms measurement')
+    if args.kind == 'sustained' and args.warmup_millis < 250:
+        parser.error('sustained warmup must be at least 250 ms')
     payloads = [int(value) for value in args.payload_sizes.split(',')]
     if not payloads or len(set(payloads)) != len(payloads) or any(not 1 <= size <= 65536 for size in payloads):
         parser.error('payload sizes must be distinct integers in 1..65536')
-    if args.kind != 'sweep' and len(payloads) != 1:
+    if args.kind not in ('sweep', 'sustained') and len(payloads) != 1:
         parser.error('single-profile benchmarks require exactly one --payload-sizes value')
     if not 1 <= args.repeats <= 10 or not 250 <= args.stage_millis <= 60000 or not 0 <= args.warmup_millis <= 60000:
         parser.error('repeats must be 1..10, stage millis 250..60000, warmup millis 0..60000')
@@ -229,18 +251,29 @@ def main():
     batch = 4096 if args.kind == 'large-batch' else 256
     if any(batch * (size + 4) + 1024 > 15 * MIB for size in payloads):
         parser.error('payload and batch size exceed the 15 MiB frame limit')
-    if args.log and args.kind == 'sweep':
+    if args.log and args.kind in ('sweep', 'sustained'):
         parser.error('sweeps use separate captures; --log is only for single profiles')
     args.data_directory = args.data_directory.resolve(strict=True)
     host = detect_host(args.data_directory)
     budget = plan(host, args.cpu_fraction or args.fraction, args.memory_fraction or args.fraction,
                   args.disk_fraction or args.fraction, args.profile, 2 if args.kind == 'steady' else 1,
                   args.heap_mib, args.direct_mib, args.memory_log_mib)
+    if args.kind == 'sustained':
+        if args.heap_mib is None:
+            heap = min(1024, budget.heap_mib)
+            if args.memory_log_mib is not None and args.memory_log_mib > heap // 2:
+                parser.error('memory log override exceeds half of the sustained heap')
+            retained = budget.memory_log_bytes if args.memory_log_mib is not None else min(budget.memory_log_bytes, heap * MIB // 4)
+            budget = replace(budget, heap_mib=heap, memory_log_bytes=retained)
+        host_cap = max(1, math.floor(2 * budget.cpu_cores))
+        args.max_concurrency = 1 << (min(host_cap, args.max_concurrency).bit_length() - 1)
     snapshot = dict(host=host, budget=asdict(budget), profile=args.profile, kind=args.kind,
                     cpu_fraction=args.cpu_fraction or args.fraction,
                     memory_fraction=args.memory_fraction or args.fraction,
                     disk_fraction=args.disk_fraction or args.fraction, enforcement='systemd-cgroup-v2',
-                    payload_sizes=payloads, repeats=args.repeats if args.kind == 'sweep' else 1)
+                    payload_sizes=payloads, repeats=args.repeats if args.kind in ('sweep', 'sustained') else 1,
+                    measurement=args.measurement, storage_mode=args.storage_mode, max_concurrency=args.max_concurrency,
+                    stage_millis=args.stage_millis, warmup_millis=args.warmup_millis)
     print('BENCHMARK_RESOURCES ' + json.dumps(snapshot, sort_keys=True), flush=True)
     if args.dry_run:
         return
@@ -250,7 +283,8 @@ def main():
     print('BENCHMARK_CAPTURE directory=' + str(output), flush=True)
     os.environ['MAVEN_OPTS'] = '-Xmx512m'  # bound the launcher inside the shared envelope too
     rows = []
-    repetitions = args.repeats if args.kind == 'sweep' else 1
+    repetitions = args.repeats if args.kind in ('sweep', 'sustained') else 1
+    modes = ('IN_MEMORY', 'FILE') if args.storage_mode == 'both' else (args.storage_mode,)
     # Rotate order between repeats to reduce systematic cache/host-drift bias.
     for repeat in range(repetitions):
         ordered = payloads[repeat % len(payloads):] + payloads[:repeat % len(payloads)]
@@ -258,23 +292,33 @@ def main():
             capture = args.log.resolve() if args.log else output / f'payload-{payload}-run-{repeat + 1}.log'
             capture.parent.mkdir(parents=True, exist_ok=True)
             test = 'IsolatedThroughputBenchmarkTests' if args.kind == 'steady' else 'ProgressiveCapacityChaosTests'
+            if args.kind == 'sustained':
+                test = 'SustainedThroughputBenchmarkTests'
+                if args.storage_mode != 'both':
+                    test += '#memory' if args.storage_mode == 'IN_MEMORY' else '#file'
             if args.kind == 'chaos':
-                test = '*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests,ProcessCpuSamplerTests,CpuSaturationHoldTests,CapacityJfrTests'
+                test = '*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests,ProcessCpuSamplerTests,CpuSaturationHoldTests,CapacityJfrTests,SustainedCriteriaTests'
             if args.kind == 'large-batch':
                 test += '#progressivelyRampsFileProducersAndConsumersUntilTheRuntimeLimit'
             command = ['bash', str(ROOT / 'mvnw'), '--batch-mode', '--no-transfer-progress', '-pl', 'setu-benchmark', '-am',
                        '-Dtest=' + test, '-Dsurefire.failIfNoSpecifiedTests=false']
             command += java_properties(budget, payload, args.data_directory)
-            command += [f'-Dsetu.benchmark.batch.records={batch}', '-Dsetu.benchmark.jfr=true']
-            if args.kind == 'capacity':
+            command += [f'-Dsetu.benchmark.batch.records={batch}']
+            if args.kind == 'sustained':
+                command += [f'-Dsetu.benchmark.measurement={args.measurement}',
+                            f'-Dsetu.benchmark.max.concurrency={args.max_concurrency}',
+                            f'-Dsetu.benchmark.stage.millis={args.stage_millis}',
+                            f'-Dsetu.benchmark.warmup.millis={args.warmup_millis}']
+            elif args.kind == 'capacity':
                 command += ['-Dsetu.benchmark.max.concurrency=0', '-Dsetu.benchmark.min.stages=8',
                             '-Dsetu.benchmark.stage.millis=2000', '-Dsetu.benchmark.warmup.millis=2000',
-                            '-Dsetu.benchmark.cpu.hold.millis=10000']
+                            '-Dsetu.benchmark.cpu.hold.millis=10000', '-Dsetu.benchmark.jfr=true']
             elif args.kind not in ('steady', 'chaos'):
                 ceiling = 2 if args.kind == 'large-batch' else args.max_concurrency
                 command += [f'-Dsetu.benchmark.max.concurrency={ceiling}', f'-Dsetu.benchmark.min.stages={ceiling.bit_length()}',
                             f'-Dsetu.benchmark.stage.millis={12000 if args.kind == "large-batch" else args.stage_millis}',
-                            f'-Dsetu.benchmark.warmup.millis={args.warmup_millis}', '-Dsetu.benchmark.cpu.hold.millis=0']
+                            f'-Dsetu.benchmark.warmup.millis={args.warmup_millis}', '-Dsetu.benchmark.cpu.hold.millis=0',
+                            '-Dsetu.benchmark.jfr=true']
             unit = 'setu-benchmark-' + uuid.uuid4().hex
             with capture.open('w', encoding='utf-8') as stream:
                 stream.write('BENCHMARK_RESOURCES ' + json.dumps(snapshot) + '\n')
@@ -291,8 +335,17 @@ def main():
                 rows += summarize_capture(capture.read_text(encoding='utf-8'), payload, args.max_concurrency)
                 (output / 'comparison.json').write_text(json.dumps(rows, indent=2) + '\n')
                 (output / 'comparison.txt').write_text(comparison_report(rows), encoding='utf-8')
+            elif args.kind == 'sustained':
+                runs = sustained_report.parse_capture(capture.read_text(encoding='utf-8'), payload, modes)
+                for run in runs:
+                    run['repeat'] = repeat + 1
+                    run['capture'] = str(capture)
+                rows += runs
+                sustained_report.save(output, rows, snapshot)
     if rows:
-        print(comparison_report(rows))
+        print(sustained_report.comparison_report(rows, snapshot) if args.kind == 'sustained' else comparison_report(rows))
+    if full and 1024 in payloads:
+        sustained_report.check_gates(rows, modes)
 
 
 if __name__ == '__main__':

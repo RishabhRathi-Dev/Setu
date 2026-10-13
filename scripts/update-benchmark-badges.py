@@ -136,22 +136,21 @@ def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict
                      profiles: dict[tuple[str, int], dict[str, str]] | None = None,
                      backpressure: dict[tuple[str, int], dict[str, str]] | None = None,
                      configs: dict[str, dict[str, str]] | None = None) -> str:
-    targets = {"IN_MEMORY": 10_000_000, "FILE": 1_000_000}
     names = {"IN_MEMORY": "In-memory", "FILE": "File"}
     lines = [
-        "### Target progress",
+        "### Historical peak observations",
         "",
-        "| Storage mode | Target produce rate | Peak observed | Payload bytes | Peak payload MiB/s | Target progress |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        "Short exhaustion windows and fanout counts do not establish sustained target progress.",
+        "",
+        "| Storage mode | Peak observed | Payload bytes | Peak payload MiB/s |",
+        "| --- | ---: | ---: | ---: |",
     ]
     for mode, values in stages.items():
         peak, _ = peak_rates(values, cpu_holds or [], mode)
-        target = targets[mode]
-        progress = peak / target * 100
         record_bytes = int((configs or {}).get(mode, {}).get('record_bytes', '0'))
         payload_rate = f"{peak * record_bytes / (1024 * 1024):.2f}" if record_bytes else 'unrecorded'
         lines.append(
-            f"| {names[mode]} | {target:,} records/s | {format_rate(peak)} records/s | {record_bytes or 'unrecorded'} | {payload_rate} | {progress:.1f}% |"
+            f"| {names[mode]} | {format_rate(peak)} records/s | {record_bytes or 'unrecorded'} | {payload_rate} |"
         )
 
     lines.extend([
