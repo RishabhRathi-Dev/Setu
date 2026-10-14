@@ -6,7 +6,7 @@
 
 - `MessageLog` exposes append, sequential read from an offset, next-offset lookup, and close operations.
 - `LogRecord` carries a zero-based offset and an immutable `MessageValue`. Byte-array constructors copy caller input, and `value()` returns a defensive copy. Storage snapshots, segment-offset translation, and protocol records share the immutable payload without cloning it at each boundary.
-- `FileMessageLog` stores records in one file, maintains an in-memory primitive `long[]` position index, and serializes operations with synchronized methods. Record lengths come from adjacent positions, avoiding a heap object per indexed record.
+- `FileMessageLog` stores records in one file and serializes operations with synchronized methods. Equal-sized records use arithmetic positions, so their index stays constant in size as the file grows. When sizes vary, the log materializes a primitive `long[]` position index, including prior uniform records. Record lengths come from adjacent positions, avoiding a heap object per indexed record.
 - `SegmentedFileMessageLog` rotates a partition across length-prefixed files named by their first logical offset, keeping reads and offsets continuous across files. Fetches locate their starting segment with binary search.
 - `InMemoryMessageLog` publishes complete batches with compare-and-set, using immutable chunks of 1,024 record references and a persistent AVL index. Append, read, prefix reclamation, timed retention, and close use no shared monitor. Reads capture one consistent snapshot; concurrent appends cannot expose partial batches or gaps in published offsets.
 - `MemoryLogBudget` can be shared across memory logs. Whole-batch reservations atomically check copied-payload and chunk capacity before append; capacity rejection raises `LogCapacityExceededException` without changing offsets or stored records. Partial reclamation releases payload accounting, complete reclamation also releases chunk accounting, and close releases the log's remaining allocation. Empty payloads still consume capacity.
@@ -15,7 +15,7 @@
 - Each record is encoded as a four-byte signed length followed by the payload bytes.
 - Single-record and batch appends synchronize with `FileChannel.force(true)` before returning offsets. A batch write performs one sync per `FileMessageLog` call; if a write reports an I/O failure, that file is truncated back to its prior size.
 - `GroupCommitMessageLog` provides a bounded multiple-producer, single-consumer queue. One CAS atomically admits and publishes a request together with its byte/request reservation. The writer detaches producer stacks and reverses them into FIFO groups, sharing durable appends across adjacent requests. Active flushes count toward both limits. Failure rejects new requests and fails all accepted writes; close drains accepted writes before closing the delegate. Interrupted callers still receive their durability result and have their interrupt status restored.
-- Startup recovery scans valid records, rebuilds the in-memory index, and truncates an invalid or partial tail to the end of the last valid record.
+- Startup recovery scans valid records, rebuilds uniform-position metadata or the variable-length index, and truncates an invalid or partial tail to the end of the last valid record.
 - Reads enforce a payload-byte limit without splitting records and cap one call at 10,000 returned records. File reads coalesce adjacent records into windows of up to 1 MiB; a single larger record uses its own larger window.
 - File records share immutable slices of their read window; keeping one record retains that window. Public byte-array access still makes defensive copies. Memory fetches reserve response capacity once per immutable chunk before constructing result records. Memory-log and group-commit admission conservatively charge each slice for its full backing array when accepting externally supplied `MessageValue` instances.
 - Tests cover append/read/offset behavior, segment rotation and recovery, and cleanup of a partial tail.
@@ -33,7 +33,7 @@
         └── 000000000200.log
 ```
 
-Each segment has an in-memory position index, rebuilt by scanning at startup. Rotation defaults to 1 GiB and can be configured through `DefaultBroker`; a record larger than the configured segment limit is allowed in its own segment. Segments currently have no checksum, persisted index, retention, or format version.
+Each segment has in-memory position metadata, rebuilt by scanning at startup. Uniform records require only their count and encoded record size; variable-length segments use a per-record position index. Rotation defaults to 1 GiB and can be configured through `DefaultBroker`; a record larger than the configured segment limit is allowed in its own segment. Segments currently have no checksum, persisted index, retention, or format version.
 
 ## API outline
 

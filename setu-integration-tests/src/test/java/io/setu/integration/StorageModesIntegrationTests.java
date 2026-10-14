@@ -27,6 +27,27 @@ class StorageModesIntegrationTests {
     @TempDir Path tempDir;
 
     @Test
+    void reusedClientBatchFramePreservesEarlierRecordsInBothStorageModes() throws Exception {
+        for (StorageMode mode : StorageMode.values()) {
+            try (DefaultBroker broker = new DefaultBroker(mode, mode == StorageMode.FILE ? tempDir.resolve("batches") : null, 1024);
+                 TcpServer server = start(broker)) {
+                server.start();
+                try (SetuClient client = client(server.localAddress().getPort())) {
+                    assertEquals(ErrorCode.NONE, client.createTopic(TOPIC, 1).errorCode());
+                    assertEquals(ErrorCode.NONE, client.joinGroup(GROUP, TOPIC, "reader").errorCode());
+                    assertEquals(0, client.produceBatch(TOPIC, 0, List.of(bytes("first"), bytes("batch"))).offset());
+                    var earlier = client.fetch(GROUP, "reader", TOPIC, 0, 0, 1024).records();
+                    assertEquals(2, client.produceBatch(TOPIC, 0, List.of(bytes("other"), bytes("value"))).offset());
+                    assertEquals(4, client.produceBatch(TOPIC, 0, List.of(new byte[0], bytes("longer-value"))).offset());
+                    assertEquals(List.of("first", "batch"), earlier.stream().map(record -> text(record.value())).toList());
+                    assertEquals(List.of("first", "batch", "other", "value", "", "longer-value"),
+                            client.fetch(GROUP, "reader", TOPIC, 0, 0, 1024).records().stream().map(record -> text(record.value())).toList());
+                }
+            }
+        }
+    }
+
+    @Test
     void inMemoryBrokerReclaimsAcknowledgedRecordsAndNewMembersStartAtJoinTime() throws Exception {
         verifyMode(StorageMode.IN_MEMORY);
     }

@@ -7,6 +7,45 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ProtocolCodecTests {
+    @Test
+    void reusableBatchFramesHandleChangingLengthsWithoutOverwritingDecodedRecords() throws Exception {
+        var encoder = new ProtocolCodec.ProduceBatchEncoder();
+        byte[] first = encoder.encode(1, "orders", 0, java.util.List.of(new byte[]{1, 2, 3}));
+        var decoded = ProtocolCodec.decodeRequest(first);
+        byte[] second = encoder.encode(2, "orders", 0, java.util.List.of(new byte[]{4, 5, 6}));
+        org.junit.jupiter.api.Assertions.assertSame(first, second);
+        assertEquals(2, ProtocolCodec.decodeRequest(second).correlationId());
+        assertArrayEquals(new byte[]{1, 2, 3}, decoded.valueAt(0));
+        for (int size : new int[]{0, 4096, 1048577, 3}) {
+            byte[] value = new byte[size];
+            java.util.Arrays.fill(value, (byte) 7);
+            byte[] frame = encoder.encode(3, "different-topic", 2, java.util.List.of(value));
+            assertArrayEquals(ProtocolCodec.encodeProduceBatch(3, "different-topic", 2, java.util.List.of(value)), frame);
+            assertArrayEquals(value, ProtocolCodec.decodeRequest(frame).valueAt(0));
+        }
+        encoder.clear();
+        org.junit.jupiter.api.Assertions.assertNotSame(second,
+                encoder.encode(4, "orders", 0, java.util.List.of(new byte[]{8, 9, 10})));
+    }
+
+    @Test
+    void identifierFastPathPreservesTopicRulesAndStrictUtf8() throws Exception {
+        for (String topic : java.util.List.of("a", "A-Z_09.test", "x".repeat(249)))
+            assertEquals(topic, ProtocolCodec.decodeRequest(ProtocolCodec.encodeProduceBatch(1, topic, 0,
+                    java.util.List.of(new byte[0]))).topic());
+        for (String topic : java.util.List.of("", ".", "..", "a/b", "a b", "café", "x".repeat(250)))
+            org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
+                    () -> ProtocolCodec.encodeProduceBatch(1, topic, 0, java.util.List.of(new byte[0])));
+        var request = new BrokerRequest(1, Command.JOIN_GROUP, "orders", -1, -1, -1,
+                null, 0, "group-é", "reader-₹");
+        var decoded = ProtocolCodec.decodeRequest(ProtocolCodec.encodeRequest(request));
+        assertEquals(request.groupId(), decoded.groupId());
+        assertEquals(request.memberId(), decoded.memberId());
+        byte[] invalid = ProtocolCodec.encodeProduceBatch(1, "a", 0, java.util.List.of(new byte[0]));
+        invalid[16] = (byte) 0xff;
+        org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class, () -> ProtocolCodec.decodeRequest(invalid));
+    }
+
     private static io.setu.storage.log.MessageValue.Frame owned(byte[] bytes) throws Exception {
         return io.setu.storage.log.MessageValue.Frame.readFrom(
                 new java.io.DataInputStream(new java.io.ByteArrayInputStream(bytes)), bytes.length);

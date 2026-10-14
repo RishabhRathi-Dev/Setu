@@ -72,6 +72,8 @@ Setu aims to provide:
 
 The single-node throughput targets are **500,000 records/s in memory** (~488 MiB/s at 1 KiB) and **250,000 records/s with file storage** (~244 MiB/s), with stretch targets of 1M/s and 500K/s respectively. The full CI profile gates 1 KiB runs at 200K/s in memory and 150K/s with file storage, subject to the same sustainability criteria. Broker and load clients share the host. Performance is reported per allocated CPU core and with hardware, durability, backlog and resource usage; targets are not claims of measured performance. See [benchmark profiles and qualification](setu-benchmark/README.md).
 
+The [local JFR optimization and node-target report](setu-benchmark/optimization-2026-10-14.md) records three 30-second repetitions at the offered targets, including actual throughput, latency, heap and earlier failed attempts. Published badges require the separate resource-enforced capacity profile.
+
 The project is primarily concerned with the trade-offs between:
 
 ```text

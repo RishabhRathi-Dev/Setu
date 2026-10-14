@@ -84,8 +84,14 @@ public final class GroupCommitMessageLog implements MessageLog {
             if (detached == null) continue;
             try {
                 List<Pending> group = fifo(detached);
-                List<MessageValue> values = new ArrayList<>();
-                for (Pending pending : group) values.addAll(pending.values);
+                List<MessageValue> values;
+                if (group.size() == 1) values = group.getFirst().values;
+                else {
+                    int count = 0;
+                    for (Pending pending : group) count = Math.addExact(count, pending.values.size());
+                    values = new ArrayList<>(count);
+                    for (Pending pending : group) values.addAll(pending.values);
+                }
                 long offset = delegate.appendValues(values); // forces every touched segment before acknowledgement
                 release(group); // returned callers can immediately reuse the released capacity
                 for (Pending pending : group) {

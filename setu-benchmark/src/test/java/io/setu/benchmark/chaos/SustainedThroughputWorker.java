@@ -63,7 +63,7 @@ final class SustainedThroughputWorker {
         } finally { CapacityJfr.finish(); }
     }
 
-    private static Result run(StorageMode mode, Path root, int concurrency, double offered, double fraction) throws Exception {
+    static Result run(StorageMode mode, Path root, int concurrency, double offered, double fraction) throws Exception {
         Path data = Files.createTempDirectory(root, "stage-");
         try (Load load = new Load(mode, data, concurrency, offered)) {
             boolean stable = load.warmup();
@@ -126,7 +126,7 @@ final class SustainedThroughputWorker {
         }
     }
 
-    private record Result(int concurrency, double rate, boolean healthy) { }
+    record Result(int concurrency, double rate, boolean healthy) { }
 
     private static final class Window {
         final long start, end;

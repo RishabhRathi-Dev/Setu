@@ -34,6 +34,33 @@ public final class ProtocolCodec {
 
     /** Copies caller payloads directly into their final wire frame. */
     public static byte[] encodeProduceBatch(int correlation, String topic, int partition, List<byte[]> values) throws IOException {
+        return encodeProduceBatch(correlation, topic, partition, values, null);
+    }
+
+    /**
+     * Scratch encoder for serialized client exchanges. The returned frame is valid only until
+     * the next encode; callers must finish writing it before reusing this encoder.
+     */
+    public static final class ProduceBatchEncoder {
+        private static final int MAX_RETAINED_BYTES = 1024 * 1024;
+        private byte[] buffer;
+
+        public byte[] encode(int correlation, String topic, int partition, List<byte[]> values) throws IOException {
+            return encodeProduceBatch(correlation, topic, partition, values, this);
+        }
+
+        private byte[] allocate(int size) {
+            if (size > MAX_RETAINED_BYTES) return new byte[size];
+            // Exact length keeps framing honest when batch size or topic length changes.
+            if (buffer == null || buffer.length != size) buffer = new byte[size];
+            return buffer;
+        }
+
+        public void clear() { buffer = null; }
+    }
+
+    private static byte[] encodeProduceBatch(int correlation, String topic, int partition,
+                                             List<byte[]> values, ProduceBatchEncoder encoder) throws IOException {
         requireTopic(topic);
         if (correlation < 0 || partition < 0) throw bad("correlation and partition must be non-negative", correlation);
         List<byte[]> snapshot = List.copyOf(values);
@@ -43,7 +70,8 @@ public final class ProtocolCodec {
         for (byte[] value : snapshot) payloadBytes += value.length;
         if (payloadBytes > MAX_BATCH_BYTES) throw bad("produce batch exceeds maximum bytes", correlation);
         byte[] name = topic.getBytes(StandardCharsets.UTF_8);
-        ByteBuffer out = ByteBuffer.allocate(Math.toIntExact(24L + name.length + 4L * snapshot.size() + payloadBytes));
+        int size = Math.toIntExact(24L + name.length + 4L * snapshot.size() + payloadBytes);
+        ByteBuffer out = ByteBuffer.wrap(encoder == null ? new byte[size] : encoder.allocate(size));
         out.putInt(MAGIC).put((byte) VERSION).put((byte) REQUEST).putShort((short) Command.PRODUCE_BATCH.id()).putInt(correlation);
         out.putInt(name.length).put(name).putInt(partition).putInt(snapshot.size());
         for (byte[] value : snapshot) out.putInt(value.length).put(value);
@@ -256,8 +284,17 @@ public final class ProtocolCodec {
     private static void requireTopic(String topic) throws ProtocolException {
         requireString(topic, "topic", -1);
         if (topic.length() > 249 || topic.equals(".") || topic.equals("..")
-                || !topic.matches("[A-Za-z0-9._-]+"))
+                || !validTopicCharacters(topic))
             throw bad("topic name is invalid", -1);
+    }
+
+    private static boolean validTopicCharacters(String topic) {
+        for (int i = 0; i < topic.length(); i++) {
+            char c = topic.charAt(i);
+            if (!(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
+                    || c == '.' || c == '_' || c == '-')) return false;
+        }
+        return true;
     }
 
     private static void requireString(String value, String field, int correlation) throws ProtocolException {
@@ -435,6 +472,16 @@ public final class ProtocolCodec {
         if (length < 0 || length > MAX_STRING_BYTES || length > in.remaining())
             throw new IOException("Invalid byte field length: " + length);
         if (length == 0) return "";
+        // Topics and most group/member identifiers are ASCII. Decode them directly while
+        // retaining the strict UTF-8 decoder for non-ASCII text and malformed sequences.
+        int start = in.position();
+        boolean ascii = true;
+        for (int i = 0; i < length; i++) if (in.get(start + i) < 0) { ascii = false; break; }
+        if (ascii && in.hasArray()) {
+            String value = new String(in.array(), in.arrayOffset() + start, length, StandardCharsets.US_ASCII);
+            in.position(start + length);
+            return value;
+        }
         try {
             String value = StandardCharsets.UTF_8.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)

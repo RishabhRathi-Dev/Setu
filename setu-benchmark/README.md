@@ -49,6 +49,21 @@ File durability is **force each group commit before acknowledgment**: `GroupComm
 
 `comparison.txt` and `comparison.json` retain per-concurrency medians and ranges for records/s, payload MiB/s, latency, backlog and resource usage, plus records/s per allocated CPU core. Hardware information includes CPU model/vCPU allocation, RAM, data filesystem/media and the enforced budget. Each raw capture retains its repeat number and explicit workload configuration. Runs that stop early are not averaged as if later stages had completed.
 
+## Direct node-target verification
+
+`NodeTargetThroughputBenchmarkTests` checks the stated 1 KiB node targets directly: 500K offered records/s in memory with one producer/consumer pair, and 250K/s with file storage with two pairs. It launches three fresh JVMs per mode and measures 50%, 80% and 100% of each target for 30 seconds after at least ten seconds of adaptive warmup. It uses the same workload, scheduled completion latency, unique consumption, durability and health criteria as the capacity profile. All nine windows per mode must pass. Actual throughput and missed records remain in the capture; health requires at least 95% of offered throughput.
+
+This longer test requires an explicit opt-in. Default worker heaps are 256 MiB in memory and 128 MiB with file storage. The example uses a 64 MiB retained-log budget to keep allocation-driven GC cycles within a smaller envelope. JFR is enabled by default and retained beside each worker log under `logs/benchmarks/node-target/`.
+
+```powershell
+.\mvnw.cmd -pl setu-benchmark -am '-Dtest=NodeTargetThroughputBenchmarkTests' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' '-Dsetu.benchmark.node.targets=true' `
+  '-Dsetu.benchmark.cpu.cores=8' `
+  '-Dsetu.benchmark.memory.log.bytes=67108864' test
+```
+
+The run takes about twelve minutes across both modes before adaptive warmup and setup. `ActiveProcessorCount` configures JVM scheduling; this direct command does not enforce an OS CPU quota. Target checks retain their own evidence. Published sustained badges continue to require the resource-enforced capacity profile and its three qualified knees.
+
 ## Resource budgets
 
 The Python launcher detects CPU affinity, ancestor cgroup CPU quotas, available RAM, ancestor memory limits/usage, CPU model and free space on the data filesystem. `resources.json` records this snapshot beside every capture. The `host` resource profile allocates 80% of available CPU/RAM by default. `--fraction` changes that shared fraction; `--cpu-fraction`, `--memory-fraction` and `--disk-fraction` override it separately. CPU quotas round down to 1% of a core. `--profile github-private` caps the allocation at two CPUs/8 GiB; `github-public` caps it at four CPUs/16 GiB. These are reproducibility ceilings, not guarantees of runner hardware or disk speed.

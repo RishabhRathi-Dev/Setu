@@ -23,7 +23,9 @@ public final class FileMessageLog implements MessageLog {
     private static final int MAX_RETAINED_APPEND_BYTES = 1024 * 1024;
     // Only append uses this scratch space, under the same monitor as the file/index.
     private ByteBuffer appendBuffer;
-    private long[] positions = new long[1024];
+    // Uniform records have arithmetic positions. Materialize an index only when lengths vary.
+    private long[] positions;
+    private long uniformRecordBytes;
     private int recordCount;
     private long endPosition;
     private boolean closed;
@@ -53,7 +55,7 @@ public final class FileMessageLog implements MessageLog {
             throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
         }
         long offset = recordCount;
-        reserveIndex(1);
+        reserveIndex(1, Integer.BYTES + (long) value.length);
         long position = endPosition;
         ByteBuffer record = appendBuffer(Math.addExact(Integer.BYTES, value.length))
                 .putInt(value.length).put(value);
@@ -73,7 +75,8 @@ public final class FileMessageLog implements MessageLog {
             }
             throw failure;
         }
-        positions[recordCount++] = position;
+        if (positions != null) positions[recordCount] = position;
+        recordCount++;
         endPosition += Integer.BYTES + (long) value.length;
         if (LOG.isDebugEnabled()) LOG.debug("File record persisted path={} offset={} payload_bytes={} end_position={} forced=true",
                 path, offset, value.length, endPosition);
@@ -91,14 +94,16 @@ public final class FileMessageLog implements MessageLog {
         Objects.requireNonNull(values, "values");
         if (values.isEmpty()) throw new IllegalArgumentException("values must not be empty");
         long encodedBytes = 0;
+        long uniformBytes = Integer.BYTES + (long) values.getFirst().length();
         for (MessageValue value : values) {
             Objects.requireNonNull(value, "value");
             if (value.length() > maxRecordBytes)
                 throw new IOException("Record size " + value.length() + " exceeds maximum " + maxRecordBytes);
             encodedBytes += Integer.BYTES + (long) value.length();
+            if (Integer.BYTES + (long) value.length() != uniformBytes) uniformBytes = -1;
             if (encodedBytes > Integer.MAX_VALUE) throw new IOException("Append batch is too large");
         }
-        reserveIndex(values.size());
+        reserveIndex(values.size(), uniformBytes);
         long position = endPosition;
         long firstOffset = recordCount;
         long started = LOG.isDebugEnabled() ? System.nanoTime() : 0;
@@ -119,7 +124,10 @@ public final class FileMessageLog implements MessageLog {
                     path, firstOffset, values.size(), encodedBytes, position, failure);
             throw failure;
         }
-        for (MessageValue value : values) {
+        if (positions == null) {
+            recordCount += values.size();
+            endPosition += encodedBytes;
+        } else for (MessageValue value : values) {
             positions[recordCount++] = endPosition;
             endPosition += Integer.BYTES + (long) value.length();
         }
@@ -145,12 +153,12 @@ public final class FileMessageLog implements MessageLog {
         int offset = (int) firstOffset;
         while (offset < recordCount && records.size() < MAX_RECORDS_PER_READ) {
             int end = offset;
-            long windowEnd = positions[offset];
+            long windowEnd = positionAt(offset);
             while (end < recordCount && records.size() + end - offset < MAX_RECORDS_PER_READ) {
-                long recordEnd = end + 1 == recordCount ? endPosition : positions[end + 1];
-                int length = Math.toIntExact(recordEnd - positions[end] - Integer.BYTES);
+                long recordEnd = end + 1 == recordCount ? endPosition : positionAt(end + 1);
+                int length = Math.toIntExact(recordEnd - positionAt(end) - Integer.BYTES);
                 if (bytesRead + length > maxBytes) break;
-                if (end > offset && recordEnd - positions[offset] > READ_WINDOW_BYTES) break;
+                if (end > offset && recordEnd - positionAt(offset) > READ_WINDOW_BYTES) break;
                 bytesRead += length;
                 windowEnd = recordEnd;
                 end++;
@@ -158,14 +166,14 @@ public final class FileMessageLog implements MessageLog {
             if (end == offset) break;
             // Immutable file windows + encoded reply and record metadata, reserved before reading.
             admission.reserve(2L * bytesRead + 160L * (records.size() + end - offset) + 22);
-            channel.position(positions[offset]);
+            channel.position(positionAt(offset));
             MessageValue.Frame frame = MessageValue.Frame.readFrom(channel,
-                    Math.toIntExact(windowEnd - positions[offset]));
+                    Math.toIntExact(windowEnd - positionAt(offset)));
             ByteBuffer data = frame.cursor();
             while (offset < end) {
                 int length = data.getInt();
-                long recordEnd = offset + 1 == recordCount ? endPosition : positions[offset + 1];
-                if (length != recordEnd - positions[offset] - Integer.BYTES)
+                long recordEnd = offset + 1 == recordCount ? endPosition : positionAt(offset + 1);
+                if (length != recordEnd - positionAt(offset) - Integer.BYTES)
                     throw new IOException("Record length changed while reading offset " + offset);
                 MessageValue value = frame.valueAt(data.position(), length);
                 data.position(data.position() + length);
@@ -214,8 +222,9 @@ public final class FileMessageLog implements MessageLog {
             if (length < 0 || length > maxRecordBytes || position + Integer.BYTES + length > size) {
                 break;
             }
-            reserveIndex(1);
-            positions[recordCount++] = position;
+            reserveIndex(1, Integer.BYTES + (long) length);
+            if (positions != null) positions[recordCount] = position;
+            recordCount++;
             position += Integer.BYTES + length;
         }
         if (position != size) {
@@ -253,9 +262,21 @@ public final class FileMessageLog implements MessageLog {
         }
     }
 
-    private void reserveIndex(int additional) throws IOException {
+    private long positionAt(int offset) {
+        return positions == null ? offset * uniformRecordBytes : positions[offset];
+    }
+
+    private void reserveIndex(int additional, long recordBytes) throws IOException {
         long required = recordCount + (long) additional;
         if (required > Integer.MAX_VALUE - 8) throw new IOException("Segment record index is full");
+        if (positions == null) {
+            if (recordBytes >= 0 && (recordCount == 0 || recordBytes == uniformRecordBytes)) {
+                uniformRecordBytes = recordBytes;
+                return;
+            }
+            positions = new long[(int) Math.max(1024, required)];
+            for (int offset = 0; offset < recordCount; offset++) positions[offset] = offset * uniformRecordBytes;
+        }
         if (required > positions.length)
             positions = Arrays.copyOf(positions, (int) Math.max(required,
                     Math.min(Integer.MAX_VALUE - 8L, positions.length * 2L)));

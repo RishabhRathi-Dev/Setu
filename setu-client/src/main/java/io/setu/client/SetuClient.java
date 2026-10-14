@@ -34,6 +34,7 @@ public final class SetuClient implements AutoCloseable {
     private final DataOutputStream output;
     private final int maxFrameSize;
     private final AtomicInteger correlationIds = new AtomicInteger();
+    private final ProtocolCodec.ProduceBatchEncoder batchEncoder = new ProtocolCodec.ProduceBatchEncoder();
 
     private SetuClient(Socket socket, int maxFrameSize) throws IOException {
         if (maxFrameSize < 0) throw new IllegalArgumentException("maxFrameSize must be non-negative");
@@ -158,7 +159,7 @@ public final class SetuClient implements AutoCloseable {
     public synchronized BrokerResponse produceBatch(String topic, int partition, List<byte[]> values) throws IOException {
         int correlation = nextId();
         return exchange(Command.PRODUCE_BATCH, correlation, topic, partition, -1,
-                ProtocolCodec.encodeProduceBatch(correlation, topic, partition, values));
+                batchEncoder.encode(correlation, topic, partition, values));
     }
 
     public BrokerResponse fetch(String topic, int partition, long offset, int maxBytes) throws IOException {
@@ -218,6 +219,7 @@ public final class SetuClient implements AutoCloseable {
 
     @Override
     public synchronized void close() throws IOException {
+        batchEncoder.clear();
         if (LOG.isDebugEnabled()) LOG.debug("Client closing peer={}", socket.getRemoteSocketAddress());
         socket.close();
     }

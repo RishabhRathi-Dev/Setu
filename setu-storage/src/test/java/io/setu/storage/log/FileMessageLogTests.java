@@ -14,6 +14,43 @@ class FileMessageLogTests {
     @TempDir Path tempDir;
 
     @Test
+    void uniformOffsetsRemainCorrectWhenRecoveredLogTransitionsToVariableLengths() throws Exception {
+        for (int length : new int[]{0, 3, 1024}) {
+            Path path = tempDir.resolve("uniform-" + length + ".log");
+            var expected = new java.util.ArrayList<byte[]>();
+            for (int i = 0; i < 1537; i++) {
+                byte[] value = new byte[length];
+                java.util.Arrays.fill(value, (byte) i);
+                expected.add(value);
+            }
+            try (var log = new FileMessageLog(path, 4096)) {
+                assertEquals(0, log.appendBatch(expected));
+                assertEquals(1536, log.read(1536, 4096).getFirst().offset());
+                assertArrayEquals(expected.get(1536), log.read(1536, 4096).getFirst().value());
+            }
+            try (var recovered = new FileMessageLog(path, 4096)) {
+                assertEquals(expected.size(), recovered.nextOffset());
+                var varied = java.util.List.of(new byte[]{9}, new byte[0], new byte[2048]);
+                assertEquals(1537, recovered.appendBatch(varied));
+                expected.addAll(varied);
+                assertEquals(1540, recovered.append(new byte[]{7, 8}));
+                expected.add(new byte[]{7, 8});
+                var actual = recovered.read(0, 4 * 1024 * 1024);
+                assertEquals(expected.size(), actual.size());
+                for (int i = 0; i < expected.size(); i++) {
+                    assertEquals(i, actual.get(i).offset());
+                    assertArrayEquals(expected.get(i), actual.get(i).value());
+                }
+            }
+            try (var recovered = new FileMessageLog(path, 4096)) {
+                assertEquals(expected.size(), recovered.nextOffset());
+                var suffix = recovered.read(1535, 4096);
+                for (int i = 0; i < suffix.size(); i++) assertArrayEquals(expected.get(1535 + i), suffix.get(i).value());
+            }
+        }
+    }
+
+    @Test
     void reusedAppendBufferPublishesOnlyCurrentBytesAcrossGrowthAndOversizedBatches() throws Exception {
         Path path = tempDir.resolve("reused.log");
         var expected = new java.util.ArrayList<byte[]>();

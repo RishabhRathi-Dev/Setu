@@ -584,7 +584,9 @@ public final class DefaultBroker implements Broker {
 
         private boolean expired(long now, long ackTimeoutNanos, long inactivityTimeoutNanos) {
             if (now - lastActivityNanos >= inactivityTimeoutNanos) return true;
-            return pendingAckSince.values().stream().anyMatch(since -> now - since >= ackTimeoutNanos);
+            for (long since : pendingAckSince.values())
+                if (now - since >= ackTimeoutNanos) return true;
+            return false;
         }
     }
 }
