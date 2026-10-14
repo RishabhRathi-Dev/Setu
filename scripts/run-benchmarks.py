@@ -230,7 +230,11 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / 'logs/benchmarks/resources')
     parser.add_argument('--log', type=Path, help='explicit single-profile capture (capacity/steady/large-batch)')
     parser.add_argument('--dry-run', action='store_true', help='detect and print the plan without launching anything')
+    parser.add_argument('--report-only', action='store_true',
+                        help='target profile only: report missed performance goals without failing completed measurements')
     args = parser.parse_args()
+    if args.report_only and args.kind != 'target':
+        parser.error('--report-only is only supported for node-target measurements')
     full = args.kind in ('sustained', 'target') and args.measurement == 'full'
     args.repeats = args.repeats if args.repeats is not None else (3 if full or args.kind == 'sweep' else 1)
     args.stage_millis = args.stage_millis if args.stage_millis is not None else (30000 if full else 3000)
@@ -284,7 +288,8 @@ def main():
                     measurement=args.measurement, storage_mode=args.storage_mode, max_concurrency=args.max_concurrency,
                     stage_millis=args.stage_millis, warmup_millis=args.warmup_millis)
     if args.kind == 'target':
-        snapshot.update(source_revision=os.environ.get('GITHUB_SHA'), run_url=(
+        snapshot.update(target_policy='report-only' if args.report_only else 'strict',
+                        source_revision=os.environ.get('GITHUB_SHA'), run_url=(
             os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + os.environ['GITHUB_REPOSITORY']
             + '/actions/runs/' + os.environ['GITHUB_RUN_ID']) if 'GITHUB_RUN_ID' in os.environ else None)
     print('BENCHMARK_RESOURCES ' + json.dumps(snapshot, sort_keys=True), flush=True)
@@ -320,7 +325,10 @@ def main():
             command += java_properties(budget, payload, args.data_directory)
             command += [f'-Dsetu.benchmark.batch.records={batch}']
             if args.kind == 'target':
-                command += ['-Dsetu.benchmark.node.targets=true', '-Dsetu.benchmark.jfr=true']
+                # Python validates and gates the complete measurements after saving them.
+                # Java still fails immediately on worker exceptions, exits and missing JFR.
+                command += ['-Dsetu.benchmark.node.targets=true', '-Dsetu.benchmark.jfr=true',
+                            '-Dsetu.benchmark.node.targets.enforce=false']
             elif args.kind == 'sustained':
                 command += [f'-Dsetu.benchmark.measurement={args.measurement}',
                             f'-Dsetu.benchmark.max.concurrency={args.max_concurrency}',
@@ -347,11 +355,29 @@ def main():
                     raise
             print(f'BENCHMARK_CASE payload_bytes={payload} repeat={repeat + 1} exit={result.returncode} capture={capture}', flush=True)
             if args.kind == 'target':
-                runs = node_target_report.parse_capture(capture.read_text(encoding='utf-8'), modes)
+                captured = capture.read_text(encoding='utf-8')
+                try:
+                    runs = node_target_report.parse_capture(captured, modes)
+                except (ValueError, KeyError) as failure:
+                    print('\n'.join(captured.splitlines()[-60:]), flush=True)
+                    raise RuntimeError(f'node-target measurement incomplete or invalid (exit {result.returncode}): '
+                                       f'{failure}; capture: {capture}') from failure
                 rows += runs
-                node_target_report.save(output, rows, snapshot, modes)
+                print(node_target_report.save(output, rows, snapshot, modes), flush=True)
             if result.returncode:
-                raise RuntimeError(f'benchmark failed; inspect {capture} (resource-limit kills are failures, not throughput results)')
+                print('\n'.join(capture.read_text(encoding='utf-8').splitlines()[-60:]), flush=True)
+                raise RuntimeError(f'benchmark execution failed (exit {result.returncode}); capture: {capture}')
+            if args.kind == 'target':
+                if any(float(stage['errors']) != 0 or float(stage['produced']) <= 0
+                       for run in runs for stage in run['stages']):
+                    raise RuntimeError(f'node-target workload failed: request errors or no completed records; capture: {capture}')
+                failed = [mode for mode, summary in node_target_report.summaries(runs, modes).items()
+                          if not summary['qualified']]
+                if failed:
+                    message = 'Node target not qualified: ' + ', '.join(failed) + '; see measured limits above.'
+                    if not args.report_only:
+                        raise RuntimeError(message + f' Report: {output / "comparison.txt"}')
+                    print(('::warning::' if 'GITHUB_ACTIONS' in os.environ else '') + message, flush=True)
             if args.kind == 'sweep':
                 rows += summarize_capture(capture.read_text(encoding='utf-8'), payload, args.max_concurrency)
                 (output / 'comparison.json').write_text(json.dumps(rows, indent=2) + '\n')
@@ -363,9 +389,8 @@ def main():
                     run['capture'] = str(capture)
                 rows += runs
                 sustained_report.save(output, rows, snapshot)
-    if rows:
-        print(node_target_report.comparison_report(rows, modes) if args.kind == 'target'
-              else sustained_report.comparison_report(rows, snapshot) if args.kind == 'sustained' else comparison_report(rows))
+    if rows and args.kind != 'target':
+        print(sustained_report.comparison_report(rows, snapshot) if args.kind == 'sustained' else comparison_report(rows))
     if full and args.kind == 'sustained' and 1024 in payloads:
         sustained_report.check_gates(rows, modes)
 

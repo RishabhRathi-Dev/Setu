@@ -103,9 +103,55 @@ class ResourceBudgetTests(unittest.TestCase):
             self.assertEqual(1, run.call_count)
             self.assertIn('-Dtest=NodeTargetThroughputBenchmarkTests#memory', run.call_args.args[0])
             self.assertIn('-Dsetu.benchmark.node.targets=true', run.call_args.args[0])
+            self.assertIn('-Dsetu.benchmark.node.targets.enforce=false', run.call_args.args[0])
             documents = list(Path(directory).rglob('comparison.json'))
             self.assertEqual(1, len(documents))
             self.assertEqual(3, len(json.loads(documents[0].read_text())['runs']))
+
+    def test_target_policy_reports_completed_misses_but_keeps_strict_gates_and_execution_failures(self):
+        from test_benchmark_node_targets import fixture, capture
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        for mode in ('IN_MEMORY', 'FILE'):
+            for case in ('report', 'strict', 'worker-exit', 'partial', 'request-error', 'qualified'):
+                with self.subTest(mode=mode, case=case), tempfile.TemporaryDirectory() as directory:
+                    runs = [fixture(mode, repeat) for repeat in (1, 2, 3)]
+                    if case != 'qualified': runs[0]['stages'][0]['cpu_avg'] = '.99'
+                    if case == 'request-error': runs[0]['stages'][0]['errors'] = '1'
+                    captured = capture(runs[:1] if case == 'partial' else runs)
+                    if case in ('worker-exit', 'partial'): captured += '\nworker failure detail\n'
+                    def workload(command, **kwargs):
+                        kwargs['stdout'].write(captured)
+                        return type('Result', (), {'returncode': 137 if case in ('worker-exit', 'partial') else 0})()
+                    argv = ['run-benchmarks', '--kind', 'target', '--measurement', 'full', '--storage-mode', mode,
+                            '--payload-sizes', '1024', '--data-directory', directory, '--output', directory]
+                    if case != 'strict': argv.append('--report-only')
+                    with patch.object(resources, 'detect_host', return_value=self.host(cores=5)), \
+                         patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
+                         patch.object(resources.subprocess, 'run', side_effect=workload), \
+                         patch('builtins.print') as output, patch.object(sys, 'argv', argv):
+                        if case in ('report', 'qualified'):
+                            resources.main()
+                        else:
+                            expected = {'strict': 'Node target not qualified', 'worker-exit': 'execution failed.*137',
+                                        'partial': 'incomplete or invalid.*137', 'request-error': 'request errors'}[case]
+                            with self.assertRaisesRegex(RuntimeError, expected): resources.main()
+                    printed = '\n'.join(str(call.args[0]) for call in output.call_args_list)
+                    if case == 'partial':
+                        self.assertIn('worker failure detail', printed)
+                        self.assertFalse(list(Path(directory).rglob('comparison.json')))
+                    else:
+                        self.assertIn('# Node-target measurements', printed)
+                        if case != 'qualified': self.assertIn('CPU 99.0%', printed)
+                        document = json.loads(next(Path(directory).rglob('comparison.json')).read_text())
+                        self.assertEqual('strict' if case == 'strict' else 'report-only', document['resources']['target_policy'])
+                        if case == 'worker-exit': self.assertIn('worker failure detail', printed)
+
+    def test_report_only_does_not_disable_capacity_or_other_profile_gates(self):
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        with patch.object(sys, 'argv', ['run-benchmarks', '--report-only']), patch('sys.stderr'), self.assertRaises(SystemExit):
+            resources.main()
 
     def test_detection_respects_ancestor_quotas_and_remaining_cgroup_memory(self):
         with tempfile.TemporaryDirectory() as directory:

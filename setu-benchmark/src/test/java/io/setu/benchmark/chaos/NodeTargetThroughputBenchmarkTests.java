@@ -47,6 +47,7 @@ class NodeTargetThroughputBenchmarkTests {
                 if (child.isAlive()) child.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
             }
         }
-        assertTrue(failed.isEmpty(), "Target criteria failed; retained captures: " + failed);
+        if (Boolean.parseBoolean(System.getProperty("setu.benchmark.node.targets.enforce", "true")))
+            assertTrue(failed.isEmpty(), "Target criteria failed; retained captures: " + failed);
     }
 }

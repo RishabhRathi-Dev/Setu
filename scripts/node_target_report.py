@@ -102,6 +102,35 @@ def healthy(run, stage, warmup):
     return warmup['stable'] == 'true' and sustained.qualifies(config, stage)
 
 
+def qualification_failures(run, stage, warmup):
+    """Explain rejected windows using their actual measurements and qualification limits."""
+    failures = []
+    number = lambda key: sustained.number(stage, key)
+    mode = run['config']['mode']
+    limit = (10 if mode == 'FILE' else 5) if number('load_fraction') == .5 else (100 if mode == 'FILE' else 50)
+    if warmup['stable'] != 'true' or stage['warmup_stable'] != 'true':
+        failures.append('warmup did not stabilize')
+    if number('produced') <= 0:
+        failures.append('no completed records')
+    elif number('consumed') < number('produced') * .95:
+        failures.append(f'consumption {number("consumed") / number("produced"):.1%} <95%')
+    if number('errors') != 0:
+        failures.append(f'request errors {number("errors"):.0f} >0')
+    if number('produce_per_s') < number('offered_per_s') * .95:
+        failures.append(f'throughput {number("produce_per_s"):,.0f}/s <95% of offered {number("offered_per_s"):,.0f}/s')
+    if not 0 <= number('p99_ms') < limit:
+        failures.append(f'p99 {number("p99_ms"):.3f} ms outside [0,{limit}) ms')
+    if not 0 <= number('cpu_avg') <= .85:
+        failures.append(f'CPU {number("cpu_avg"):.1%} outside 0–85% of allocated budget')
+    if number('heap_peak_bytes') > 1024**3:
+        failures.append(f'peak heap {number("heap_peak_bytes") / 1024**2:.0f} MiB >1024 MiB')
+    if number('heap_slope_mib_s') > 1:
+        failures.append(f'heap slope {number("heap_slope_mib_s"):.3f} MiB/s >1 MiB/s')
+    if not failures and not healthy(run, stage, warmup):
+        failures.append('worker marked the window unhealthy')
+    return failures
+
+
 def summaries(runs, modes):
     validate_runs(runs, modes)
     result = {}
@@ -136,6 +165,16 @@ def comparison_report(runs, modes):
             lines.append(f'| {run["config"]["mode"]} | {run["repeat"]} | {float(stage["load_fraction"]):.0%} | '
                          f'{float(stage["produce_per_s"]):,.0f} | {float(stage["consume_per_s"]):,.0f} | '
                          f'{float(stage["p99_ms"]):.3f} | {float(stage["heap_slope_mib_s"]):.3f} | {healthy(run, stage, warmup)} |')
+    rejected = []
+    for run in runs:
+        for stage, warmup in zip(run['stages'], run['warmups']):
+            reasons = qualification_failures(run, stage, warmup)
+            if reasons:
+                rejected.append(f'| {run["config"]["mode"]} | {run["repeat"]} | {float(stage["load_fraction"]):.0%} | '
+                                + '; '.join(reasons) + ' |')
+    if rejected:
+        lines += ['', 'Qualification failures (completed measurements are retained):', '',
+                  '| Mode | Repeat | Load | Measured limit failures |', '| --- | ---: | ---: | --- |', *rejected]
     return '\n'.join(lines) + '\n'
 
 

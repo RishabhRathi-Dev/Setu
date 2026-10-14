@@ -88,6 +88,21 @@ class NodeTargetTests(unittest.TestCase):
             runs[0]['stages'][0][key] = value
             with self.subTest(key=key): self.assertFalse(report.summaries(runs, ('IN_MEMORY',))['IN_MEMORY']['qualified'])
 
+    def test_failed_target_report_explains_latency_cpu_and_offered_rate_without_claiming_a_crash(self):
+        runs = [fixture('FILE', repeat) for repeat in (1, 2, 3)]
+        stage = runs[0]['stages'][0]
+        stage.update(cpu_avg='.89', p99_ms='15')
+        stage = runs[0]['stages'][-1]
+        stage.update(produced='5550000', consumed='5550000', produce_per_s='185000', consume_per_s='185000',
+                     produce_mib_per_s=str(185000/1024), consume_mib_per_s=str(185000/1024),
+                     records_per_core='46250', p99_ms='8000')
+        text = report.comparison_report(runs, ('FILE',))
+        self.assertIn('CPU 89.0%', text)
+        self.assertIn('p99 15.000 ms outside [0,10) ms', text)
+        self.assertIn('throughput 185,000/s <95% of offered 250,000/s', text)
+        self.assertIn('p99 8000.000 ms outside [0,100) ms', text)
+        self.assertNotIn('kill', text)
+
     def test_publisher_writes_eight_assets_and_rejects_stale_or_unenforced_reports(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -71,7 +71,7 @@ python3 scripts/run-benchmarks.py --kind target --measurement full \
   --storage-mode FILE --payload-sizes 1024
 ```
 
-The Java test owns the three fresh-JVM repetitions, so the Python launcher starts it once. Reports and JFR summaries are saved before a health failure is returned to CI.
+The Java test owns the three fresh-JVM repetitions, so the Python launcher starts it once. Both direct Maven and Python commands above enforce target qualification. The Python launcher saves and prints all measurements and the specific failed limits before returning a target failure. Add `--report-only` to collect valid, completed measurements on smaller hosts without treating an aspirational target miss as an execution failure; badges still say **unqualified**. Worker exceptions, nonzero exits, request errors, empty stages, missing JFR and invalid or incomplete captures still fail in this mode. The launcher disables only Java's final target assertion and independently evaluates the saved results; direct Maven runs keep that assertion enabled by default.
 
 ## Resource budgets
 
@@ -91,7 +91,7 @@ For direct Windows smoke testing (without the Linux cgroup envelope):
 
 ## CI and publication
 
-Every push and pull request runs production unit tests, benchmark-helper tests, integration tests, bounded chaos, isolated steady checks, sustained smoke, and two full 1 KiB node-target shards with JFR. Each target shard runs three independent repetitions at 50%, 80% and 100% of 500K/s in memory or 250K/s with file storage. Fail-fast is disabled so a failed mode does not suppress the other mode's measurements. Surefire test reports and benchmark artifacts are retained, including failures. Enable **full_benchmark** in workflow dispatch for the additional eight capacity-comparison jobs across four payloads and two storage modes.
+Every push and pull request runs production unit tests, benchmark-helper tests, integration tests, bounded chaos, isolated steady checks, sustained smoke, and two full 1 KiB node-target shards with JFR. Each target shard runs three independent repetitions at 50%, 80% and 100% of 500K/s in memory or 250K/s with file storage. Automatic target shards use `--report-only`: a two-vCPU runner with the default 80% allocation has only 1.6 cores, below the 4–8 vCPU reference for these targets. Completed target misses produce warnings and unqualified badges; execution failures remain errors. Fail-fast is disabled so a failed mode does not suppress the other mode's measurements. Surefire test reports and benchmark artifacts are retained, including failures. Enable **full_benchmark** in workflow dispatch for the additional eight capacity-comparison jobs across four payloads and two storage modes, with the separate 200K/150K capacity gates.
 
 Default-branch push and dispatch runs automatically publish the latest target results with `scripts/publish-node-target-badges.py`. The publisher independently validates three repetitions, every target load, actual counters/rates, warmup, durability, resource allocation, source revision and all three measured JFR stages. Badges show target, median actual throughput, progress and qualification, plus p99, resources and JFR. Unhealthy measurements are labeled unqualified; incomplete runs are labeled incomplete instead of leaving an old success looking current. Unit and integration tests must pass before publication. A source-revision check prevents an older workflow from overwriting a newer commit's metrics. Bot updates use `[skip ci]` to avoid loops.
 

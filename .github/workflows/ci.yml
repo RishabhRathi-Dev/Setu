@@ -36,6 +36,9 @@ jobs:
       - name: Build and test production modules
         run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*Tests,!*ChaosTests,!*BenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test
 
+      - name: Test benchmark launchers, reports and badge publication
+        run: python3 -m unittest discover -s scripts -p 'test_benchmark*.py'
+
       - name: Retain unit and benchmark-helper test results
         if: always()
         uses: actions/upload-artifact@v7
@@ -230,7 +233,7 @@ jobs:
         run: >-
           python3 scripts/run-benchmarks.py --kind target --measurement full
           --storage-mode "$BENCHMARK_MODE" --payload-sizes 1024
-          --fraction "$BENCHMARK_FRACTION"
+          --fraction "$BENCHMARK_FRACTION" --report-only
       - name: Summarize target measurements, including failed qualification
         if: always()
         run: |
