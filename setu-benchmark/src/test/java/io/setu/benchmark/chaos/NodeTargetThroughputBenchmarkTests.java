@@ -22,7 +22,8 @@ class NodeTargetThroughputBenchmarkTests {
         List<String> failed = new ArrayList<>();
         for (int repeat = 1; repeat <= 3; repeat++) {
             Path capture = Files.createDirectories(Path.of(System.getProperty("SETU_LOG_DIR", "logs"))
-                    .resolve("node-target").resolve(mode + "-" + repeat + "-" + UUID.randomUUID()));
+                    .resolve(System.getProperty("setu.benchmark.target.profile", "reference").equals("ci-baseline")
+                            ? "ci-baseline" : "node-target").resolve(mode + "-" + repeat + "-" + UUID.randomUUID()));
             Path log = capture.resolve("worker.log");
             String java = Path.of(System.getProperty("java.home"), "bin",
                     System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java").toString();

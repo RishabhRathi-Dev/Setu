@@ -6,9 +6,14 @@ from pathlib import Path
 import sustained_report as sustained
 
 TARGETS = sustained.TARGETS
+BASELINES = {'IN_MEMORY': 200_000, 'FILE': 80_000}
 
 
-def parse_capture(text, modes, captures=None):
+def targets_for(profile):
+    return {'reference': TARGETS, 'ci-baseline': BASELINES}[profile]
+
+
+def parse_capture(text, modes, captures=None, target_profile='reference'):
     runs, current, identity, selected = [], None, None, True
     for line in text.splitlines():
         if line.startswith('NODE_TARGET_CAPTURE '):
@@ -35,11 +40,12 @@ def parse_capture(text, modes, captures=None):
             else:
                 key = 'stages' if line.startswith('SUSTAINED_STAGE ') else 'warmups' if line.startswith('SUSTAINED_WARMUP ') else 'jfr'
                 current[key].append(row)
-    validate_runs(runs, modes)
+    validate_runs(runs, modes, target_profile=target_profile)
     return runs
 
 
-def validate_runs(runs, modes, require_jfr=True):
+def validate_runs(runs, modes, require_jfr=True, target_profile='reference'):
+    targets = targets_for(target_profile)
     if any(run['config']['mode'] not in modes for run in runs):
         raise ValueError('unexpected target mode')
     for mode in modes:
@@ -57,7 +63,14 @@ def validate_runs(runs, modes, require_jfr=True):
             for key, expected in (('profile', 'full'), ('batch_records', '256'), ('stage_ms', '30000'),
                                   ('warmup_ms', '10000'), ('histogram', 'HdrHistogram_3_digits'), ('unique_delivery', 'true')):
                 if config.get(key, expected) != expected: raise ValueError('wrong target measurement configuration')
-            if int(config['record_bytes']) != 1024 or number(config, 'target_per_s') != TARGETS[mode]:
+            if config.get('target_profile', 'reference') != target_profile:
+                raise ValueError('wrong target profile')
+            if target_profile == 'ci-baseline' and (number(config, 'cpu_cores') != 1.6
+                    or number(config, 'heap_mib') != (256 if mode == 'IN_MEMORY' else 128)):
+                raise ValueError('wrong CI baseline worker budget')
+            if target_profile == 'ci-baseline' and mode == 'FILE' and config['filesystem'] in ('tmpfs', 'ramfs'):
+                raise ValueError('durable-file baseline requires a disk-backed filesystem')
+            if int(config['record_bytes']) != 1024 or number(config, 'target_per_s') != targets[mode]:
                 raise ValueError('wrong payload or node target')
             if number(config, 'cpu_cores') <= 0 or not 128 <= number(config, 'heap_mib') <= 1024:
                 raise ValueError('invalid target resource allocation')
@@ -69,9 +82,12 @@ def validate_runs(runs, modes, require_jfr=True):
             if 'end' not in run or run['end']['mode'] != mode or len(run['stages']) != 3 or len(run['warmups']) != 3:
                 raise ValueError('incomplete target capture')
             for stage, warmup, fraction in zip(run['stages'], run['warmups'], (.5, .8, 1.)):
+                if target_profile == 'ci-baseline' and (stage.get('heap_sampling') != 'jitter_40_70_ms'
+                        or number(stage, 'heap_samples') < 300):
+                    raise ValueError('CI baseline requires dense dithered heap sampling')
                 if stage['mode'] != mode or warmup['mode'] != mode or stage['kind'] != 'latency' or int(stage['concurrency']) != pairs:
                     raise ValueError('mixed target stage')
-                if number(stage, 'load_fraction') != fraction or not math.isclose(number(stage, 'offered_per_s'), TARGETS[mode] * fraction, abs_tol=.01):
+                if number(stage, 'load_fraction') != fraction or not math.isclose(number(stage, 'offered_per_s'), targets[mode] * fraction, abs_tol=.01):
                     raise ValueError('wrong target offered load')
                 if number(stage, 'duration_s') != 30 or number(warmup, 'duration_ms') < 10000:
                     raise ValueError('short target window or warmup')
@@ -131,15 +147,16 @@ def qualification_failures(run, stage, warmup):
     return failures
 
 
-def summaries(runs, modes):
-    validate_runs(runs, modes)
+def summaries(runs, modes, target_profile='reference'):
+    validate_runs(runs, modes, target_profile=target_profile)
+    targets = targets_for(target_profile)
     result = {}
     for mode in modes:
         selected = [run for run in runs if run['config']['mode'] == mode]
         stages = [run['stages'][-1] for run in selected]
         profiles = [next(row for row in run['jfr'] if int(row['stage']) == 3) for run in selected]
         passed = all(healthy(run, stage, warmup) for run in selected for stage, warmup in zip(run['stages'], run['warmups']))
-        result[mode] = dict(target=TARGETS[mode], rate=statistics.median(float(row['produce_per_s']) for row in stages),
+        result[mode] = dict(target=targets[mode], rate=statistics.median(float(row['produce_per_s']) for row in stages),
                             qualified=passed, p99=max(float(row['p99_ms']) for row in stages),
                             heap_mib=max(float(row['heap_peak_bytes']) / 1024**2 for run in selected for row in run['stages']),
                             cpu=max(float(row['cpu_avg']) for run in selected for row in run['stages']),
@@ -148,9 +165,9 @@ def summaries(runs, modes):
     return result
 
 
-def comparison_report(runs, modes):
-    totals = summaries(runs, modes)
-    lines = ['# Node-target measurements', '',
+def comparison_report(runs, modes, target_profile='reference'):
+    totals = summaries(runs, modes, target_profile)
+    lines = ['# CI performance baseline' if target_profile == 'ci-baseline' else '# Node-target measurements', '',
              'Three independent repetitions; 1 KiB records; 10s or longer warmup and 30s measurement at 50%, 80% and 100% of target. '
              'File acknowledgments follow force of every touched segment. Health requires 95% consumption and offered throughput, zero errors, '
              'HDR p99 within mode/load limits, CPU <=85%, heap <=1 GiB and heap slope <=1 MiB/s.', '',
@@ -178,9 +195,10 @@ def comparison_report(runs, modes):
     return '\n'.join(lines) + '\n'
 
 
-def save(output, runs, snapshot, modes):
-    validate_runs(runs, modes)
-    (output / 'comparison.json').write_text(json.dumps(dict(kind='node-target', resources=snapshot, runs=runs), indent=2) + '\n')
-    text = comparison_report(runs, modes)
+def save(output, runs, snapshot, modes, target_profile='reference'):
+    validate_runs(runs, modes, target_profile=target_profile)
+    kind = 'ci-baseline' if target_profile == 'ci-baseline' else 'node-target'
+    (output / 'comparison.json').write_text(json.dumps(dict(kind=kind, resources=snapshot, runs=runs), indent=2) + '\n')
+    text = comparison_report(runs, modes, target_profile)
     (output / 'comparison.txt').write_text(text, encoding='utf-8')
     return text

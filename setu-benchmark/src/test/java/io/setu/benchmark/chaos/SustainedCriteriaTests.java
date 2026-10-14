@@ -31,8 +31,14 @@ class SustainedCriteriaTests {
     }
     @Test void estimatesHeapTrendAcrossGcSawtooth() {
         long m = 1024 * 1024;
-        assertEquals(1, SustainedCriteria.heapSlope(List.of(10*m, 11*m, 12*m), 1));
-        assertEquals(0, SustainedCriteria.heapSlope(List.of(10*m, 20*m, 10*m), 1));
+        assertEquals(1, SustainedCriteria.heapSlope(List.of(10*m, 11*m, 12*m), List.of(0L, 1_000_000_000L, 2_000_000_000L)));
+        assertEquals(0, SustainedCriteria.heapSlope(List.of(10*m, 20*m, 10*m), List.of(0L, 1_000_000_000L, 2_000_000_000L)));
+    }
+    @Test void estimatesHeapTrendUsingIrregularTimesRatherThanSampleIndexes() {
+        long m = 1024 * 1024;
+        assertEquals(1, SustainedCriteria.heapSlope(List.of(10*m, 11*m, 20*m), List.of(0L, 1_000_000_000L, 10_000_000_000L)));
+        assertEquals(Double.POSITIVE_INFINITY, SustainedCriteria.heapSlope(List.of(m, 2*m), List.of(0L, 0L)));
+        assertEquals(Double.POSITIVE_INFINITY, SustainedCriteria.heapSlope(List.of(m, 2*m), List.of(0L)));
     }
     private boolean healthy(long produced, long consumed, long errors, long missed, double p99, double cpu,
                             double slope, double fraction) {

@@ -88,6 +88,7 @@ class Budget:
     direct_mib: int
     memory_log_bytes: int
     disk_reserve_bytes: int
+    allowed_cpus: tuple = ()
 
 
 def fraction(value):
@@ -98,13 +99,16 @@ def fraction(value):
 
 
 def plan(host, cpu_fraction=.8, memory_fraction=.8, disk_fraction=.8, profile='host', workers=1,
-         heap_mib=None, direct_mib=None, memory_log_mib=None):
+         heap_mib=None, direct_mib=None, memory_log_mib=None, memory_limit_mib=None):
     cpu_ceiling, memory_ceiling = {'host': (math.inf, math.inf),
                                  'github-private': (2, 8 * GIB), 'github-public': (4, 16 * GIB)}[profile]
     cpus = math.floor(min(host['available_cpu_cores'], cpu_ceiling) * fraction(cpu_fraction) * 100) / 100
     if cpus < .01:
         raise ValueError('CPU budget must allow at least 1% of one core')
-    memory = int(min(host['memory_available_bytes'], memory_ceiling) * fraction(memory_fraction))
+    available_memory = min(host['memory_available_bytes'], memory_ceiling)
+    memory = memory_limit_mib * MIB if memory_limit_mib is not None else int(available_memory * fraction(memory_fraction))
+    if memory > available_memory:
+        raise ValueError('requested memory limit exceeds available memory or profile ceiling')
     # The hard limit includes Maven (512 MiB), Surefire (256 MiB), all workers,
     # native allocations, and charged page cache. Heap/direct are not RSS limits.
     worker_mib = (memory // MIB - 768) // workers
@@ -126,7 +130,8 @@ def java_properties(budget, payload, data_directory):
             f'-Dsetu.benchmark.direct.mib={budget.direct_mib}', f'-Dsetu.benchmark.cpu.cores={budget.cpu_cores:.6f}',
             f'-Dsetu.benchmark.memory.log.bytes={budget.memory_log_bytes}',
             f'-Dsetu.benchmark.disk.reserve.bytes={budget.disk_reserve_bytes}',
-            f'-Djava.io.tmpdir={data_directory}', '-DargLine=-Xmx256m', '-Dsetu.log.level=INFO']
+            f'-Djava.io.tmpdir={data_directory}', f'-Dsetu.benchmark.expected.tmpdir={data_directory}',
+            f'-DargLine=-Xmx256m "-Djava.io.tmpdir={data_directory}"', '-Dsetu.log.level=INFO']
 
 
 def limited_command(command, budget, unit):
@@ -141,6 +146,8 @@ def limited_command(command, budget, unit):
                        '-p', f'MemoryMax={budget.memory_bytes}', '-p', f'MemoryHigh={int(budget.memory_bytes * .9)}',
                        '-p', 'MemorySwapMax=0', '-p', 'OOMPolicy=kill', '-p', 'KillMode=control-group',
                        '-p', 'RuntimeMaxSec=3300']
+    if budget.allowed_cpus:
+        result += ['-p', 'AllowedCPUs=' + ','.join(map(str, budget.allowed_cpus))]
     for name in ('JAVA_HOME', 'PATH', 'HOME', 'MAVEN_OPTS', 'PYTHONHOME', 'LD_LIBRARY_PATH'):
         if name in os.environ:
             result.append('--setenv=' + name + '=' + os.environ[name])
@@ -210,10 +217,10 @@ def main():
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--kind', choices=('target', 'sustained', 'sweep', 'capacity', 'steady', 'large-batch', 'chaos'), default='sustained')
+    parser.add_argument('--kind', choices=('baseline', 'target', 'sustained', 'sweep', 'capacity', 'steady', 'large-batch', 'chaos'), default='sustained')
     parser.add_argument('--measurement', choices=('smoke', 'full'), default='smoke')
     parser.add_argument('--storage-mode', choices=('both', 'IN_MEMORY', 'FILE'), default='both')
-    parser.add_argument('--profile', choices=('host', 'github-private', 'github-public'), default='host')
+    parser.add_argument('--profile', choices=('host', 'github-private', 'github-public'))
     parser.add_argument('--fraction', type=fraction, default=.8)
     parser.add_argument('--cpu-fraction', type=fraction)
     parser.add_argument('--memory-fraction', type=fraction)
@@ -235,14 +242,21 @@ def main():
     args = parser.parse_args()
     if args.report_only and args.kind != 'target':
         parser.error('--report-only is only supported for node-target measurements')
-    full = args.kind in ('sustained', 'target') and args.measurement == 'full'
+    target_kind = args.kind in ('target', 'baseline')
+    target_profile = 'ci-baseline' if args.kind == 'baseline' else 'reference'
+    args.profile = args.profile or ('github-private' if args.kind == 'baseline' else 'host')
+    if args.kind == 'baseline':
+        if (args.profile != 'github-private' or args.fraction != .8
+                or args.cpu_fraction not in (None, .8) or args.memory_fraction is not None):
+            parser.error('CI baseline requires the github-private profile, 0.8 CPU fraction and its fixed 5 GiB memory limit')
+    full = args.kind in ('sustained', 'target', 'baseline') and args.measurement == 'full'
     args.repeats = args.repeats if args.repeats is not None else (3 if full or args.kind == 'sweep' else 1)
     args.stage_millis = args.stage_millis if args.stage_millis is not None else (30000 if full else 3000)
     args.warmup_millis = args.warmup_millis if args.warmup_millis is not None else (10000 if full else 2000)
     args.max_concurrency = args.max_concurrency if args.max_concurrency is not None else (32768 if args.kind == 'sustained' else 8)
     if full and (args.repeats != 3 or args.stage_millis < 30000 or args.warmup_millis < 10000):
         parser.error('full measurements require three repetitions, >=10000 ms warmup and >=30000 ms measurement')
-    if args.kind == 'target':
+    if target_kind:
         if not full or args.storage_mode == 'both' or args.payload_sizes != '1024':
             parser.error('node targets require --measurement full, a single --storage-mode and --payload-sizes 1024')
         if args.stage_millis != 30000 or args.warmup_millis != 10000:
@@ -268,9 +282,19 @@ def main():
         parser.error('sweeps use separate captures; --log is only for single profiles')
     args.data_directory = args.data_directory.resolve(strict=True)
     host = detect_host(args.data_directory)
+    if args.kind == 'baseline' and args.storage_mode == 'FILE' and re.search(r'\b(tmpfs|ramfs)\b', host.get('disk_type', '')):
+        raise ValueError('durable-file baseline requires a disk-backed --data-directory (for example /var/tmp on WSL)')
     budget = plan(host, args.cpu_fraction or args.fraction, args.memory_fraction or args.fraction,
                   args.disk_fraction or args.fraction, args.profile, 2 if args.kind == 'steady' else 1,
-                  args.heap_mib, args.direct_mib, args.memory_log_mib)
+                  args.heap_mib, args.direct_mib, args.memory_log_mib,
+                  memory_limit_mib=5120 if args.kind == 'baseline' else None)
+    if args.kind == 'baseline' and (budget.cpu_cores != 1.6 or budget.memory_bytes != 5 * GIB):
+        raise ValueError('CI baseline requires at least 2 available CPUs and 5 GiB available memory for its fixed 1.6 CPU/5 GiB envelope')
+    if args.kind == 'baseline' and (budget.heap_mib != (256 if args.storage_mode == 'IN_MEMORY' else 128)
+                                   or budget.direct_mib != 128 or budget.memory_log_bytes != 64 * MIB):
+        parser.error('CI baseline requires the default mode heap, 128 MiB direct memory and 64 MiB retained log')
+    if args.kind == 'baseline':
+        budget = replace(budget, allowed_cpus=tuple(host['affinity'][:2]))
     if args.kind == 'sustained':
         if args.heap_mib is None:
             heap = min(1024, budget.heap_mib)
@@ -282,13 +306,13 @@ def main():
         args.max_concurrency = 1 << (min(host_cap, args.max_concurrency).bit_length() - 1)
     snapshot = dict(host=host, budget=asdict(budget), profile=args.profile, kind=args.kind,
                     cpu_fraction=args.cpu_fraction or args.fraction,
-                    memory_fraction=args.memory_fraction or args.fraction,
+                    memory_fraction=None if args.kind == 'baseline' else args.memory_fraction or args.fraction,
                     disk_fraction=args.disk_fraction or args.fraction, enforcement='systemd-cgroup-v2',
-                    payload_sizes=payloads, repeats=args.repeats if args.kind in ('target', 'sweep', 'sustained') else 1,
+                    payload_sizes=payloads, repeats=args.repeats if args.kind in ('target', 'baseline', 'sweep', 'sustained') else 1,
                     measurement=args.measurement, storage_mode=args.storage_mode, max_concurrency=args.max_concurrency,
                     stage_millis=args.stage_millis, warmup_millis=args.warmup_millis)
-    if args.kind == 'target':
-        snapshot.update(target_policy='report-only' if args.report_only else 'strict',
+    if target_kind:
+        snapshot.update(target_profile=target_profile, target_policy='report-only' if args.report_only else 'strict',
                         source_revision=os.environ.get('GITHUB_SHA'), run_url=(
             os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + os.environ['GITHUB_REPOSITORY']
             + '/actions/runs/' + os.environ['GITHUB_RUN_ID']) if 'GITHUB_RUN_ID' in os.environ else None)
@@ -314,21 +338,23 @@ def main():
                 test = 'SustainedThroughputBenchmarkTests'
                 if args.storage_mode != 'both':
                     test += '#memory' if args.storage_mode == 'IN_MEMORY' else '#file'
-            if args.kind == 'target':
+            if target_kind:
                 test = 'NodeTargetThroughputBenchmarkTests#' + ('memory' if args.storage_mode == 'IN_MEMORY' else 'file')
             if args.kind == 'chaos':
                 test = '*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests,ProcessCpuSamplerTests,CpuSaturationHoldTests,CapacityJfrTests,SustainedCriteriaTests'
             if args.kind == 'large-batch':
                 test += '#progressivelyRampsFileProducersAndConsumersUntilTheRuntimeLimit'
+            test += ',BenchmarkEnvironmentTests'
             command = ['bash', str(ROOT / 'mvnw'), '--batch-mode', '--no-transfer-progress', '-pl', 'setu-benchmark', '-am',
                        '-Dtest=' + test, '-Dsurefire.failIfNoSpecifiedTests=false']
             command += java_properties(budget, payload, args.data_directory)
             command += [f'-Dsetu.benchmark.batch.records={batch}']
-            if args.kind == 'target':
+            if target_kind:
                 # Python validates and gates the complete measurements after saving them.
                 # Java still fails immediately on worker exceptions, exits and missing JFR.
                 command += ['-Dsetu.benchmark.node.targets=true', '-Dsetu.benchmark.jfr=true',
-                            '-Dsetu.benchmark.node.targets.enforce=false']
+                            '-Dsetu.benchmark.node.targets.enforce=false',
+                            '-Dsetu.benchmark.target.profile=' + target_profile]
             elif args.kind == 'sustained':
                 command += [f'-Dsetu.benchmark.measurement={args.measurement}',
                             f'-Dsetu.benchmark.max.concurrency={args.max_concurrency}',
@@ -354,27 +380,28 @@ def main():
                     subprocess.run(([] if os.geteuid() == 0 else ['sudo', '-n']) + ['systemctl', 'stop', unit], check=False)
                     raise
             print(f'BENCHMARK_CASE payload_bytes={payload} repeat={repeat + 1} exit={result.returncode} capture={capture}', flush=True)
-            if args.kind == 'target':
+            if target_kind:
                 captured = capture.read_text(encoding='utf-8')
                 try:
-                    runs = node_target_report.parse_capture(captured, modes)
+                    runs = node_target_report.parse_capture(captured, modes, target_profile=target_profile)
                 except (ValueError, KeyError) as failure:
                     print('\n'.join(captured.splitlines()[-60:]), flush=True)
                     raise RuntimeError(f'node-target measurement incomplete or invalid (exit {result.returncode}): '
                                        f'{failure}; capture: {capture}') from failure
                 rows += runs
-                print(node_target_report.save(output, rows, snapshot, modes), flush=True)
+                print(node_target_report.save(output, rows, snapshot, modes, target_profile), flush=True)
             if result.returncode:
                 print('\n'.join(capture.read_text(encoding='utf-8').splitlines()[-60:]), flush=True)
                 raise RuntimeError(f'benchmark execution failed (exit {result.returncode}); capture: {capture}')
-            if args.kind == 'target':
+            if target_kind:
                 if any(float(stage['errors']) != 0 or float(stage['produced']) <= 0
                        for run in runs for stage in run['stages']):
                     raise RuntimeError(f'node-target workload failed: request errors or no completed records; capture: {capture}')
-                failed = [mode for mode, summary in node_target_report.summaries(runs, modes).items()
+                failed = [mode for mode, summary in node_target_report.summaries(runs, modes, target_profile).items()
                           if not summary['qualified']]
                 if failed:
-                    message = 'Node target not qualified: ' + ', '.join(failed) + '; see measured limits above.'
+                    label = 'CI baseline' if args.kind == 'baseline' else 'Node target'
+                    message = label + ' not qualified: ' + ', '.join(failed) + '; see measured limits above.'
                     if not args.report_only:
                         raise RuntimeError(message + f' Report: {output / "comparison.txt"}')
                     print(('::warning::' if 'GITHUB_ACTIONS' in os.environ else '') + message, flush=True)
@@ -389,7 +416,7 @@ def main():
                     run['capture'] = str(capture)
                 rows += runs
                 sustained_report.save(output, rows, snapshot)
-    if rows and args.kind != 'target':
+    if rows and not target_kind:
         print(sustained_report.comparison_report(rows, snapshot) if args.kind == 'sustained' else comparison_report(rows))
     if full and args.kind == 'sustained' and 1024 in payloads:
         sustained_report.check_gates(rows, modes)

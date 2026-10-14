@@ -29,16 +29,19 @@ final class SustainedCriteria {
                 && (offered == 0 || actual >= offered * .95);
     }
 
-    /** Least-squares slope of evenly spaced heap samples, in MiB/s. Allows GC sawtooth noise. */
-    static double heapSlope(List<Long> samples, double intervalSeconds) {
-        if (samples.size() < 2) return Double.POSITIVE_INFINITY;
-        double meanX = (samples.size() - 1) / 2.0;
+    /** Least-squares used-heap slope against actual sample times, in MiB/s. */
+    static double heapSlope(List<Long> samples, List<Long> timesNanos) {
+        if (samples.size() < 2 || samples.size() != timesNanos.size()) return Double.POSITIVE_INFINITY;
+        long origin = timesNanos.getFirst();
+        double meanX = timesNanos.stream().mapToDouble(time -> (time - origin) / 1e9).average().orElseThrow();
         double meanY = samples.stream().mapToDouble(Long::doubleValue).average().orElseThrow();
         double covariance = 0, variance = 0;
         for (int i = 0; i < samples.size(); i++) {
-            covariance += (i - meanX) * (samples.get(i) - meanY);
-            variance += (i - meanX) * (i - meanX);
+            if (i > 0 && timesNanos.get(i) <= timesNanos.get(i - 1)) return Double.POSITIVE_INFINITY;
+            double x = (timesNanos.get(i) - origin) / 1e9 - meanX;
+            covariance += x * (samples.get(i) - meanY);
+            variance += x * x;
         }
-        return covariance / variance / intervalSeconds / (1024 * 1024);
+        return variance <= 0 ? Double.POSITIVE_INFINITY : covariance / variance / (1024 * 1024);
     }
 }

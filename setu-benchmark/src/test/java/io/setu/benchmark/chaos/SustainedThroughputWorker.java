@@ -78,13 +78,16 @@ final class SustainedThroughputWorker {
             load.window = window;
             List<Long> heaps = new ArrayList<>();
             List<Long> sampleTimes = new ArrayList<>();
+            SplittableRandom sampling = new SplittableRandom(0x5e7);
             long peakBacklog = backlogStart;
             while (System.nanoTime() < window.end && load.failure.get() == null) {
                 heaps.add(ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed());
                 sampleTimes.add(System.nanoTime());
                 peakBacklog = Math.max(peakBacklog, load.backlog());
                 load.checkDisk();
-                Thread.sleep(Math.min(250, Math.max(1, (window.end - System.nanoTime()) / 1000000)));
+                // Dither frequent samples so a periodic GC sawtooth cannot phase-lock to a 250 ms poll.
+                Thread.sleep(Math.min(sampling.nextLong(40, 71),
+                        Math.max(1, (window.end - System.nanoTime()) / 1000000)));
             }
             long stopped = System.nanoTime();
             event.end();
@@ -103,19 +106,17 @@ final class SustainedThroughputWorker {
             long missed = window.missed.sum();
             double p50 = window.percentile(50), p99 = window.percentile(99), p999 = window.percentile(99.9);
             long heapPeak = heaps.stream().mapToLong(Long::longValue).max().orElse(Long.MAX_VALUE);
-            double sampleInterval = sampleTimes.size() < 2 ? .25
-                    : (sampleTimes.getLast() - sampleTimes.getFirst()) / 1e9 / (sampleTimes.size() - 1);
-            double slope = SustainedCriteria.heapSlope(heaps, sampleInterval);
+            double slope = SustainedCriteria.heapSlope(heaps, sampleTimes);
             boolean healthy = SustainedCriteria.healthy(mode, produced, consumed, errors, missed, p99, cpu,
                     heapPeak, slope, stable, offered, produced / seconds, fraction) && load.failure.get() == null
                     && stopped >= window.end;
-            System.out.printf(Locale.ROOT, "SUSTAINED_STAGE mode=%s kind=%s concurrency=%d load_fraction=%.1f offered_per_s=%.3f duration_s=%.3f produced=%d consumed=%d produce_per_s=%.3f consume_per_s=%.3f produce_mib_per_s=%.3f consume_mib_per_s=%.3f records_per_core=%.3f consume_ratio=%.6f backlog_start=%d backlog_end=%d backlog_peak=%d errors=%d missed_records=%d p50_ms=%.6f p99_ms=%.6f p999_ms=%.6f produce_p99_ms=%.6f fetch_p99_ms=%.6f ack_p99_ms=%.6f scheduled_p99_ms=%.6f cpu_avg=%.6f heap_peak_bytes=%d heap_slope_mib_s=%.6f warmup_stable=%s healthy=%s qualified=%s%n",
+            System.out.printf(Locale.ROOT, "SUSTAINED_STAGE mode=%s kind=%s concurrency=%d load_fraction=%.1f offered_per_s=%.3f duration_s=%.3f produced=%d consumed=%d produce_per_s=%.3f consume_per_s=%.3f produce_mib_per_s=%.3f consume_mib_per_s=%.3f records_per_core=%.3f consume_ratio=%.6f backlog_start=%d backlog_end=%d backlog_peak=%d errors=%d missed_records=%d p50_ms=%.6f p99_ms=%.6f p999_ms=%.6f produce_p99_ms=%.6f fetch_p99_ms=%.6f ack_p99_ms=%.6f scheduled_p99_ms=%.6f cpu_avg=%.6f heap_peak_bytes=%d heap_slope_mib_s=%.6f heap_samples=%d heap_sampling=jitter_40_70_ms warmup_stable=%s healthy=%s qualified=%s%n",
                     mode, offered == 0 ? "ramp" : "latency", concurrency, fraction, offered, seconds, produced, consumed,
                     produced / seconds, consumed / seconds, produced * (double) BYTES / seconds / (1024 * 1024),
                     consumed * (double) BYTES / seconds / (1024 * 1024), produced / seconds / BenchmarkSettings.cpuCores(),
                     produced == 0 ? 0 : (double) consumed / produced, backlogStart, backlogEnd, peakBacklog,
                     errors, missed, p50, p99, p999, window.p(window.produce, 99), window.p(window.fetch, 99),
-                    window.p(window.ack, 99), window.p(window.scheduled, 99), cpu, heapPeak, slope, stable, healthy, FULL && healthy);
+                    window.p(window.ack, 99), window.p(window.scheduled, 99), cpu, heapPeak, slope, heaps.size(), stable, healthy, FULL && healthy);
             if (load.failure.get() != null) throw new IOException("sustained workload failed", load.failure.get());
             return new Result(concurrency, produced / seconds, healthy);
         } finally {

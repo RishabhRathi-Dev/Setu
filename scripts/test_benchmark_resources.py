@@ -16,7 +16,55 @@ spec.loader.exec_module(resources)
 class ResourceBudgetTests(unittest.TestCase):
     def host(self, cores=12, available=16 * resources.GIB):
         return dict(available_cpu_cores=cores, memory_available_bytes=available,
-                    filesystem_free_bytes=100 * resources.GIB)
+                    filesystem_free_bytes=100 * resources.GIB, affinity=list(range(int(cores))))
+
+    def test_baseline_has_fixed_envelope_and_cannot_be_report_only_or_unbounded(self):
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        argv = ['run-benchmarks', '--kind', 'baseline', '--measurement', 'full', '--storage-mode', 'FILE',
+                '--payload-sizes', '1024', '--data-directory', str(Path(__file__).parent), '--dry-run']
+        with patch.object(resources, 'detect_host', return_value=self.host()), \
+             patch.object(sys, 'argv', argv), patch('builtins.print') as output:
+            resources.main()
+        snapshot = json.loads(output.call_args.args[0].split(' ', 1)[1])
+        self.assertEqual(1.6, snapshot['budget']['cpu_cores'])
+        self.assertEqual(5 * resources.GIB, snapshot['budget']['memory_bytes'])
+        self.assertEqual([0, 1], snapshot['budget']['allowed_cpus'])
+        self.assertEqual('ci-baseline', snapshot['target_profile'])
+        self.assertEqual('strict', snapshot['target_policy'])
+        with patch.object(resources, 'detect_host', return_value=self.host(available=7 * resources.GIB)), \
+             patch.object(sys, 'argv', argv), patch('builtins.print') as output:
+            resources.main()
+        self.assertEqual(5 * resources.GIB, json.loads(output.call_args.args[0].split(' ', 1)[1])['budget']['memory_bytes'])
+        for flags in (['--report-only'], ['--profile', 'host'], ['--fraction', '1']):
+            with patch.object(sys, 'argv', argv + flags), patch('sys.stderr'), self.assertRaises(SystemExit):
+                resources.main()
+        with patch.object(resources, 'detect_host', return_value=self.host(cores=1)), \
+             patch.object(sys, 'argv', argv), self.assertRaisesRegex(ValueError, 'fixed 1.6 CPU/5 GiB'):
+            resources.main()
+
+    def test_baseline_saves_failed_measurements_and_enforces_every_window(self):
+        from test_benchmark_node_targets import fixture, capture
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        runs = [fixture('IN_MEMORY', repeat, 'ci-baseline') for repeat in (1, 2, 3)]
+        runs[1]['stages'][0]['p99_ms'] = '6'
+        def workload(command, **kwargs):
+            self.assertIn('-Dsetu.benchmark.target.profile=ci-baseline', command)
+            self.assertIn('-Dtest=NodeTargetThroughputBenchmarkTests#memory,BenchmarkEnvironmentTests', command)
+            kwargs['stdout'].write(capture(runs))
+            return type('Result', (), {'returncode': 0})()
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(resources, 'detect_host', return_value=self.host()), \
+             patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
+             patch.object(resources.subprocess, 'run', side_effect=workload), patch('builtins.print'), \
+             patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'baseline', '--measurement', 'full',
+                 '--storage-mode', 'IN_MEMORY', '--payload-sizes', '1024', '--data-directory', directory, '--output', directory]):
+            with self.assertRaisesRegex(RuntimeError, 'CI baseline not qualified'):
+                resources.main()
+            document = json.loads(next(Path(directory).rglob('comparison.json')).read_text())
+            self.assertEqual('ci-baseline', document['kind'])
+            self.assertEqual(3, len(document['runs']))
 
     def test_host_and_runner_profiles_reserve_capacity_without_rounding_cpu_up(self):
         budget = resources.plan(self.host())
@@ -101,7 +149,7 @@ class ResourceBudgetTests(unittest.TestCase):
                                       '--payload-sizes', '1024', '--data-directory', directory, '--output', directory]):
             with self.assertRaises(RuntimeError): resources.main()
             self.assertEqual(1, run.call_count)
-            self.assertIn('-Dtest=NodeTargetThroughputBenchmarkTests#memory', run.call_args.args[0])
+            self.assertIn('-Dtest=NodeTargetThroughputBenchmarkTests#memory,BenchmarkEnvironmentTests', run.call_args.args[0])
             self.assertIn('-Dsetu.benchmark.node.targets=true', run.call_args.args[0])
             self.assertIn('-Dsetu.benchmark.node.targets.enforce=false', run.call_args.args[0])
             documents = list(Path(directory).rglob('comparison.json'))
@@ -173,7 +221,7 @@ class ResourceBudgetTests(unittest.TestCase):
             self.assertEqual(3 * resources.GIB, host['memory_available_bytes'])
 
     def test_systemd_caps_whole_process_tree_and_preserves_worker_environment(self):
-        budget = resources.plan(self.host())
+        budget = resources.replace(resources.plan(self.host()), allowed_cpus=(2, 4))
         with patch.object(resources.os, 'geteuid', return_value=1000, create=True), \
              patch.object(resources.os, 'getuid', return_value=1000, create=True), \
              patch.object(resources.os, 'getgid', return_value=1000, create=True), \
@@ -182,6 +230,7 @@ class ResourceBudgetTests(unittest.TestCase):
             command = resources.limited_command(['bash', 'mvnw', 'test'], budget, 'test-unit')
         self.assertEqual(['sudo', '-n', 'systemd-run'], command[:3])
         self.assertIn('CPUQuota=960%', command)
+        self.assertIn('AllowedCPUs=2,4', command)
         self.assertIn('MemoryMax=' + str(budget.memory_bytes), command)
         self.assertIn('MemorySwapMax=0', command)
         self.assertIn('RuntimeMaxSec=3300', command)

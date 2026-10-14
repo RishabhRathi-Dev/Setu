@@ -12,12 +12,13 @@ publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
 
 
-def fixture(mode='IN_MEMORY', repeat=1):
+def fixture(mode='IN_MEMORY', repeat=1, target_profile='reference'):
     template = run_fixture(mode, repeat)
-    target = report.TARGETS[mode]
+    target = report.targets_for(target_profile)[mode]
+    cores = 1.6 if target_profile == 'ci-baseline' else 4
     pairs = 1 if mode == 'IN_MEMORY' else 2
-    config = dict(mode=mode, record_bytes='1024', target_per_s=str(target), concurrency=str(pairs),
-                  cpu_cores='4', heap_mib='256' if mode == 'IN_MEMORY' else '128',
+    config = dict(mode=mode, record_bytes='1024', target_profile=target_profile, target_per_s=str(target), concurrency=str(pairs),
+                  cpu_cores=str(cores), heap_mib='256' if mode == 'IN_MEMORY' else '128',
                   filesystem='ext4', durability=template['config']['durability'])
     stages = template['stages'][1:]
     for row, fraction in zip(stages, (.5, .8, 1)):
@@ -25,7 +26,9 @@ def fixture(mode='IN_MEMORY', repeat=1):
         row.update(concurrency=str(pairs), produced=str(rate * 30), consumed=str(rate * 30),
                    offered_per_s=str(rate), produce_per_s=str(rate), consume_per_s=str(rate),
                    produce_mib_per_s=str(rate/1024), consume_mib_per_s=str(rate/1024),
-                   records_per_core=str(rate/4), heap_peak_bytes=str(64*1024**2))
+                   records_per_core=str(rate/cores), heap_peak_bytes=str(64*1024**2))
+        if target_profile == 'ci-baseline':
+            row.update(heap_sampling='jitter_40_70_ms', heap_samples='550')
     return dict(config=config, repeat=repeat, capture=f'/{mode}-{repeat}/worker.log', stages=stages,
                 warmups=[dict(mode=mode, duration_ms='10000', stable='true') for _ in stages],
                 end=dict(mode=mode, qualified='true'),
@@ -56,6 +59,24 @@ def documents():
 
 
 class NodeTargetTests(unittest.TestCase):
+    def test_baseline_qualifies_separately_and_cannot_publish_as_reference_target(self):
+        runs = [fixture(mode, repeat, 'ci-baseline') for mode in report.TARGETS for repeat in (1, 2, 3)]
+        parsed = report.parse_capture(capture(runs), report.TARGETS, target_profile='ci-baseline')
+        totals = report.summaries(parsed, report.TARGETS, 'ci-baseline')
+        self.assertEqual(200000, totals['IN_MEMORY']['target'])
+        self.assertEqual(80000, totals['FILE']['target'])
+        self.assertTrue(all(row['qualified'] for row in totals.values()))
+        self.assertIn('# CI performance baseline', report.comparison_report(parsed, report.TARGETS, 'ci-baseline'))
+        with self.assertRaisesRegex(ValueError, 'wrong target profile'):
+            report.validate_runs(parsed, report.TARGETS)
+        parsed[0]['stages'][0]['heap_samples'] = '100'
+        with self.assertRaisesRegex(ValueError, 'dense dithered'):
+            report.validate_runs(parsed, report.TARGETS, target_profile='ci-baseline')
+        parsed[0]['stages'][0]['heap_samples'] = '550'
+        parsed[-1]['config']['filesystem'] = 'tmpfs'
+        with self.assertRaisesRegex(ValueError, 'disk-backed'):
+            report.validate_runs(parsed, report.TARGETS, target_profile='ci-baseline')
+
     def test_capture_preserves_repetitions_jfr_and_actual_targets(self):
         runs = [fixture(mode, repeat) for mode in report.TARGETS for repeat in (1,2,3)]
         parsed = report.parse_capture(capture(runs), report.TARGETS)

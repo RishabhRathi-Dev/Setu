@@ -17,12 +17,17 @@ final class NodeTargetThroughputWorker {
             throw new IllegalArgumentException("Node targets use 10s adaptive warmup, 30s measurement and 256-record batches");
         StorageMode mode = StorageMode.valueOf(args[0]);
         Path root = Files.createDirectories(Path.of(args[1]));
-        double target = mode == StorageMode.IN_MEMORY ? 500000 : 250000;
+        String profile = System.getProperty("setu.benchmark.target.profile", "reference");
+        double target = switch (profile) {
+            case "reference" -> mode == StorageMode.IN_MEMORY ? 500000 : 250000;
+            case "ci-baseline" -> mode == StorageMode.IN_MEMORY ? 200000 : 80000;
+            default -> throw new IllegalArgumentException("Unknown target profile: " + profile);
+        };
         int concurrency = mode == StorageMode.IN_MEMORY ? 1 : 2;
         if (concurrency > SustainedCriteria.concurrencyLimit(BenchmarkSettings.cpuCores(), 32768))
             throw new IllegalArgumentException("CPU budget is too small for the target concurrency");
-        System.out.printf(Locale.ROOT, "NODE_TARGET_CONFIG mode=%s profile=full record_bytes=1024 batch_records=256 stage_ms=30000 warmup_ms=10000 histogram=HdrHistogram_3_digits unique_delivery=true target_per_s=%.0f concurrency=%d cpu_cores=%.3f heap_mib=%d filesystem=%s durability=%s%n",
-                mode, target, concurrency, BenchmarkSettings.cpuCores(), Runtime.getRuntime().maxMemory() / (1024 * 1024),
+        System.out.printf(Locale.ROOT, "NODE_TARGET_CONFIG mode=%s profile=full record_bytes=1024 batch_records=256 stage_ms=30000 warmup_ms=10000 histogram=HdrHistogram_3_digits unique_delivery=true target_profile=%s target_per_s=%.0f concurrency=%d cpu_cores=%.3f heap_mib=%d filesystem=%s durability=%s%n",
+                mode, profile, target, concurrency, BenchmarkSettings.cpuCores(), Runtime.getRuntime().maxMemory() / (1024 * 1024),
                 Files.getFileStore(root).type(), mode == StorageMode.FILE ? "force_each_group_commit_before_ack" : "volatile");
         if (Boolean.getBoolean("setu.benchmark.jfr"))
             CapacityJfr.start(Path.of(System.getProperty("SETU_LOG_DIR", "logs"), "node-target.jfr"));

@@ -90,7 +90,8 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.5.3</version>
                     <configuration>
-                        <argLine>@{argLine} ${setu.jvm.gc.args}</argLine>
+                        <!-- Resolve CLI argLine overrides, including heap and temp directory, before JVM startup. -->
+                        <argLine>${argLine} ${setu.jvm.gc.args}</argLine>
                     </configuration>
                 </plugin>
             </plugins>
