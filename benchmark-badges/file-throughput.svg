@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="24" viewBox="0 0 432 24" role="img" aria-label="file peak rates: 205.50K prod/s · 178.53K consumed/s">
+  <title>file peak rates: 205.50K prod/s · 178.53K consumed/s</title>
+  <rect width="432" height="24" rx="3" fill="#007ec6"/>
+  <path d="M3 0H136V24H3Q0 24 0 21V3Q0 0 3 0" fill="#555"/>
+  <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="12">
+    <text x="68" y="16">file peak rates</text>
+    <text x="284" y="16">205.50K prod/s · 178.53K consumed/s</text>
+  </g>
+</svg>

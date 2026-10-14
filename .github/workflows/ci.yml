@@ -130,13 +130,21 @@ jobs:
           python3 scripts/run-benchmarks.py --kind sustained --measurement smoke
           --payload-sizes 1024 --fraction "$BENCHMARK_FRACTION"
 
+      - name: Summarize post-run optimization findings
+        if: always()
+        run: |
+          if [ -d logs/benchmarks/resources ]; then
+            find logs/benchmarks/resources -name optimization.md -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Retain benchmark logs and failure reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-smoke-${{ github.run_attempt }}
           path: |
-            logs/
+            logs/benchmarks/
+            !logs/benchmarks/**/data/**
             ${{ runner.temp }}/logs/
             **/target/surefire-reports/
           retention-days: 14
@@ -169,14 +177,18 @@ jobs:
           --fraction "$BENCHMARK_FRACTION"
       - name: Summarize measurements, including failed gates
         if: always()
-        run: find logs/benchmarks/resources -name comparison.txt -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          if [ -d logs/benchmarks/resources ]; then
+            find logs/benchmarks/resources \( -name comparison.txt -o -name optimization.md \) -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Retain raw captures and report
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: sustained-${{ matrix.mode }}-${{ matrix.payload }}-${{ github.run_attempt }}
           path: |
-            logs/
+            logs/benchmarks/resources/
+            logs/benchmarks/sustained/
             **/target/surefire-reports/
           retention-days: 14
 
@@ -207,7 +219,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md benchmark-badges/*.json
+          git add README.md benchmark-badges/*.json benchmark-badges/*.svg
           if git diff --cached --quiet; then
             exit 0
           fi

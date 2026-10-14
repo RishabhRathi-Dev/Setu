@@ -20,6 +20,9 @@ public final class FileMessageLog implements MessageLog {
     private final FileChannel channel;
     private final int maxRecordBytes;
     private static final int READ_WINDOW_BYTES = 1024 * 1024;
+    private static final int MAX_RETAINED_APPEND_BYTES = 1024 * 1024;
+    // Only append uses this scratch space, under the same monitor as the file/index.
+    private ByteBuffer appendBuffer;
     private long[] positions = new long[1024];
     private int recordCount;
     private long endPosition;
@@ -52,7 +55,7 @@ public final class FileMessageLog implements MessageLog {
         long offset = recordCount;
         reserveIndex(1);
         long position = endPosition;
-        ByteBuffer record = ByteBuffer.allocate(Integer.BYTES + value.length)
+        ByteBuffer record = appendBuffer(Math.addExact(Integer.BYTES, value.length))
                 .putInt(value.length).put(value);
         record.flip();
         try {
@@ -99,7 +102,7 @@ public final class FileMessageLog implements MessageLog {
         long position = endPosition;
         long firstOffset = recordCount;
         long started = LOG.isDebugEnabled() ? System.nanoTime() : 0;
-        ByteBuffer batch = ByteBuffer.allocate((int) encodedBytes);
+        ByteBuffer batch = appendBuffer((int) encodedBytes);
         for (MessageValue value : values) {
             batch.putInt(value.length());
             value.copyTo(batch);
@@ -179,6 +182,24 @@ public final class FileMessageLog implements MessageLog {
         return recordCount;
     }
 
+    /** Published file length; append rollback never advances it. */
+    synchronized long sizeBytes() { return endPosition; }
+
+    /** A rotated segment is read-only; do not retain its write scratch space. */
+    synchronized void releaseAppendBuffer() { appendBuffer = null; }
+
+    private ByteBuffer appendBuffer(int bytes) {
+        // Oversized requests remain transient, rather than inflating every partition's heap.
+        if (bytes > MAX_RETAINED_APPEND_BYTES) return ByteBuffer.allocate(bytes);
+        if (appendBuffer == null || appendBuffer.capacity() < bytes) {
+            int capacity = Math.max(4096, Integer.highestOneBit(Math.max(1, bytes - 1)) << 1);
+            appendBuffer = ByteBuffer.allocate(capacity);
+        }
+        appendBuffer.clear();
+        appendBuffer.limit(bytes);
+        return appendBuffer;
+    }
+
     private void recover() throws IOException {
         long position = 0;
         long size = channel.size();
@@ -227,6 +248,7 @@ public final class FileMessageLog implements MessageLog {
     public synchronized void close() throws IOException {
         if (!closed) {
             closed = true;
+            appendBuffer = null;
             channel.close();
         }
     }

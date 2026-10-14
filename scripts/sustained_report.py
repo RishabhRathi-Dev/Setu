@@ -201,7 +201,83 @@ def comparison_report(runs, snapshot):
 
 
 def save(output, runs, snapshot):
+    review = optimization_report(runs)
     (output / 'comparison.json').write_text(json.dumps(dict(resources=snapshot, runs=runs), indent=2) + '\n', encoding='utf-8')
     report = comparison_report(runs, snapshot)
     (output / 'comparison.txt').write_text(report, encoding='utf-8')
+    (output / 'optimization.md').write_text(review, encoding='utf-8')
     return report
+
+
+def optimization_report(runs):
+    """Turn measured failures into next experiments, including unsuccessful gates."""
+    text = ['# Post-run optimization review', '',
+            'These are experiments suggested by measurements, not demonstrated speedups. '
+            'Repeat matched full profiles to verify improvements; smoke runs never qualify.', '',
+            '| Mode | Repeat | Stage | Observed constraint | Next experiment |',
+            '| --- | ---: | --- | --- | --- |']
+    count = 0
+    for run in runs:
+        validate_run(run)
+        config = run['config']
+        for stage in run['stages']:
+            findings = []
+            produced = number(stage, 'produced')
+            if produced <= 0:
+                findings.append(('No completed production', 'Inspect worker/client errors and admission backpressure first.'))
+            elif number(stage, 'consumed') < produced * .95:
+                ratio = number(stage, 'consumed') / produced
+                findings.append((f'Consumption {ratio:.1%}; backlog ends at {number(stage, "backlog_end"):,.0f}',
+                                 'Profile fetch, decode and acknowledgment; compare fetch batch sizes before raising producer load.'))
+            if number(stage, 'errors'):
+                findings.append((f'{number(stage, "errors"):,.0f} errors', 'Resolve rejection/timeouts before tuning throughput.'))
+            cpu = number(stage, 'cpu_avg')
+            if cpu > .85:
+                findings.append((f'CPU {cpu:.1%} exceeds 85%',
+                                 'Use JFR CPU/allocation samples to reduce hot-path work; compare lower concurrency.'))
+            heap = number(stage, 'heap_peak_bytes') / 1024**2
+            slope = number(stage, 'heap_slope_mib_s')
+            if heap > 1024 or slope > 1:
+                findings.append((f'Heap {heap:.1f} MiB; slope {slope:.2f} MiB/s',
+                                 'Profile allocation and retained backlog; compare bounded buffer reuse and reclamation.'))
+            half = number(stage, 'load_fraction') == .5
+            limit = (10 if half else 100) if config['mode'] == 'FILE' else (5 if half else 50)
+            p99 = number(stage, 'p99_ms')
+            if p99 < 0:
+                findings.append(('Missing latency samples', 'Inspect operation completion and histogram recording.'))
+            elif p99 >= limit:
+                components = {name: number(stage, name + '_p99_ms') for name in ('produce', 'fetch', 'ack', 'scheduled')}
+                slowest = max(components, key=components.get)
+                experiment = {
+                    'produce': 'Profile append/queue contention and group commit; compare batching while preserving force-before-ack.',
+                    'fetch': 'Profile read windows and decode allocations; compare fetch batch sizes.',
+                    'ack': 'Profile offset/group coordination and request contention.',
+                    'scheduled': 'Inspect offered-load pacing, scheduler delays and missed deadlines; keep scheduled latency in the comparison.',
+                }[slowest]
+                findings.append((f'p99 {p99:.2f} ms exceeds {limit} ms; {slowest} dominates', experiment))
+            if stage['warmup_stable'] != 'true':
+                findings.append(('Warmup did not stabilize', 'Inspect per-second rates and host activity; repeat with a longer warmup.'))
+            offered = number(stage, 'offered_per_s')
+            if offered > 0 and number(stage, 'produce_per_s') < offered * .95:
+                findings.append((f'Production reaches {number(stage, "produce_per_s") / offered:.1%} of offered load',
+                                 'Inspect producer pacing and admission waits; compare a lower fixed load.'))
+            for observation, experiment in findings:
+                stage_name = f'{stage["kind"]}/{stage["load_fraction"]}, {stage["concurrency"]} clients each'
+                text.append(f'| {config["mode"]} | {run.get("repeat", "?")} | {stage_name} | {observation} | {experiment} |')
+                count += 1
+    if not count:
+        text.extend(['', 'No measured constraint above the qualification limits. Compare throughput ranges and use JFR before choosing a code change.'])
+    return '\n'.join(text) + '\n'
+
+
+if __name__ == '__main__':
+    import argparse
+    from pathlib import Path
+    parser = argparse.ArgumentParser(description='Review an existing comparison without rerunning benchmarks.')
+    parser.add_argument('--input', type=Path, required=True, help='comparison.json from one launcher run')
+    parser.add_argument('--output', type=Path, help='defaults to optimization.md beside the input')
+    args = parser.parse_args()
+    document = json.loads(args.input.read_text(encoding='utf-8'))
+    review = optimization_report(document['runs'])
+    (args.output or args.input.with_name('optimization.md')).write_text(review, encoding='utf-8')
+    print(review)

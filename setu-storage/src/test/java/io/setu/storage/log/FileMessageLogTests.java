@@ -14,6 +14,31 @@ class FileMessageLogTests {
     @TempDir Path tempDir;
 
     @Test
+    void reusedAppendBufferPublishesOnlyCurrentBytesAcrossGrowthAndOversizedBatches() throws Exception {
+        Path path = tempDir.resolve("reused.log");
+        var expected = new java.util.ArrayList<byte[]>();
+        for (int size : new int[]{0, 1, 4092, 4093, 262144, 7, 1048577, 3, 0}) {
+            byte[] value = new byte[size];
+            java.util.Arrays.fill(value, (byte) expected.size());
+            expected.add(value);
+        }
+        long bytes = expected.stream().mapToLong(value -> 4L + value.length).sum();
+        try (var log = new FileMessageLog(path, 2 * 1024 * 1024)) {
+            for (int i = 0; i < expected.size(); i++) {
+                if (i % 2 == 0) assertEquals(i, log.appendBatch(java.util.List.of(expected.get(i))));
+                else assertEquals(i, log.append(expected.get(i)));
+            }
+            assertEquals(bytes, log.sizeBytes());
+            assertEquals(bytes, Files.size(path));
+        }
+        try (var recovered = new FileMessageLog(path, 2 * 1024 * 1024)) {
+            assertEquals(expected.size(), recovered.nextOffset());
+            var actual = recovered.read(0, 4 * 1024 * 1024);
+            for (int i = 0; i < expected.size(); i++) assertArrayEquals(expected.get(i), actual.get(i).value());
+        }
+    }
+
+    @Test
     void windowSlicesSurviveLaterReadsAppendAndCloseWithoutExposingBackingBytes() throws Exception {
         var expected = new java.util.ArrayList<byte[]>();
         for (int i = 0; i < 2500; i++) {

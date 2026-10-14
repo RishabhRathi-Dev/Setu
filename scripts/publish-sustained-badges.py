@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import sustained_report as report
@@ -25,7 +26,8 @@ def publish(inputs, readme, output, workflow_url):
         target = report.TARGETS[mode]
         message = f'{badges.format_rate(target)}/s target, {badges.format_rate(rates[mode])}/s sustained, {rates[mode] / target:.0%}'
         color = 'green' if rates[mode] >= target else 'yellow'
-        images.append(badges.readme_badge(label, message, color, workflow_url))
+        image_path = Path(os.path.relpath(output / (label + '-sustained.svg'), readme.parent)).as_posix()
+        images.append(badges.readme_badge(label, message, color, workflow_url, image_path))
         entries.append((label + '-sustained.json', label, message, color))
     details = '\n\n'.join(report.comparison_report(
         [run for run in document['runs'] if int(run['config']['record_bytes']) == 1024], document['resources'])
@@ -36,8 +38,8 @@ def publish(inputs, readme, output, workflow_url):
     # All captures and both README destinations are validated before any writes.
     for entry in entries:
         badges.write_badge(output, *entry)
-    (output / 'sustained-results.json').write_text(json.dumps(documents, indent=2) + '\n', encoding='utf-8')
-    readme.write_text(source, encoding='utf-8')
+    badges.write_if_changed(output / 'sustained-results.json', json.dumps(documents, indent=2) + '\n')
+    badges.write_if_changed(readme, source)
 
 
 def main():

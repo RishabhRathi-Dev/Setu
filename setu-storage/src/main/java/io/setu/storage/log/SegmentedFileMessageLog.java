@@ -45,7 +45,7 @@ public final class SegmentedFileMessageLog implements MessageLog {
             throw new IOException("Record size " + value.length + " exceeds maximum " + maxRecordBytes);
         Segment active = segments.getLast();
         long recordBytes = Integer.BYTES + (long) value.length;
-        if (active.log.nextOffset() > 0 && Files.size(active.path) + recordBytes > maxSegmentBytes) {
+        if (active.log.nextOffset() > 0 && active.log.sizeBytes() + recordBytes > maxSegmentBytes) {
             active = createSegment(nextOffset);
         }
         long localOffset = active.log.append(value);
@@ -74,7 +74,7 @@ public final class SegmentedFileMessageLog implements MessageLog {
         int start = 0;
         while (start < values.size()) {
             Segment active = segments.getLast();
-            long size = Files.size(active.path);
+            long size = active.log.sizeBytes();
             int end = start;
             long batchBytes = 0;
             while (end < values.size()) {
@@ -193,6 +193,7 @@ public final class SegmentedFileMessageLog implements MessageLog {
         Path path = directory.resolve(String.format(java.util.Locale.ROOT, "%012d.log", baseOffset));
         FileMessageLog log = new FileMessageLog(path, maxRecordBytes);
         Segment segment = new Segment(baseOffset, path, log);
+        if (!segments.isEmpty()) segments.getLast().log.releaseAppendBuffer();
         segments.add(segment);
         LOG.info("Segment created path={} base_offset={} segment_count={} max_segment_bytes={}",
                 path, baseOffset, segments.size(), maxSegmentBytes);

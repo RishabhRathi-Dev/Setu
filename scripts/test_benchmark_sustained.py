@@ -39,6 +39,24 @@ def capture(run):
 
 
 class SustainedReportTests(unittest.TestCase):
+    def test_post_run_review_reports_measured_bottlenecks_including_scheduled_latency(self):
+        run = run_fixture('FILE')
+        stage = run['stages'][1]
+        stage['p99_ms'] = '12'
+        stage['scheduled_p99_ms'] = '12'
+        stage['cpu_avg'] = '.9'
+        stage['heap_slope_mib_s'] = '2'
+        text = report.optimization_report([run])
+        self.assertIn('scheduled dominates', text)
+        self.assertIn('CPU 90.0% exceeds 85%', text)
+        self.assertIn('slope 2.00 MiB/s', text)
+        stage['produce_p99_ms'] = stage['p99_ms'] = '20'
+        self.assertIn('force-before-ack', report.optimization_report([run]))
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            report.save(output, [run], dict(measurement='full', host={}, budget=dict(cpu_cores=4)))
+            self.assertTrue((output / 'optimization.md').is_file())
+
     def test_validates_complete_unique_delivery_capture(self):
         run = run_fixture()
         parsed = report.parse_capture(capture(run), 1024, ('IN_MEMORY',))
@@ -93,7 +111,8 @@ class SustainedReportTests(unittest.TestCase):
             root = Path(temporary)
             readme, data, output = root / 'README.md', root / 'comparison.json', root / 'badges'
             original = '<!-- benchmark-metrics-badges:start --><!-- benchmark-metrics-badges:end -->\n' \
-                       '<!-- benchmark-capacity-details:start --><!-- benchmark-capacity-details:end -->'
+                       '<!-- benchmark-capacity-details:start --><!-- benchmark-capacity-details:end -->\n' \
+                       '<!-- benchmark-historical-badges:start -->historical images<!-- benchmark-historical-badges:end -->'
             readme.write_text(original)
             data.write_text(json.dumps(dict(resources=snapshot, runs=runs[:-1])))
             with self.assertRaises(ValueError): publisher.publish([data], readme, output, 'https://example.com/ci')
@@ -103,6 +122,10 @@ class SustainedReportTests(unittest.TestCase):
             publisher.publish([data], readme, output, 'https://example.com/ci')
             self.assertIn('500.00K/s target, 250.00K/s sustained, 50%', (output / 'in-memory-sustained.json').read_text())
             self.assertIn('Payload MiB/s', readme.read_text())
+            self.assertIn('badges/in-memory-sustained.svg', readme.read_text())
+            self.assertTrue((output / 'file-sustained.svg').is_file())
+            self.assertNotIn('shields.io', readme.read_text())
+            self.assertIn('<!-- benchmark-historical-badges:start -->historical images<!-- benchmark-historical-badges:end -->', readme.read_text())
 
 
 if __name__ == '__main__':

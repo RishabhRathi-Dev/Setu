@@ -71,6 +71,16 @@ Routine CI runs unit tests, integration tests, bounded chaos, isolated steady ch
 
 Only a successful full run on the default branch can publish badges. `scripts/publish-sustained-badges.py` validates three complete 1 KiB repetitions for each mode and checks all gates before modifying the README or badge JSON. Badges show target, median sustained rate and percentage of target. There is no invented initial measurement: until a full run qualifies, badges say **sustained unverified**. Historical peak/capacity JSON remains available for traceability. Local comparisons never publish automatically.
 
+All eight metric badges use committed SVG images generated from the JSON snapshots, so viewing them needs no external badge service or public access to the repository. The two sustained badges and six historical diagnostics have separate README blocks; updating either set preserves the other. Refresh the images and links without running benchmarks with `python3 scripts/render-benchmark-badges.py`. Publishers update JSON and SVG together, and unchanged results do not rewrite files.
+
+Each sustained comparison also saves `optimization.md`, including evidence from failed qualification stages. CI includes it in the job summary. The review points to measured consumption/backlog, CPU, heap, warmup and latency constraints and suggests follow-up experiments. Reanalyze an existing capture without rerunning the workload:
+
+```bash
+python3 scripts/sustained_report.py --input logs/benchmarks/resources/<run>/comparison.json
+```
+
+Full-profile artifacts retain reports, raw captures and worker diagnostics. Smoke artifacts exclude temporary broker data files to avoid uploading the benchmark's retained payloads.
+
 ## Diagnostic and chaos profiles
 
 The legacy capacity and payload-comparison tools remain available with their existing timings:
@@ -89,7 +99,7 @@ python3 scripts/run-benchmarks.py --kind steady --payload-sizes 1024
 python3 scripts/run-benchmarks.py --kind large-batch --payload-sizes 1024
 ```
 
-`ProgressiveCapacityChaosTests` is the historical failure-seeking diagnostic: default two-second warmup/stages, eight-stage floor, 256-record batches, ten-second CPU observation holds, and continued doubling to a runtime limit. It counts consumer fanout and uses a coarse latency histogram; its peaks must not be used as sustained target progress. Properties include `setu.benchmark.min.stages`, `setu.benchmark.max.concurrency`, `setu.benchmark.cpu.hold.millis`, and `setu.benchmark.jfr`. Its JFR recordings, allocation estimates, GC overlap, sampled hot methods and backpressure diagnostics remain under `logs/benchmarks/capacity/`. The old `update-benchmark-badges.py` is a legacy diagnostic renderer; CI no longer calls it.
+`ProgressiveCapacityChaosTests` is the historical failure-seeking diagnostic: default two-second warmup/stages, eight-stage floor, 256-record batches, ten-second CPU observation holds, and continued doubling to a runtime limit. It counts consumer fanout and uses a coarse latency histogram; its peaks must not be used as sustained target progress. Properties include `setu.benchmark.min.stages`, `setu.benchmark.max.concurrency`, `setu.benchmark.cpu.hold.millis`, and `setu.benchmark.jfr`. Its JFR recordings, allocation estimates, GC overlap, sampled hot methods and backpressure diagnostics remain under `logs/benchmarks/capacity/`. The old `update-benchmark-badges.py` updates only historical badges and saves its detailed table to `benchmark-badges/capacity-details.md`; CI no longer calls it.
 
 Bounded chaos tests cover actual TCP throughput, recovery, record-size limits, malformed frames, consumer expiry and concurrent progress. `QuickBrokerChaosBenchmarkTests` uses sixteen producers/consumers, 20,000 records and 256-record batches; `BrokerLimitsChaosTests` uses 16,000 records with five-minute workload deadlines. Functional integration requirements remain in `setu-integration-tests`.
 

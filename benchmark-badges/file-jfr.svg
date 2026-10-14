@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="392" height="24" viewBox="0 0 392 24" role="img" aria-label="file JFR: stage 9 · 1.92 GiB/s alloc · 0.0ms GC">
+  <title>file JFR: stage 9 · 1.92 GiB/s alloc · 0.0ms GC</title>
+  <rect width="392" height="24" rx="3" fill="#007ec6"/>
+  <path d="M3 0H80V24H3Q0 24 0 21V3Q0 0 3 0" fill="#555"/>
+  <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="12">
+    <text x="40" y="16">file JFR</text>
+    <text x="236" y="16">stage 9 · 1.92 GiB/s alloc · 0.0ms GC</text>
+  </g>
+</svg>

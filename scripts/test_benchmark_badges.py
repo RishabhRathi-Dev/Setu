@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import xml.etree.ElementTree as ET
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -8,8 +10,42 @@ spec = importlib.util.spec_from_file_location("benchmark_badges", Path(__file__)
 badges = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(badges)
 
+render_spec = importlib.util.spec_from_file_location("badge_renderer", Path(__file__).with_name("render-benchmark-badges.py"))
+renderer = importlib.util.module_from_spec(render_spec)
+render_spec.loader.exec_module(renderer)
+
 
 class BenchmarkCaptureTests(unittest.TestCase):
+    def test_local_badges_escape_xml_preserve_metrics_and_do_not_rewrite_unchanged_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            badges.write_badge(root, 'test.json', 'in-memory & file', '1_024/s < 2-000 × 50%', 'yellow')
+            svg = root / 'test.svg'
+            parsed = ET.fromstring(svg.read_text(encoding='utf-8'))
+            self.assertEqual('in-memory & file: 1_024/s < 2-000 × 50%', parsed.find('{http://www.w3.org/2000/svg}title').text)
+            modified = svg.stat().st_mtime_ns
+            badges.write_badge(root, 'test.json', 'in-memory & file', '1_024/s < 2-000 × 50%', 'yellow')
+            self.assertEqual(modified, svg.stat().st_mtime_ns)
+
+    def test_renderer_includes_all_eight_snapshots_and_validates_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            readme, output = root / 'README.md', root / 'benchmark-badges'
+            output.mkdir()
+            readme.write_text('\n'.join(f'<!-- {block}:start --><!-- {block}:end -->' for block in renderer.GROUPS))
+            for names in renderer.GROUPS.values():
+                for name in names:
+                    (output / (name + '.json')).write_text(json.dumps(dict(label=name, message='unverified', color='lightgrey')))
+            renderer.render(readme, output, 'https://example.com/ci')
+            self.assertEqual(8, len(list(output.glob('*.svg'))))
+            self.assertEqual(8, readme.read_text().count('](benchmark-badges/'))
+            self.assertNotIn('shields.io', readme.read_text())
+            before = {path: path.read_bytes() for path in [readme, *output.glob('*.svg')]}
+            (output / 'file-jfr.json').write_text('{}')
+            with self.assertRaises(KeyError):
+                renderer.render(readme, output, 'https://example.com/changed')
+            self.assertEqual(before, {path: path.read_bytes() for path in before})
+
     def test_legacy_peaks_report_payload_bytes_without_claiming_target_progress(self):
         stage = dict(stage="1", producers="1", consumers="1", duration_s="1", produced="2048",
                      produce_per_s="2048", consumed="1024", consume_per_s="1024", cpu_avg=".8",
@@ -26,6 +62,7 @@ class BenchmarkCaptureTests(unittest.TestCase):
             root = Path(directory)
             readme = root / "README.md"
             readme.write_text("<!-- benchmark-metrics-badges:start -->\n<!-- benchmark-metrics-badges:end -->\n"
+                              "<!-- benchmark-historical-badges:start -->\n<!-- benchmark-historical-badges:end -->\n"
                               "<!-- benchmark-capacity-details:start -->\n<!-- benchmark-capacity-details:end -->\n", encoding="utf-8")
             capture = root / "capacity.log"
             output = root / "badges"
@@ -44,8 +81,10 @@ class BenchmarkCaptureTests(unittest.TestCase):
             with patch("sys.argv", arguments):
                 badges.main()
             self.assertEqual(6, len(list(output.glob("*.json"))))
+            self.assertEqual(6, len(list(output.glob("*.svg"))))
+            self.assertIn('<!-- benchmark-metrics-badges:start -->\n<!-- benchmark-metrics-badges:end -->', readme.read_text())
             self.assertIn("1.00 GiB/s alloc", (output / "memory-jfr.json").read_text(encoding="utf-8"))
-            before = {path: path.read_bytes() for path in [readme, *output.glob("*.json")]}
+            before = {path: path.read_bytes() for path in [readme, *output.iterdir()]}
             capture.write_text("\n".join(line for line in lines if "CAPACITY_JFR mode=FILE stage=8 " not in line), encoding="utf-8")
             with patch("sys.argv", arguments), self.assertRaisesRegex(SystemExit, "JFR"):
                 badges.main()

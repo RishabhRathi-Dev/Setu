@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="344" height="24" viewBox="0 0 344 24" role="img" aria-label="file: 250K/s target, sustained unverified">
+  <title>file: 250K/s target, sustained unverified</title>
+  <rect width="344" height="24" rx="3" fill="#666666"/>
+  <path d="M3 0H48V24H3Q0 24 0 21V3Q0 0 3 0" fill="#555"/>
+  <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="12">
+    <text x="24" y="16">file</text>
+    <text x="196" y="16">250K/s target, sustained unverified</text>
+  </g>
+</svg>

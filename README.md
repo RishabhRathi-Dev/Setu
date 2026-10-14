@@ -2,8 +2,8 @@
 
 [CI workflow](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:start -->
-[![In-memory sustained target](https://img.shields.io/badge/in--memory-500K%2Fs%20target%20%C2%B7%20sustained%20unverified-lightgrey)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![File sustained target](https://img.shields.io/badge/file-250K%2Fs%20target%20%C2%B7%20sustained%20unverified-lightgrey)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![in-memory: 500K/s target, sustained unverified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![file: 250K/s target, sustained unverified](benchmark-badges/file-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:end -->
 
 Badges show qualified sustained throughput against a **500K records/s in-memory** or **250K records/s file** target at 1 KiB per record. A full run needs three independent repetitions, at least 30 measured seconds per stage, at least 95% unique consumption, zero errors/timeouts, measured HDR latency, stable heap within 1 GiB, and average CPU at most 85%. Short smoke runs and historical exhaustion peaks cannot update these badges. File acknowledgments follow a force of every touched segment in each group commit.
@@ -13,6 +13,19 @@ Badges show qualified sustained throughput against a **500K records/s in-memory*
 <!-- benchmark-capacity-details:start -->
 No qualifying full-profile result has been published yet. Previous capacity captures measured short bursts and consumer fanout; they do not establish sustained throughput under the new criteria. Historical JSON snapshots remain in `benchmark-badges/`.
 <!-- benchmark-capacity-details:end -->
+
+## Historical capacity diagnostics
+
+These are the previous short exhaustion observations, including consumer fanout. They do not qualify as sustained throughput or target progress.
+
+<!-- benchmark-historical-badges:start -->
+[![memory peak rates: 433.95K prod/s · 872.32K consumed/s](benchmark-badges/memory-throughput.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![file peak rates: 205.50K prod/s · 178.53K consumed/s](benchmark-badges/file-throughput.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![memory capacity: 2,048×2,048 · OS limit · peak CPU 100% · 1252 MB · p99 2.1s](benchmark-badges/memory-capacity.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![file capacity: 256×256 · broker/client limit · peak CPU 100% · 750 MB · p99 1.1s](benchmark-badges/file-capacity.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![memory JFR: stage 12 · 1.31 GiB/s alloc · 1.8ms GC](benchmark-badges/memory-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![file JFR: stage 9 · 1.92 GiB/s alloc · 0.0ms GC](benchmark-badges/file-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+<!-- benchmark-historical-badges:end -->
 
 **Setu** is a distributed message broker built from scratch in **Java 26**, inspired by systems such as Kafka.
 
