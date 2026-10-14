@@ -11,16 +11,17 @@ final class NodeTargetThroughputWorker {
         BenchmarkRuntime.verifyZgc(NodeTargetThroughputWorker.class);
         if (!"full".equals(System.getProperty("setu.benchmark.measurement")) || BenchmarkSettings.recordBytes() != 1024)
             throw new IllegalArgumentException("Node targets require the full profile and 1 KiB records");
-        if (BenchmarkSettings.integer("setu.benchmark.stage.millis", 3000, 250, 60000) < 30000
-                || BenchmarkSettings.integer("setu.benchmark.warmup.millis", 2000, 250, 60000) < 10000)
-            throw new IllegalArgumentException("Node targets require at least 10s warmup and 30s measurement");
+        if (BenchmarkSettings.integer("setu.benchmark.stage.millis", 3000, 250, 60000) != 30000
+                || BenchmarkSettings.integer("setu.benchmark.warmup.millis", 2000, 250, 60000) != 10000
+                || BenchmarkSettings.integer("setu.benchmark.batch.records", 256, 1, 10000) != 256)
+            throw new IllegalArgumentException("Node targets use 10s adaptive warmup, 30s measurement and 256-record batches");
         StorageMode mode = StorageMode.valueOf(args[0]);
         Path root = Files.createDirectories(Path.of(args[1]));
         double target = mode == StorageMode.IN_MEMORY ? 500000 : 250000;
         int concurrency = mode == StorageMode.IN_MEMORY ? 1 : 2;
         if (concurrency > SustainedCriteria.concurrencyLimit(BenchmarkSettings.cpuCores(), 32768))
             throw new IllegalArgumentException("CPU budget is too small for the target concurrency");
-        System.out.printf(Locale.ROOT, "NODE_TARGET_CONFIG mode=%s record_bytes=1024 target_per_s=%.0f concurrency=%d cpu_cores=%.3f heap_mib=%d filesystem=%s durability=%s%n",
+        System.out.printf(Locale.ROOT, "NODE_TARGET_CONFIG mode=%s profile=full record_bytes=1024 batch_records=256 stage_ms=30000 warmup_ms=10000 histogram=HdrHistogram_3_digits unique_delivery=true target_per_s=%.0f concurrency=%d cpu_cores=%.3f heap_mib=%d filesystem=%s durability=%s%n",
                 mode, target, concurrency, BenchmarkSettings.cpuCores(), Runtime.getRuntime().maxMemory() / (1024 * 1024),
                 Files.getFileStore(root).type(), mode == StorageMode.FILE ? "force_each_group_commit_before_ack" : "volatile");
         if (Boolean.getBoolean("setu.benchmark.jfr"))

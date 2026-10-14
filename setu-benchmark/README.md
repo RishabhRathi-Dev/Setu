@@ -43,7 +43,7 @@ These 1 KiB targets assume broker and clients share approximately 4–8 vCPU and
 
 A qualifying window lasts at least 30 seconds, consumes at least 95% of produced records, has zero rejected requests/errors/timeouts, and uses at most 85% average CPU and 1 GiB peak heap. Heap stability is defined as a least-squares slope no greater than 1 MiB/s over roughly 250 ms samples, a noise allowance for GC sawtooth; the raw slope is reported. Backlog at the start/end and peak sampled backlog are reported independently. In-memory admission pauses at half the retained-log budget; the wait is included in produce latency and no quota rejection is hidden or retried.
 
-A mode's published sustained rate is the median of the three qualified knees, and all three repetitions must also pass all fixed-load stages. If any repetition cannot qualify, the gate fails. The full launcher automatically enforces the 200K/150K gates for the 1,024-byte payload. Other payload sizes are comparisons, not applications of a 1 KiB threshold. Missing stages, duplicate runs, non-finite metrics, incorrect offered rates, mixed payloads and incomplete captures fail validation. Reports are saved before gate evaluation, so a failed gate retains its evidence.
+A capacity profile's sustained rate is the median of the three qualified knees, and all three repetitions must also pass all fixed-load stages. If any repetition cannot qualify, the gate fails. The full capacity launcher automatically enforces the 200K/150K gates for the 1,024-byte payload. Other payload sizes are comparisons, not applications of a 1 KiB threshold. Missing stages, duplicate runs, non-finite metrics, incorrect offered rates, mixed payloads and incomplete captures fail validation. Reports are saved before gate evaluation, so a failed gate retains its evidence. The latest badges use the separate fixed-load node-target profile below.
 
 File durability is **force each group commit before acknowledgment**: `GroupCommitMessageLog` batches writes and `FileMessageLog` calls `FileChannel.force(true)` for each touched segment before acknowledging success. In-memory storage is volatile. The report records filesystem/media information; an unknown or virtual disk is labeled as such rather than assumed to be SSD. File mode on tmpfs measures the file-code path in RAM.
 
@@ -62,7 +62,16 @@ This longer test requires an explicit opt-in. Default worker heaps are 256 MiB i
   '-Dsetu.benchmark.memory.log.bytes=67108864' test
 ```
 
-The run takes about twelve minutes across both modes before adaptive warmup and setup. `ActiveProcessorCount` configures JVM scheduling; this direct command does not enforce an OS CPU quota. Target checks retain their own evidence. Published sustained badges continue to require the resource-enforced capacity profile and its three qualified knees.
+The run takes about twelve minutes across both modes before adaptive warmup and setup. `ActiveProcessorCount` configures JVM scheduling; this direct command does not enforce an OS CPU quota. For the enforced CI profile, run one mode per shard on Linux/WSL:
+
+```bash
+python3 scripts/run-benchmarks.py --kind target --measurement full \
+  --storage-mode IN_MEMORY --payload-sizes 1024
+python3 scripts/run-benchmarks.py --kind target --measurement full \
+  --storage-mode FILE --payload-sizes 1024
+```
+
+The Java test owns the three fresh-JVM repetitions, so the Python launcher starts it once. Reports and JFR summaries are saved before a health failure is returned to CI.
 
 ## Resource budgets
 
@@ -82,11 +91,13 @@ For direct Windows smoke testing (without the Linux cgroup envelope):
 
 ## CI and publication
 
-Routine CI runs unit tests, integration tests, bounded chaos, isolated steady checks and the short sustained smoke profile. Enable **full_benchmark** in workflow dispatch to run eight full jobs: four payloads times two storage modes, each with three independent repetitions. Fail-fast is disabled so other reports survive a failed gate. The original four-concurrency full ramp estimate is 64 minutes of aggregate measurement/warmup time; fixed-load latency adds another 48 minutes, and adaptive warmup/setup add overhead. A smaller CPU budget reduces the concurrency count; CI shards run in parallel on separate runners and record their own hardware.
+Every push and pull request runs production unit tests, benchmark-helper tests, integration tests, bounded chaos, isolated steady checks, sustained smoke, and two full 1 KiB node-target shards with JFR. Each target shard runs three independent repetitions at 50%, 80% and 100% of 500K/s in memory or 250K/s with file storage. Fail-fast is disabled so a failed mode does not suppress the other mode's measurements. Surefire test reports and benchmark artifacts are retained, including failures. Enable **full_benchmark** in workflow dispatch for the additional eight capacity-comparison jobs across four payloads and two storage modes.
 
-Only a successful full run on the default branch can publish badges. `scripts/publish-sustained-badges.py` validates three complete 1 KiB repetitions for each mode and checks all gates before modifying the README or badge JSON. Badges show target, median sustained rate and percentage of target. There is no invented initial measurement: until a full run qualifies, badges say **sustained unverified**. Historical peak/capacity JSON remains available for traceability. Local comparisons never publish automatically.
+Default-branch push and dispatch runs automatically publish the latest target results with `scripts/publish-node-target-badges.py`. The publisher independently validates three repetitions, every target load, actual counters/rates, warmup, durability, resource allocation, source revision and all three measured JFR stages. Badges show target, median actual throughput, progress and qualification, plus p99, resources and JFR. Unhealthy measurements are labeled unqualified; incomplete runs are labeled incomplete instead of leaving an old success looking current. Unit and integration tests must pass before publication. A source-revision check prevents an older workflow from overwriting a newer commit's metrics. Bot updates use `[skip ci]` to avoid loops.
 
-All eight metric badges use committed SVG images generated from the JSON snapshots, so viewing them needs no external badge service or public access to the repository. The two sustained badges and six historical diagnostics have separate README blocks; updating either set preserves the other. Refresh the images and links without running benchmarks with `python3 scripts/render-benchmark-badges.py`. Publishers update JSON and SVG together, and unchanged results do not rewrite files.
+The initial badges use the validated 14 October local target captures and explicitly say **local target**. They link to their measured report, and record that no OS CPU quota was enforced. CI replaces them with **CI** measurements linked to the exact Actions run. The separate `publish-sustained-badges.py` remains available for validated capacity-profile reports.
+
+All eight latest metric badges and six historical diagnostics use committed SVG images generated from JSON snapshots, so viewing them needs no external badge service or public access to the repository. Current throughput, current diagnostics and historical diagnostics have separate README blocks. Refresh images and links with `python3 scripts/render-benchmark-badges.py`. Publishers update JSON and SVG together, and unchanged results do not rewrite files.
 
 Each sustained comparison also saves `optimization.md`, including evidence from failed qualification stages. CI includes it in the job summary. The review points to measured consumption/backlog, CPU, heap, warmup and latency constraints and suggests follow-up experiments. Reanalyze an existing capture without rerunning the workload:
 

@@ -13,6 +13,8 @@ spec.loader.exec_module(badges)
 
 GROUPS = {
     'benchmark-metrics-badges': ('in-memory-sustained', 'file-sustained'),
+    'benchmark-target-diagnostics': ('memory-target-latency', 'file-target-latency',
+                                     'memory-target-resources', 'file-target-resources', 'memory-target-jfr', 'file-target-jfr'),
     'benchmark-historical-badges': ('memory-throughput', 'file-throughput', 'memory-capacity',
                                     'file-capacity', 'memory-jfr', 'file-jfr'),
 }
@@ -22,6 +24,8 @@ def render(readme, output, workflow_url):
     source = readme.read_text(encoding='utf-8')
     assets = []
     for block, names in GROUPS.items():
+        if block == 'benchmark-target-diagnostics' and f'<!-- {block}:start -->' not in source:
+            continue
         pattern = f'<!-- {block}:start -->.*?<!-- {block}:end -->'
         if len(re.findall(pattern, source, re.S)) != 1:
             raise ValueError(f'missing or duplicate {block} block')
@@ -32,7 +36,7 @@ def render(readme, output, workflow_url):
             path = output / (name + '.svg')
             assets.append((path, svg))
             relative = Path(os.path.relpath(path, readme.parent)).as_posix()
-            links.append(badges.readme_badge(data['label'], data['message'], data['color'], workflow_url, relative))
+            links.append(badges.readme_badge(data['label'], data['message'], data['color'], data.get('sourceUrl', workflow_url), relative))
         source = re.sub(pattern, lambda _: f'<!-- {block}:start -->\n' + '\n'.join(links)
                         + f'\n<!-- {block}:end -->', source, flags=re.S)
     # Validate every input and destination before replacing anything.

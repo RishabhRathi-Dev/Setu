@@ -27,7 +27,7 @@ class BenchmarkCaptureTests(unittest.TestCase):
             badges.write_badge(root, 'test.json', 'in-memory & file', '1_024/s < 2-000 × 50%', 'yellow')
             self.assertEqual(modified, svg.stat().st_mtime_ns)
 
-    def test_renderer_includes_all_eight_snapshots_and_validates_before_writing(self):
+    def test_renderer_includes_latest_and_historical_snapshots_and_validates_before_writing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             readme, output = root / 'README.md', root / 'benchmark-badges'
@@ -37,8 +37,8 @@ class BenchmarkCaptureTests(unittest.TestCase):
                 for name in names:
                     (output / (name + '.json')).write_text(json.dumps(dict(label=name, message='unverified', color='lightgrey')))
             renderer.render(readme, output, 'https://example.com/ci')
-            self.assertEqual(8, len(list(output.glob('*.svg'))))
-            self.assertEqual(8, readme.read_text().count('](benchmark-badges/'))
+            self.assertEqual(14, len(list(output.glob('*.svg'))))
+            self.assertEqual(14, readme.read_text().count('](benchmark-badges/'))
             self.assertNotIn('shields.io', readme.read_text())
             before = {path: path.read_bytes() for path in [readme, *output.glob('*.svg')]}
             (output / 'file-jfr.json').write_text('{}')

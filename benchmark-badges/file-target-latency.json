@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "label": "file p99",
+  "message": "8.06 ms at target (local target)",
+  "color": "green",
+  "sourceScope": "local target",
+  "sourceRevision": "e7c035c",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md"
+}

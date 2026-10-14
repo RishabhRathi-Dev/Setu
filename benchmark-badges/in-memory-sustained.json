@@ -1,6 +1,9 @@
 {
   "schemaVersion": 1,
   "label": "in-memory",
-  "message": "500K/s target, sustained unverified",
-  "color": "lightgrey"
+  "message": "500.00K/s target, 499.99K/s local target, 100% qualified",
+  "color": "green",
+  "sourceScope": "local target",
+  "sourceRevision": "e7c035c",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md"
 }

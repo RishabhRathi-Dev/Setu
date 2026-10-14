@@ -2,16 +2,57 @@
 
 [CI workflow](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:start -->
-[![in-memory: 500K/s target, sustained unverified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
-[![file: 250K/s target, sustained unverified](benchmark-badges/file-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![in-memory: 500.00K/s target, 499.99K/s local target, 100% qualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
+[![file: 250.00K/s target, 249.99K/s local target, 100% qualified](benchmark-badges/file-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
 <!-- benchmark-metrics-badges:end -->
 
-Badges show qualified sustained throughput against a **500K records/s in-memory** or **250K records/s file** target at 1 KiB per record. A full run needs three independent repetitions, at least 30 measured seconds per stage, at least 95% unique consumption, zero errors/timeouts, measured HDR latency, stable heap within 1 GiB, and average CPU at most 85%. Short smoke runs and historical exhaustion peaks cannot update these badges. File acknowledgments follow a force of every touched segment in each group commit.
+<!-- benchmark-target-diagnostics:start -->
+[![memory p99: 2.04 ms at target (local target)](benchmark-badges/memory-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
+[![memory resources: 16% CPU, 246 MiB heap (local target)](benchmark-badges/memory-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
+[![memory JFR: 2.13 GiB/s alloc, 7.0 ms GC (local target)](benchmark-badges/memory-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
+[![file p99: 8.06 ms at target (local target)](benchmark-badges/file-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
+[![file resources: 18% CPU, 126 MiB heap (local target)](benchmark-badges/file-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
+[![file JFR: 1.33 GiB/s alloc, 13.0 ms GC (local target)](benchmark-badges/file-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
+<!-- benchmark-target-diagnostics:end -->
 
-## Latest sustained benchmark details
+Badges show the latest target-load measurements against **500K records/s in-memory** and **250K records/s durable file** at 1 KiB per record, with their source and qualification status. Each mode needs three independent repetitions at 50%, 80% and 100% of target, 30 measured seconds per stage, at least 95% unique consumption and offered throughput, zero errors/timeouts, measured HDR latency, stable heap within 1 GiB, and average CPU at most 85%. Tests, full target benchmarks and JFR run automatically on pushes and pull requests; default-branch runs update the badges. Unqualified or incomplete CI runs are shown explicitly. File acknowledgments follow a force of every touched segment in each group commit.
+
+## Latest node-target benchmark details
 
 <!-- benchmark-capacity-details:start -->
-No qualifying full-profile result has been published yet. Previous capacity captures measured short bursts and consumer fanout; they do not establish sustained throughput under the new criteria. Historical JSON snapshots remain in `benchmark-badges/`.
+Latest source: **local target**, revision `e7c035c`. [Benchmark run/report](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md).
+
+# Node-target measurements
+
+Three independent repetitions; 1 KiB records; 10s or longer warmup and 30s measurement at 50%, 80% and 100% of target. File acknowledgments follow force of every touched segment. Health requires 95% consumption and offered throughput, zero errors, HDR p99 within mode/load limits, CPU <=85%, heap <=1 GiB and heap slope <=1 MiB/s.
+
+| Mode | Target/s | Median measured/s | Worst target p99 ms | Peak heap MiB | Peak average CPU % | Qualified |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| IN_MEMORY | 500,000 | 499,985 | 2.041 | 246 | 15.7 | True |
+| FILE | 250,000 | 249,993 | 8.057 | 126 | 18.2 | True |
+
+| Mode | Repeat | Load | Measured/s | Consumed/s | p99 ms | Heap slope MiB/s | Healthy |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IN_MEMORY | 1 | 50% | 249,993 | 250,001 | 2.096 | 0.287 | True |
+| IN_MEMORY | 1 | 80% | 400,000 | 400,009 | 2.068 | -0.775 | True |
+| IN_MEMORY | 1 | 100% | 499,977 | 499,994 | 2.039 | -0.101 | True |
+| IN_MEMORY | 2 | 50% | 249,993 | 250,010 | 2.087 | -0.454 | True |
+| IN_MEMORY | 2 | 80% | 400,000 | 400,009 | 2.073 | 0.852 | True |
+| IN_MEMORY | 2 | 100% | 499,985 | 499,985 | 2.041 | -0.593 | True |
+| IN_MEMORY | 3 | 50% | 249,993 | 250,001 | 2.092 | -0.243 | True |
+| IN_MEMORY | 3 | 80% | 400,000 | 400,009 | 2.082 | 0.289 | True |
+| IN_MEMORY | 3 | 100% | 499,994 | 500,002 | 2.037 | -0.472 | True |
+| FILE | 1 | 50% | 124,996 | 125,013 | 4.497 | 0.123 | True |
+| FILE | 1 | 80% | 199,987 | 199,996 | 4.461 | -0.260 | True |
+| FILE | 1 | 100% | 249,993 | 250,001 | 4.383 | 0.066 | True |
+| FILE | 2 | 50% | 124,996 | 125,013 | 4.497 | 0.124 | True |
+| FILE | 2 | 80% | 199,987 | 200,004 | 4.428 | -0.089 | True |
+| FILE | 2 | 100% | 249,993 | 250,010 | 4.346 | -0.038 | True |
+| FILE | 3 | 50% | 124,996 | 125,013 | 4.538 | -0.108 | True |
+| FILE | 3 | 80% | 199,987 | 199,987 | 4.444 | -0.094 | True |
+| FILE | 3 | 100% | 249,993 | 250,010 | 8.057 | -0.170 | True |
+
+Local Windows measurements use eight JVM active processors with no OS CPU quota. Automatic CI replaces these with runner measurements.
 <!-- benchmark-capacity-details:end -->
 
 ## Historical capacity diagnostics
@@ -72,7 +113,7 @@ Setu aims to provide:
 
 The single-node throughput targets are **500,000 records/s in memory** (~488 MiB/s at 1 KiB) and **250,000 records/s with file storage** (~244 MiB/s), with stretch targets of 1M/s and 500K/s respectively. The full CI profile gates 1 KiB runs at 200K/s in memory and 150K/s with file storage, subject to the same sustainability criteria. Broker and load clients share the host. Performance is reported per allocated CPU core and with hardware, durability, backlog and resource usage; targets are not claims of measured performance. See [benchmark profiles and qualification](setu-benchmark/README.md).
 
-The [local JFR optimization and node-target report](setu-benchmark/optimization-2026-10-14.md) records three 30-second repetitions at the offered targets, including actual throughput, latency, heap and earlier failed attempts. Published badges require the separate resource-enforced capacity profile.
+The [local JFR optimization and node-target report](setu-benchmark/optimization-2026-10-14.md) records three 30-second repetitions at the offered targets, including actual throughput, latency, heap and earlier failed attempts. Automatic CI replaces the locally labeled badge data with measurements from its resource-enforced target profile.
 
 The project is primarily concerned with the trade-offs between:
 

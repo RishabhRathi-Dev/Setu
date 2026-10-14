@@ -34,7 +34,15 @@ jobs:
           cache: maven
 
       - name: Build and test production modules
-        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-storage,setu-core,setu-security,setu-client,setu-server -am test
+        run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*Tests,!*ChaosTests,!*BenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test
+
+      - name: Retain unit and benchmark-helper test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-test-results
+          path: '**/target/surefire-reports/'
+          retention-days: 14
 
       - name: Package application and verify secure AOT coverage with ZGC
         shell: bash
@@ -88,6 +96,14 @@ jobs:
 
       - name: Run end-to-end application integration tests
         run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-integration-tests -am '-Dtest=*IntegrationTests' -Dsurefire.failIfNoSpecifiedTests=false test
+
+      - name: Retain integration test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-test-results
+          path: '**/target/surefire-reports/'
+          retention-days: 14
 
   chaos-benchmark:
     runs-on: ubuntu-latest
@@ -192,9 +208,53 @@ jobs:
             **/target/surefire-reports/
           retention-days: 14
 
-  publish-sustained:
-    needs: sustained-full
-    if: success() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+  node-target-benchmark:
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [IN_MEMORY, FILE]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '26'
+          cache: maven
+      - name: Measure three independent node-target repetitions with JFR
+        env:
+          BENCHMARK_MODE: ${{ matrix.mode }}
+          BENCHMARK_FRACTION: ${{ inputs.resource_fraction || vars.SETU_BENCHMARK_FRACTION || '0.8' }}
+        run: >-
+          python3 scripts/run-benchmarks.py --kind target --measurement full
+          --storage-mode "$BENCHMARK_MODE" --payload-sizes 1024
+          --fraction "$BENCHMARK_FRACTION"
+      - name: Summarize target measurements, including failed qualification
+        if: always()
+        run: |
+          if [ -d logs/benchmarks/resources ]; then
+            find logs/benchmarks/resources -name comparison.txt -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Retain target measurements, JFR and test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-target-${{ matrix.mode }}-${{ github.run_attempt }}
+          path: |
+            logs/benchmarks/resources/
+            logs/benchmarks/node-target/
+            **/target/surefire-reports/
+          retention-days: 14
+
+  publish-benchmark-badges:
+    needs: [unit-tests, integration-tests, node-target-benchmark]
+    if: >-
+      always() && needs.unit-tests.result == 'success' && needs.integration-tests.result == 'success'
+      && needs.node-target-benchmark.result != 'cancelled'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -204,24 +264,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.repository.default_branch }}
-      - uses: actions/download-artifact@v4
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v8
         with:
-          pattern: sustained-*-1024-${{ github.run_attempt }}
+          pattern: node-target-*-${{ github.run_attempt }}
           path: reports
-      - name: Publish only validated sustained results
+      - name: Generate latest target and JFR badges with qualification and provenance
         env:
-          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/ci.yml
-        run: python3 scripts/publish-sustained-badges.py --input reports --workflow-url "$WORKFLOW_URL"
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_REVISION: ${{ github.sha }}
+        run: >-
+          python3 scripts/publish-node-target-badges.py --input reports --workflow-url "$WORKFLOW_URL"
+          --revision "$SOURCE_REVISION" --allow-incomplete
       - name: Commit measured badge data
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SOURCE_REVISION: ${{ github.sha }}
         run: |
+          git fetch origin "$DEFAULT_BRANCH"
+          if [ "$(git rev-parse FETCH_HEAD)" != "$SOURCE_REVISION" ]; then
+            echo "A newer commit exists; its workflow will publish the latest measurements."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.md benchmark-badges/*.json benchmark-badges/*.svg
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m "Update sustained benchmark badges [skip ci]"
+          git commit -m "Update node-target benchmark and JFR badges [skip ci]"
           git push origin "HEAD:$DEFAULT_BRANCH"

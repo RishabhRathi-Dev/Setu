@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "label": "memory resources",
+  "message": "16% CPU, 246 MiB heap (local target)",
+  "color": "green",
+  "sourceScope": "local target",
+  "sourceRevision": "e7c035c",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md"
+}

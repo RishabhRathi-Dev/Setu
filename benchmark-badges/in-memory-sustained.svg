@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="384" height="24" viewBox="0 0 384 24" role="img" aria-label="in-memory: 500K/s target, sustained unverified">
-  <title>in-memory: 500K/s target, sustained unverified</title>
-  <rect width="384" height="24" rx="3" fill="#666666"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="552" height="24" viewBox="0 0 552 24" role="img" aria-label="in-memory: 500.00K/s target, 499.99K/s local target, 100% qualified">
+  <title>in-memory: 500.00K/s target, 499.99K/s local target, 100% qualified</title>
+  <rect width="552" height="24" rx="3" fill="#22863a"/>
   <path d="M3 0H88V24H3Q0 24 0 21V3Q0 0 3 0" fill="#555"/>
   <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="12">
     <text x="44" y="16">in-memory</text>
-    <text x="236" y="16">500K/s target, sustained unverified</text>
+    <text x="320" y="16">500.00K/s target, 499.99K/s local target, 100% qualified</text>
   </g>
 </svg>

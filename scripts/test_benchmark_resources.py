@@ -69,6 +69,44 @@ class ResourceBudgetTests(unittest.TestCase):
                  patch('sys.stderr'), self.assertRaises(SystemExit):
                 resources.main()
 
+    def test_node_targets_plan_full_repetitions_and_mode_heap(self):
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        for mode, heap in (('IN_MEMORY', 256), ('FILE', 128)):
+            with patch.object(resources, 'detect_host', return_value=self.host(cores=2)), \
+                 patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'target', '--measurement', 'full',
+                      '--storage-mode', mode, '--payload-sizes', '1024', '--dry-run',
+                      '--data-directory', str(Path(__file__).parent)]), patch('builtins.print') as output:
+                resources.main()
+            snapshot = json.loads(output.call_args.args[0].split(' ', 1)[1])
+            self.assertEqual(3, snapshot['repeats'])
+            self.assertEqual(heap, snapshot['budget']['heap_mib'])
+            self.assertEqual(64*resources.MIB, snapshot['budget']['memory_log_bytes'])
+            self.assertEqual('systemd-cgroup-v2', snapshot['enforcement'])
+
+    def test_node_target_launcher_runs_java_repetitions_once_and_saves_failed_health(self):
+        from test_benchmark_node_targets import fixture, capture
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        runs = [fixture(repeat=repeat) for repeat in (1,2,3)]
+        runs[0]['stages'][0]['cpu_avg'] = '.99'
+        def workload(command, **kwargs):
+            kwargs['stdout'].write(capture(runs))
+            return type('Result', (), {'returncode': 1})()
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(resources, 'detect_host', return_value=self.host(cores=5)), \
+             patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
+             patch.object(resources.subprocess, 'run', side_effect=workload) as run, patch('builtins.print'), \
+             patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'target', '--measurement', 'full', '--storage-mode', 'IN_MEMORY',
+                                      '--payload-sizes', '1024', '--data-directory', directory, '--output', directory]):
+            with self.assertRaises(RuntimeError): resources.main()
+            self.assertEqual(1, run.call_count)
+            self.assertIn('-Dtest=NodeTargetThroughputBenchmarkTests#memory', run.call_args.args[0])
+            self.assertIn('-Dsetu.benchmark.node.targets=true', run.call_args.args[0])
+            documents = list(Path(directory).rglob('comparison.json'))
+            self.assertEqual(1, len(documents))
+            self.assertEqual(3, len(json.loads(documents[0].read_text())['runs']))
+
     def test_detection_respects_ancestor_quotas_and_remaining_cgroup_memory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

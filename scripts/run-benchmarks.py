@@ -16,6 +16,7 @@ import sys
 import tempfile
 import uuid
 import sustained_report
+import node_target_report
 
 MIB = 1024 ** 2
 GIB = 1024 ** 3
@@ -209,7 +210,7 @@ def main():
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--kind', choices=('sustained', 'sweep', 'capacity', 'steady', 'large-batch', 'chaos'), default='sustained')
+    parser.add_argument('--kind', choices=('target', 'sustained', 'sweep', 'capacity', 'steady', 'large-batch', 'chaos'), default='sustained')
     parser.add_argument('--measurement', choices=('smoke', 'full'), default='smoke')
     parser.add_argument('--storage-mode', choices=('both', 'IN_MEMORY', 'FILE'), default='both')
     parser.add_argument('--profile', choices=('host', 'github-private', 'github-public'), default='host')
@@ -230,13 +231,21 @@ def main():
     parser.add_argument('--log', type=Path, help='explicit single-profile capture (capacity/steady/large-batch)')
     parser.add_argument('--dry-run', action='store_true', help='detect and print the plan without launching anything')
     args = parser.parse_args()
-    full = args.kind == 'sustained' and args.measurement == 'full'
+    full = args.kind in ('sustained', 'target') and args.measurement == 'full'
     args.repeats = args.repeats if args.repeats is not None else (3 if full or args.kind == 'sweep' else 1)
     args.stage_millis = args.stage_millis if args.stage_millis is not None else (30000 if full else 3000)
     args.warmup_millis = args.warmup_millis if args.warmup_millis is not None else (10000 if full else 2000)
     args.max_concurrency = args.max_concurrency if args.max_concurrency is not None else (32768 if args.kind == 'sustained' else 8)
     if full and (args.repeats != 3 or args.stage_millis < 30000 or args.warmup_millis < 10000):
         parser.error('full measurements require three repetitions, >=10000 ms warmup and >=30000 ms measurement')
+    if args.kind == 'target':
+        if not full or args.storage_mode == 'both' or args.payload_sizes != '1024':
+            parser.error('node targets require --measurement full, a single --storage-mode and --payload-sizes 1024')
+        if args.stage_millis != 30000 or args.warmup_millis != 10000:
+            parser.error('node targets use 10000 ms adaptive warmup and 30000 ms measurement')
+        if args.heap_mib is None: args.heap_mib = 256 if args.storage_mode == 'IN_MEMORY' else 128
+        if args.direct_mib is None: args.direct_mib = 128
+        if args.memory_log_mib is None: args.memory_log_mib = 64
     if args.kind == 'sustained' and args.warmup_millis < 250:
         parser.error('sustained warmup must be at least 250 ms')
     payloads = [int(value) for value in args.payload_sizes.split(',')]
@@ -271,9 +280,13 @@ def main():
                     cpu_fraction=args.cpu_fraction or args.fraction,
                     memory_fraction=args.memory_fraction or args.fraction,
                     disk_fraction=args.disk_fraction or args.fraction, enforcement='systemd-cgroup-v2',
-                    payload_sizes=payloads, repeats=args.repeats if args.kind in ('sweep', 'sustained') else 1,
+                    payload_sizes=payloads, repeats=args.repeats if args.kind in ('target', 'sweep', 'sustained') else 1,
                     measurement=args.measurement, storage_mode=args.storage_mode, max_concurrency=args.max_concurrency,
                     stage_millis=args.stage_millis, warmup_millis=args.warmup_millis)
+    if args.kind == 'target':
+        snapshot.update(source_revision=os.environ.get('GITHUB_SHA'), run_url=(
+            os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + os.environ['GITHUB_REPOSITORY']
+            + '/actions/runs/' + os.environ['GITHUB_RUN_ID']) if 'GITHUB_RUN_ID' in os.environ else None)
     print('BENCHMARK_RESOURCES ' + json.dumps(snapshot, sort_keys=True), flush=True)
     if args.dry_run:
         return
@@ -296,6 +309,8 @@ def main():
                 test = 'SustainedThroughputBenchmarkTests'
                 if args.storage_mode != 'both':
                     test += '#memory' if args.storage_mode == 'IN_MEMORY' else '#file'
+            if args.kind == 'target':
+                test = 'NodeTargetThroughputBenchmarkTests#' + ('memory' if args.storage_mode == 'IN_MEMORY' else 'file')
             if args.kind == 'chaos':
                 test = '*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests,ProcessCpuSamplerTests,CpuSaturationHoldTests,CapacityJfrTests,SustainedCriteriaTests'
             if args.kind == 'large-batch':
@@ -304,7 +319,9 @@ def main():
                        '-Dtest=' + test, '-Dsurefire.failIfNoSpecifiedTests=false']
             command += java_properties(budget, payload, args.data_directory)
             command += [f'-Dsetu.benchmark.batch.records={batch}']
-            if args.kind == 'sustained':
+            if args.kind == 'target':
+                command += ['-Dsetu.benchmark.node.targets=true', '-Dsetu.benchmark.jfr=true']
+            elif args.kind == 'sustained':
                 command += [f'-Dsetu.benchmark.measurement={args.measurement}',
                             f'-Dsetu.benchmark.max.concurrency={args.max_concurrency}',
                             f'-Dsetu.benchmark.stage.millis={args.stage_millis}',
@@ -329,6 +346,10 @@ def main():
                     subprocess.run(([] if os.geteuid() == 0 else ['sudo', '-n']) + ['systemctl', 'stop', unit], check=False)
                     raise
             print(f'BENCHMARK_CASE payload_bytes={payload} repeat={repeat + 1} exit={result.returncode} capture={capture}', flush=True)
+            if args.kind == 'target':
+                runs = node_target_report.parse_capture(capture.read_text(encoding='utf-8'), modes)
+                rows += runs
+                node_target_report.save(output, rows, snapshot, modes)
             if result.returncode:
                 raise RuntimeError(f'benchmark failed; inspect {capture} (resource-limit kills are failures, not throughput results)')
             if args.kind == 'sweep':
@@ -343,8 +364,9 @@ def main():
                 rows += runs
                 sustained_report.save(output, rows, snapshot)
     if rows:
-        print(sustained_report.comparison_report(rows, snapshot) if args.kind == 'sustained' else comparison_report(rows))
-    if full and 1024 in payloads:
+        print(node_target_report.comparison_report(rows, modes) if args.kind == 'target'
+              else sustained_report.comparison_report(rows, snapshot) if args.kind == 'sustained' else comparison_report(rows))
+    if full and args.kind == 'sustained' and 1024 in payloads:
         sustained_report.check_gates(rows, modes)
 
 
