@@ -2,17 +2,17 @@
 
 [CI workflow](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:start -->
-[![in-memory: 500.00K/s target, 499.99K/s local target, 100% qualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
-[![file: 250.00K/s target, 249.99K/s local target, 100% qualified](benchmark-badges/file-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
+[![in-memory: 500.00K/s target, 271.09K/s CI, 54% unqualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652)
+[![file: 250.00K/s target, 185.09K/s CI, 74% unqualified](benchmark-badges/file-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652)
 <!-- benchmark-metrics-badges:end -->
 
 <!-- benchmark-target-diagnostics:start -->
-[![memory p99: 2.04 ms at target (local target)](benchmark-badges/memory-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
-[![memory resources: 16% CPU, 246 MiB heap (local target)](benchmark-badges/memory-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
-[![memory JFR: 2.13 GiB/s alloc, 7.0 ms GC (local target)](benchmark-badges/memory-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
-[![file p99: 8.06 ms at target (local target)](benchmark-badges/file-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
-[![file resources: 18% CPU, 126 MiB heap (local target)](benchmark-badges/file-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
-[![file JFR: 1.33 GiB/s alloc, 13.0 ms GC (local target)](benchmark-badges/file-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md)
+[![memory p99: 14084.47 ms at target (CI)](benchmark-badges/memory-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652)
+[![memory resources: 99% CPU, 252 MiB heap (CI)](benchmark-badges/memory-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652)
+[![memory JFR: 1.15 GiB/s alloc, 40.2 ms GC (CI)](benchmark-badges/memory-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652)
+[![file p99: 8078.23 ms at target (CI)](benchmark-badges/file-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652)
+[![file resources: 89% CPU, 120 MiB heap (CI)](benchmark-badges/file-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652)
+[![file JFR: 0.98 GiB/s alloc, 23.9 ms GC (CI)](benchmark-badges/file-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652)
 <!-- benchmark-target-diagnostics:end -->
 
 Badges show the latest target-load measurements against **500K records/s in-memory** and **250K records/s durable file** at 1 KiB per record, with their source and qualification status. Each mode needs three independent repetitions at 50%, 80% and 100% of target, 30 measured seconds per stage, at least 95% unique consumption and offered throughput, zero errors/timeouts, measured HDR latency, stable heap within 1 GiB, and average CPU at most 85%. Tests, full target benchmarks and JFR run automatically on pushes and pull requests; default-branch runs update the badges. Unqualified or incomplete CI runs are shown explicitly. File acknowledgments follow a force of every touched segment in each group commit.
@@ -20,7 +20,11 @@ Badges show the latest target-load measurements against **500K records/s in-memo
 ## Latest node-target benchmark details
 
 <!-- benchmark-capacity-details:start -->
-Latest source: **local target**, revision `e7c035c`. [Benchmark run/report](https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md).
+Latest source: **CI**, revision `df84585d6dda2b5c76f6ae403c827a0848c05648`. [Benchmark run/report](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652).
+
+Runner: AMD EPYC 7763 64-Core Processor; 1.6 enforced CPU cores; 128 MiB worker heap; filesystem/media /dev/sda1 ext4 (rotational).
+
+Runner: AMD EPYC 7763 64-Core Processor; 1.6 enforced CPU cores; 256 MiB worker heap; filesystem/media /dev/sda1 ext4 (rotational).
 
 # Node-target measurements
 
@@ -28,31 +32,29 @@ Three independent repetitions; 1 KiB records; 10s or longer warmup and 30s measu
 
 | Mode | Target/s | Median measured/s | Worst target p99 ms | Peak heap MiB | Peak average CPU % | Qualified |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| IN_MEMORY | 500,000 | 499,985 | 2.041 | 246 | 15.7 | True |
-| FILE | 250,000 | 249,993 | 8.057 | 126 | 18.2 | True |
+| IN_MEMORY | 500,000 | 271,087 | 14084.473 | 252 | 99.5 | False |
+| FILE | 250,000 | 185,088 | 8078.230 | 120 | 88.6 | False |
 
 | Mode | Repeat | Load | Measured/s | Consumed/s | p99 ms | Heap slope MiB/s | Healthy |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| IN_MEMORY | 1 | 50% | 249,993 | 250,001 | 2.096 | 0.287 | True |
-| IN_MEMORY | 1 | 80% | 400,000 | 400,009 | 2.068 | -0.775 | True |
-| IN_MEMORY | 1 | 100% | 499,977 | 499,994 | 2.039 | -0.101 | True |
-| IN_MEMORY | 2 | 50% | 249,993 | 250,010 | 2.087 | -0.454 | True |
-| IN_MEMORY | 2 | 80% | 400,000 | 400,009 | 2.073 | 0.852 | True |
-| IN_MEMORY | 2 | 100% | 499,985 | 499,985 | 2.041 | -0.593 | True |
-| IN_MEMORY | 3 | 50% | 249,993 | 250,001 | 2.092 | -0.243 | True |
-| IN_MEMORY | 3 | 80% | 400,000 | 400,009 | 2.082 | 0.289 | True |
-| IN_MEMORY | 3 | 100% | 499,994 | 500,002 | 2.037 | -0.472 | True |
-| FILE | 1 | 50% | 124,996 | 125,013 | 4.497 | 0.123 | True |
-| FILE | 1 | 80% | 199,987 | 199,996 | 4.461 | -0.260 | True |
-| FILE | 1 | 100% | 249,993 | 250,001 | 4.383 | 0.066 | True |
-| FILE | 2 | 50% | 124,996 | 125,013 | 4.497 | 0.124 | True |
-| FILE | 2 | 80% | 199,987 | 200,004 | 4.428 | -0.089 | True |
-| FILE | 2 | 100% | 249,993 | 250,010 | 4.346 | -0.038 | True |
-| FILE | 3 | 50% | 124,996 | 125,013 | 4.538 | -0.108 | True |
-| FILE | 3 | 80% | 199,987 | 199,987 | 4.444 | -0.094 | True |
-| FILE | 3 | 100% | 249,993 | 250,010 | 8.057 | -0.170 | True |
-
-Local Windows measurements use eight JVM active processors with no OS CPU quota. Automatic CI replaces these with runner measurements.
+| FILE | 1 | 50% | 124,996 | 125,013 | 15.245 | 0.100 | False |
+| FILE | 1 | 80% | 184,969 | 184,994 | 2378.170 | -0.282 | False |
+| FILE | 1 | 100% | 185,088 | 185,097 | 7709.131 | -0.119 | False |
+| FILE | 2 | 50% | 124,996 | 125,013 | 22.233 | 0.145 | False |
+| FILE | 2 | 80% | 184,627 | 184,636 | 2696.937 | -0.152 | False |
+| FILE | 2 | 100% | 184,457 | 184,465 | 8078.230 | -0.119 | False |
+| FILE | 3 | 50% | 124,996 | 125,013 | 11.469 | -0.081 | False |
+| FILE | 3 | 80% | 184,875 | 184,883 | 2690.646 | 0.321 | False |
+| FILE | 3 | 100% | 185,114 | 185,105 | 7998.538 | 0.199 | False |
+| IN_MEMORY | 1 | 50% | 249,993 | 251,008 | 434.110 | -0.585 | False |
+| IN_MEMORY | 1 | 80% | 257,067 | 257,109 | 10611.589 | -0.243 | False |
+| IN_MEMORY | 1 | 100% | 328,277 | 328,218 | 10166.993 | -0.171 | False |
+| IN_MEMORY | 2 | 50% | 249,114 | 249,139 | 317.194 | 0.234 | False |
+| IN_MEMORY | 2 | 80% | 258,057 | 258,039 | 10561.257 | -0.072 | False |
+| IN_MEMORY | 2 | 100% | 271,087 | 271,078 | 13589.545 | -0.424 | False |
+| IN_MEMORY | 3 | 50% | 243,439 | 243,430 | 957.874 | -0.055 | False |
+| IN_MEMORY | 3 | 80% | 257,604 | 257,647 | 10594.812 | 0.064 | False |
+| IN_MEMORY | 3 | 100% | 263,159 | 263,142 | 14084.473 | 0.047 | False |
 <!-- benchmark-capacity-details:end -->
 
 ## Historical capacity diagnostics

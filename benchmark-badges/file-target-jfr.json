@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "label": "file JFR",
-  "message": "1.33 GiB/s alloc, 13.0 ms GC (local target)",
-  "color": "green",
-  "sourceScope": "local target",
-  "sourceRevision": "e7c035c",
-  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md"
+  "message": "0.98 GiB/s alloc, 23.9 ms GC (CI)",
+  "color": "orange",
+  "sourceScope": "CI",
+  "sourceRevision": "df84585d6dda2b5c76f6ae403c827a0848c05648",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652"
 }

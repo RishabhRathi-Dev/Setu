@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "label": "file p99",
-  "message": "8.06 ms at target (local target)",
-  "color": "green",
-  "sourceScope": "local target",
-  "sourceRevision": "e7c035c",
-  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/blob/e7c035c/setu-benchmark/optimization-2026-10-14.md"
+  "message": "8078.23 ms at target (CI)",
+  "color": "orange",
+  "sourceScope": "CI",
+  "sourceRevision": "df84585d6dda2b5c76f6ae403c827a0848c05648",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/38538273652"
 }
