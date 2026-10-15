@@ -139,15 +139,24 @@ public final class ProtocolCodec {
     }
 
     public static BrokerRequest decodeRequest(byte[] payload) throws ProtocolException {
-        int correlation = extractCorrelationId(payload);
+        return decodeRequest(ByteBuffer.wrap(payload), extractCorrelationId(payload), null);
+    }
+
+    /** Immutable transport-owned frames can be retained by storage without copying payloads. */
+    public static BrokerRequest decodeRequest(MessageValue.Frame frame) throws ProtocolException {
+        ByteBuffer cursor = frame.cursor();
+        int correlation = cursor.remaining() >= 12 ? cursor.getInt(8) : -1;
+        return decodeRequest(cursor, correlation, frame);
+    }
+
+    private static BrokerRequest decodeRequest(ByteBuffer in, int correlation, MessageValue.Frame frame) throws ProtocolException {
         try {
-            ByteBuffer in = ByteBuffer.wrap(payload);
             Header header = readHeader(in, REQUEST);
             correlation = header.correlationId;
             BrokerRequest request = switch (header.command) {
-                case PRODUCE -> new BrokerRequest(correlation, header.command, readString(in), in.getInt(),
-                        -1, -1, readValue(in), 0, null, null, List.of(), 0);
-                case PRODUCE_BATCH -> decodeProduceBatch(in, correlation);
+                case PRODUCE -> new BrokerRequest(correlation, header.command, readString(in, frame), in.getInt(),
+                        -1, -1, readValue(in, frame), 0, null, null, List.of(), 0);
+                case PRODUCE_BATCH -> decodeProduceBatch(in, correlation, frame);
                 case FETCH -> decodeFetch(in, correlation);
                 case COMMIT_OFFSET -> decodeCommit(in, correlation);
                 case JOIN_GROUP -> decodeJoin(in, correlation);
@@ -199,15 +208,15 @@ public final class ProtocolCodec {
                 offset, maxBytes, MessageValue.empty(), 0, group, member, List.of(), wait);
     }
 
-    private static BrokerRequest decodeProduceBatch(ByteBuffer in, int correlation) throws IOException {
-        String topic = readString(in);
+    private static BrokerRequest decodeProduceBatch(ByteBuffer in, int correlation, MessageValue.Frame frame) throws IOException {
+        String topic = readString(in, frame);
         int partition = in.getInt();
         int count = boundedCount(in.getInt());
         RequestBuffers.reserveObjects(64L * count);
         List<MessageValue> values = new ArrayList<>(count);
         long bytes = 0;
         for (int i = 0; i < count; i++) {
-            MessageValue value = readValue(in);
+            MessageValue value = readValue(in, frame);
             bytes += value.length();
             if (bytes > MAX_BATCH_BYTES) throw bad("produce batch exceeds maximum bytes", correlation);
             values.add(value);
@@ -424,6 +433,11 @@ public final class ProtocolCodec {
         return encodeUnchecked(BrokerResponse.error(header.correlationId, header.command, code, safeMessage));
     }
 
+    public static byte[] errorResponse(MessageValue.Frame request, ErrorCode code, String message) {
+        // Error paths are cold; retain the existing malformed-header handling exactly.
+        return errorResponse(request.copy(), code, message);
+    }
+
     private static byte[] encodeUnchecked(BrokerResponse response) {
         try { return encodeResponse(response); }
         catch (IOException impossible) { throw new IllegalStateException(impossible); }
@@ -461,13 +475,20 @@ public final class ProtocolCodec {
         value.writeTo(out);
     }
 
-    private static MessageValue readValue(ByteBuffer in) throws IOException {
+    private static MessageValue readValue(ByteBuffer in, MessageValue.Frame frame) throws IOException {
         int length = in.getInt();
         if (length < 0 || length > 16 * 1024 * 1024 || length > in.remaining())
             throw new IOException("Invalid byte field length: " + length);
-        return MessageValue.readFrom(in, length);
+        if (frame == null) return MessageValue.readFrom(in, length);
+        MessageValue value = frame.valueAt(in.position(), length);
+        in.position(in.position() + length);
+        return value;
     }
     private static String readString(ByteBuffer in) throws IOException {
+        return readString(in, null);
+    }
+
+    private static String readString(ByteBuffer in, MessageValue.Frame frame) throws IOException {
         int length = in.getInt();
         if (length < 0 || length > MAX_STRING_BYTES || length > in.remaining())
             throw new IOException("Invalid byte field length: " + length);
@@ -477,8 +498,9 @@ public final class ProtocolCodec {
         int start = in.position();
         boolean ascii = true;
         for (int i = 0; i < length; i++) if (in.get(start + i) < 0) { ascii = false; break; }
-        if (ascii && in.hasArray()) {
-            String value = new String(in.array(), in.arrayOffset() + start, length, StandardCharsets.US_ASCII);
+        if (ascii && (in.hasArray() || frame != null)) {
+            String value = frame != null ? frame.asciiAt(start, length)
+                    : new String(in.array(), in.arrayOffset() + start, length, StandardCharsets.US_ASCII);
             in.position(start + length);
             return value;
         }

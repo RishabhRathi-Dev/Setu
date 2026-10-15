@@ -211,14 +211,22 @@ public final class FileMessageLog implements MessageLog {
     private void recover() throws IOException {
         long position = 0;
         long size = channel.size();
-        ByteBuffer lengthBuffer = ByteBuffer.allocate(Integer.BYTES);
+        ByteBuffer window = ByteBuffer.allocate(64 * 1024);
+        window.limit(0);
+        long windowStart = 0;
         while (position + Integer.BYTES <= size) {
-            lengthBuffer.clear();
-            channel.position(position);
-            if (!readFully(lengthBuffer)) {
-                break;
+            if (position < windowStart || position + Integer.BYTES > windowStart + window.limit()) {
+                window.clear();
+                window.limit((int) Math.min(window.capacity(), size - position));
+                windowStart = position;
+                while (window.hasRemaining()) {
+                    int read = channel.read(window, windowStart + window.position());
+                    if (read < 0) break;
+                }
+                window.flip();
+                if (window.remaining() < Integer.BYTES) break;
             }
-            int length = lengthBuffer.flip().getInt();
+            int length = window.getInt((int) (position - windowStart));
             if (length < 0 || length > maxRecordBytes || position + Integer.BYTES + length > size) {
                 break;
             }
@@ -235,16 +243,6 @@ public final class FileMessageLog implements MessageLog {
         channel.position(position);
         endPosition = position;
         LOG.info("File log recovered path={} records={} bytes={} max_record_bytes={}", path, recordCount, endPosition, maxRecordBytes);
-    }
-
-    private boolean readFully(ByteBuffer buffer) throws IOException {
-        while (buffer.hasRemaining()) {
-            int read = channel.read(buffer);
-            if (read < 0) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private void ensureOpen() throws IOException {

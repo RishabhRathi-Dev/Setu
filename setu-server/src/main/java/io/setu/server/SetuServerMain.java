@@ -73,7 +73,7 @@ public final class SetuServerMain {
             TcpServer blocking = transport.equals("blocking")
                     ? new TcpServer(address, new FramedConnectionHandler(handler), options) : null;
             SelectorTcpServer selector = transport.equals("selector")
-                    ? new SelectorTcpServer(address, 16 * 1024 * 1024, options, (identity, request) -> handler.handle(request)) : null;
+                    ? new SelectorTcpServer(address, 16 * 1024 * 1024, options, handler) : null;
             try (AutoCloseable server = blocking != null ? blocking : selector) {
                 if (blocking != null) blocking.start(); else selector.start();
                 CountDownLatch stopped = new CountDownLatch(1);

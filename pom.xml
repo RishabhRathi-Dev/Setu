@@ -62,6 +62,15 @@
         </dependencies>
     </dependencyManagement>
 
+    <profiles>
+        <profile>
+            <id>openhft</id>
+            <modules>
+                <module>setu-benchmark/openhft</module>
+            </modules>
+        </profile>
+    </profiles>
+
     <build>
         <pluginManagement>
             <plugins>

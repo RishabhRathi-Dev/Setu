@@ -9,7 +9,15 @@ import io.setu.security.authorization.Permission;
 public final class ProtocolRequestAuthorizationMetadataResolver implements RequestAuthorizationMetadataResolver {
     @Override
     public RequestAuthorizationMetadata resolve(byte[] request) throws java.io.IOException {
-        BrokerRequest decoded = ProtocolCodec.decodeRequest(request);
+        return resolve(ProtocolCodec.decodeRequest(request));
+    }
+
+    @Override
+    public RequestAuthorizationMetadata resolve(io.setu.storage.log.MessageValue.Frame request) throws java.io.IOException {
+        return resolve(ProtocolCodec.decodeRequest(request));
+    }
+
+    private RequestAuthorizationMetadata resolve(BrokerRequest decoded) {
         return switch (decoded.command()) {
             case PRODUCE, PRODUCE_BATCH -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.PRODUCE);
             case FETCH -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.CONSUME);

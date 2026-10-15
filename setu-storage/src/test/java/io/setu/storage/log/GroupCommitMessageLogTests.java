@@ -10,6 +10,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GroupCommitMessageLogTests {
     @TempDir Path directory;
+    @Test void fullSizedBatchBypassesLingerWithoutWaitingForAnotherProducer() throws Exception {
+        try (var log = new GroupCommitMessageLog(new InMemoryMessageLog(1024),
+                32L * 1024 * 1024, 1024, TimeUnit.SECONDS.toNanos(30));
+             var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var result = workers.submit(() -> log.appendBatch(java.util.Collections.nCopies(256, new byte[1024])));
+            assertEquals(0L, result.get(3, TimeUnit.SECONDS));
+            assertEquals(256, log.nextOffset());
+            assertEquals(0, log.outstandingRequests());
+        }
+    }
     @Test void failedFlushFailsActiveAndQueuedRequestsWithoutAcknowledgingThem() throws Exception {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);

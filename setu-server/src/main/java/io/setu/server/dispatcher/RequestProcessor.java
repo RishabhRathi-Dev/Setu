@@ -8,4 +8,21 @@ import java.io.IOException;
 @FunctionalInterface
 public interface RequestProcessor {
     byte[] process(AuthenticationResult identity, byte[] request) throws IOException;
+
+    default byte[] process(AuthenticationResult identity, io.setu.storage.log.MessageValue.Frame request) throws IOException {
+        io.setu.core.protocol.RequestBuffers.reserveObjects(request.length());
+        return process(identity, request.copy());
+    }
+
+    static RequestProcessor plaintext(RequestHandler handler) {
+        java.util.Objects.requireNonNull(handler, "handler");
+        return new RequestProcessor() {
+            public byte[] process(AuthenticationResult identity, byte[] request) throws IOException {
+                return handler.handle(request);
+            }
+            public byte[] process(AuthenticationResult identity, io.setu.storage.log.MessageValue.Frame request) throws IOException {
+                return handler.handle(request);
+            }
+        };
+    }
 }

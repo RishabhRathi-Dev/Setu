@@ -17,10 +17,12 @@ import java.util.concurrent.locks.LockSupport;
  * Queue operations are lock-free; durability waits and file I/O remain blocking.
  */
 public final class GroupCommitMessageLog implements MessageLog {
+    private static final long TARGET_GROUP_BYTES = 256L * 1024;
     private final MessageLog delegate;
     private final long maximumBytes;
     private final int maximumRequests;
     private final long lingerNanos;
+    private final long targetGroupBytes;
     // Counts include the detached group currently being flushed.
     private final AtomicReference<State> state = new AtomicReference<>(new State(null, 0, 0, false, null));
     private final AtomicBoolean closeDelegate = new AtomicBoolean();
@@ -34,6 +36,9 @@ public final class GroupCommitMessageLog implements MessageLog {
         this.maximumBytes = maximumBytes;
         this.maximumRequests = maximumRequests;
         this.lingerNanos = lingerNanos;
+        // A batch already large enough to amortize a force need not wait for
+        // another synchronous producer. Keep lingering to coalesce small writes.
+        this.targetGroupBytes = Math.max(1, Math.min(TARGET_GROUP_BYTES, maximumBytes / 2));
         writer = Thread.ofVirtual().name("setu-partition-writer").unstarted(this::writeLoop);
         writer.start();
     }
@@ -46,7 +51,11 @@ public final class GroupCommitMessageLog implements MessageLog {
         if (values.isEmpty()) throw new IllegalArgumentException("empty batch");
         List<MessageValue> owned = List.copyOf(values);
         long bytes = 0;
-        for (MessageValue value : owned) bytes = Math.addExact(bytes, value.retainedArrayLength() + 32L);
+        MessageValue previous = null;
+        for (MessageValue value : owned) {
+            bytes = Math.addExact(bytes, 32L + (value.sharesFrameWith(previous) ? 0 : value.retainedArrayLength()));
+            previous = value;
+        }
         Pending pending = new Pending(owned, bytes, new CompletableFuture<>());
         while (true) {
             State before = state.get();
@@ -74,7 +83,7 @@ public final class GroupCommitMessageLog implements MessageLog {
             }
             long started = System.nanoTime();
             long remaining;
-            while (!(ready = state.get()).closing && ready.bytes < maximumBytes / 2
+            while (!(ready = state.get()).closing && ready.bytes < targetGroupBytes
                     && ready.requests < maximumRequests
                     && (remaining = lingerNanos - (System.nanoTime() - started)) > 0) {
                 LockSupport.parkNanos(this, remaining);

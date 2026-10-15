@@ -1,5 +1,32 @@
 # Setu benchmarks and chaos tests
 
+## 15 October optimization measurements
+
+The changes on baseline `26aa179` share immutable produce-frame slices through decoding and storage, retain correct frame/chunk admission and reclamation accounting, flush groups of at least 256 KiB immediately, and scan recovery headers through 64 KiB windows. Smaller writes retain group-commit coalescing; file acknowledgments still follow `force(true)`. Fetch response encoding remains a major allocation/CPU candidate for future profiling.
+
+All 18 target windows passed the existing qualification checks: three fresh JVM repetitions per mode, 10-second adaptive warmup and 30-second measurements at 50%, 80% and 100% of target. Host: AMD Ryzen 5 7600X, Windows 11/NTFS, Java 26.0.2.1, approximately 31.1 GiB RAM. JVM active processor count was eight, without an OS CPU quota; retained-log budget was 64 MiB and heaps were 256 MiB for memory / 128 MiB for file storage. These local results do not replace the resource-enforced CI badges.
+
+| Mode | Offered target/s | Median actual at target/s | Worst target p99 ms | Peak heap MiB | Passed windows |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| IN_MEMORY | 500,000 | 499,993.600 | 2.023 | 248 | 9/9 |
+| FILE | 250,000 | 249,992.533 | 2.826 | 124 | 9/9 |
+
+Every window recorded zero errors and stable warmup/heap. Memory recorded 1,280 missed scheduled records across nine windows; file recorded zero. All windows exceeded the unchanged 95% offered-throughput gate. A separate single-run diagnostic with four active processors, 768 MiB heap, 256 MiB log budget, 2-second warmup and 3-second measurement showed one-pair memory throughput rising from 1.208M to 1.295M records/s and file throughput from 147.5K to 395.8K/s, with sampled allocation per record falling 17.1% and 18.5% respectively. Those short profiles remain unqualified: the final memory ramp failed heap slope and the file ramp stopped at an unhealthy two-pair stage. Intermediate mixed results are retained in the [raw measurement snapshot](performance-analysis-2026-10-15.json).
+
+Validation passed 131 regression/chaos checks, with two conditional skips (launcher-envelope configuration and the Linux-only OpenHFT comparison), plus both target test cases. Packaging, AOT cache generation and cached plaintext/mTLS training passed, including authorization/quota allow-and-deny handling and backpressure recovery. Reproduction commands for short and full target profiles appear below; logs/JFR remain under `logs/benchmarks/`.
+
+## OpenHFT storage comparison
+
+The optional module compares `FileMessageLog` with Chronicle Queue **2026.6**, using 1 KiB records in 256-record batches. It adds no OpenHFT runtime dependency or JVM module flags to the broker. Run on **Linux with Java 26**:
+
+```bash
+bash ./mvnw -Popenhft -pl setu-benchmark/openhft -am test
+```
+
+The module supplies native/module flags and disables Chronicle analytics. Three repetitions alternate engine order, with 64 warmup batches and 1,024 measured batches (256 MiB payload) per engine. Setu forces each batch; Chronicle requests `SyncMode.SYNC` and calls `appender.sync()` after every batch document. Every record is verified after reopen. Output includes append throughput, batch p50/p99 and reopen time. These short storage-only measurements exclude TCP and concurrent broker work, and cannot establish broker capacity or certify crash durability. Reopen work also differs: Setu rebuilds its index while Chronicle opens persisted structures lazily.
+
+The durable comparison skips Windows: the resolved `net.openhft:posix:2026.2` implementation of `WinJNRPosixAPI.msync(long,long,int)` returns zero without an OS flush. A Windows read/write probe succeeded, but its apparent Chronicle speedup was rejected as a durability mismatch; cleanup also encountered a still-mapped file after close. The Linux test rejects a no-op native backend and drains pending resource releases before cleanup. Production adoption still needs a tested adapter for logical offsets, rollover, reads, byte admission, thread ownership, failure/shutdown, migration and crash recovery. See [Chronicle Queue](https://github.com/OpenHFT/Chronicle-Queue) and [OpenHFT POSIX](https://github.com/OpenHFT/posix).
+
 ## Sustained throughput profiles
 
 `SustainedThroughputBenchmarkTests` launches a fresh Java 26 worker for each storage mode and repetition. The broker, server and TCP load clients share that worker and its CPU/memory budget. Each producer/consumer pair owns one single-partition topic. A consumer fetches and acknowledges only that topic, so consumption counts unique deliveries rather than broadcast fanout. Setup, warmup and shutdown are excluded from throughput.

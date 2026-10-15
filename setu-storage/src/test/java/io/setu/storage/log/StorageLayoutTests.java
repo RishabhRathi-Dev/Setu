@@ -15,6 +15,29 @@ class StorageLayoutTests {
     @TempDir Path directory;
 
     @Test
+    void recoveryHandlesHeadersStraddlingWindowsAndTruncatesAnIncompleteTail() throws Exception {
+        Path path = directory.resolve("recovery-windows.log");
+        var values = List.of(new byte[65_530], new byte[0], new byte[65_533], new byte[]{7});
+        long validSize;
+        try (var log = new FileMessageLog(path, 70_000)) {
+            log.appendBatch(values);
+            validSize = java.nio.file.Files.size(path);
+        }
+        java.nio.file.Files.write(path, new byte[]{0, 0}, java.nio.file.StandardOpenOption.APPEND);
+        try (var log = new FileMessageLog(path, 70_000)) {
+            assertEquals(validSize, java.nio.file.Files.size(path));
+            assertEquals(4, log.nextOffset());
+            var records = log.read(0, 200_000);
+            for (int i = 0; i < values.size(); i++) assertArrayEquals(values.get(i), records.get(i).value());
+            assertEquals(4, log.append(new byte[]{8}));
+        }
+        try (var log = new FileMessageLog(path, 70_000)) {
+            assertEquals(5, log.nextOffset());
+            assertArrayEquals(new byte[]{8}, log.read(4, 1).getFirst().value());
+        }
+    }
+
+    @Test
     void memoryReclamationKeepsOffsetsAndValuesAcrossPartialAndWholeChunks() throws Exception {
         byte[] value = new byte[513];
         Arrays.fill(value, (byte) 7);

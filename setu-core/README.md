@@ -9,7 +9,7 @@
 - File-backed topic and partition logs are stored in base-offset-named segments under the configured data directory and recovered at startup; memory-backed topics are process-local.
 - `Command`, `BrokerRequest`, `BrokerResponse`, `ProtocolRecord`, `ErrorCode`, and `ProtocolException` define protocol v1 values.
 - `ProtocolCodec` encodes and validates request/response bodies. `FrameCodec` provides the shared length-prefixed TCP frame format used by client and server.
-- Request and response decoders use bounded `ByteBuffer` cursors. The byte-array APIs copy payloads defensively; `decodeResponse(MessageValue.Frame)` shares immutable slices of a privately read frame. `encodeProduceBatch` copies caller payloads directly into their final wire frame with the same topic, batch-count, partition, and payload-byte limits.
+- Request and response decoders use bounded `ByteBuffer` cursors. The byte-array APIs copy payloads defensively; `decodeRequest(MessageValue.Frame)` and `decodeResponse(MessageValue.Frame)` share immutable slices of a privately read frame. `encodeProduceBatch` copies caller payloads directly into their final wire frame with the same topic, batch-count, partition, and payload-byte limits.
 - Unit tests cover protocol encoding/validation and the broker operations/recovery paths.
 
 ## Broker usage

@@ -26,7 +26,7 @@ class MemoryBackpressureIntegrationTests {
             var address = new InetSocketAddress("127.0.0.1", 0);
             try (TcpServer blocking = useSelector ? null : new TcpServer(address, new FramedConnectionHandler(handler));
                  SelectorTcpServer selector = useSelector ? new SelectorTcpServer(address, 16 * 1024 * 1024,
-                         TcpServerOptions.defaults(), (identity, request) -> handler.handle(request)) : null) {
+                         TcpServerOptions.defaults(), handler) : null) {
                 if (blocking != null) blocking.start(); else selector.start();
                 int port = blocking != null ? blocking.localAddress().getPort() : selector.localAddress().getPort();
                 try (var producer = client(port); var consumer = client(port)) {

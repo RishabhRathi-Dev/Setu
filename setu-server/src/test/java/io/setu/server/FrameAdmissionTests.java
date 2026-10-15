@@ -66,11 +66,12 @@ class FrameAdmissionTests {
                 first.setSoTimeout(3000);
                 FrameCodec.writeFrame(new DataOutputStream(first.getOutputStream()), new byte[8], 1024);
                 assertTrue(entered.await(3, TimeUnit.SECONDS));
-                assertEquals(base + 1040, requests.getAsLong());
+                // The legacy byte[] handler also reserves its eight-byte compatibility copy.
+                assertEquals(base + 1048, requests.getAsLong());
                 try (var rejected = new Socket("127.0.0.1", port)) {
                     rejected.setSoTimeout(3000);
                     assertRejectedBeforeBody(rejected);
-                    awaitRequestBytes(requests, base + 1040);
+                    awaitRequestBytes(requests, base + 1048);
                 }
                 release.countDown();
                 assertEquals(8, FrameCodec.readFrame(new DataInputStream(first.getInputStream()), 1024).length);

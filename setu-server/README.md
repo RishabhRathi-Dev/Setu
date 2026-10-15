@@ -85,6 +85,8 @@ FramedConnectionHandler
 
 This division keeps socket acceptance, connection setup, framing, request policy, and broker operation behind separate components. `SecureServerFactory` is the composition root for a ready-to-run secure server.
 
+Both transports pass privately owned immutable request frames to the built-in dispatcher. Produce payloads share frame slices through decoding and storage. The built-in secured processor and protocol metadata resolver preserve this ownership path. `RequestHandler`, `RequestProcessor`, and `RequestAuthorizationMetadataResolver` retain their functional byte-array APIs; their default frame overloads reserve credit and provide defensive compatibility copies. When composing plaintext broker pipelines, pass `BrokerRequestHandler` directly to the transport's handler constructor or use `RequestProcessor.plaintext(handler)` to preserve immutable dispatch. A byte-array lambda intentionally uses the compatibility path.
+
 ## Standalone JAR
 
 Build and launch the local-development broker from the repository root with Java 26:

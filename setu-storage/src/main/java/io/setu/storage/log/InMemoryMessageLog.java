@@ -60,9 +60,11 @@ public final class InMemoryMessageLog implements MessageLog {
         List<MessageValue> owned = List.copyOf(values);
         if (owned.isEmpty()) throw new IllegalArgumentException("values must not be empty");
         long payloadBytes = 0;
+        MessageValue previous = null;
         for (MessageValue value : owned) {
             validateLength(value.length());
-            payloadBytes = Math.addExact(payloadBytes, recordMemoryBytes(value));
+            payloadBytes = Math.addExact(payloadBytes, recordMemoryBytes(value, previous));
+            previous = value;
         }
         while (true) {
             State before = state.get();
@@ -70,7 +72,18 @@ public final class InMemoryMessageLog implements MessageLog {
             long next = Math.addExact(before.nextOffset, owned.size());
             int available = before.active == null ? 0 : CHUNK_RECORDS - before.active.count;
             long chunks = (Math.max(0L, owned.size() - (long) available) + CHUNK_RECORDS - 1) / CHUNK_RECORDS;
-            long reservation = Math.addExact(payloadBytes, chunks * chunkMemoryBytes);
+            // Charge a shared frame once per contiguous run within each chunk. A frame
+            // spanning chunks is deliberately charged in each, so either can be reclaimed.
+            long chargedPayload = payloadBytes;
+            if (available > 0 && owned.getFirst().sharesFrameWith(before.active.records[before.active.count - 1]))
+                chargedPayload -= owned.getFirst().retainedBackingBytes();
+            for (long boundary = available > 0 ? available : CHUNK_RECORDS;
+                 boundary < owned.size(); boundary += CHUNK_RECORDS) {
+                MessageValue value = owned.get((int) boundary);
+                if (value.sharesFrameWith(owned.get((int) boundary - 1)))
+                    chargedPayload = Math.addExact(chargedPayload, value.retainedBackingBytes());
+            }
+            long reservation = Math.addExact(chargedPayload, chunks * chunkMemoryBytes);
             budget.reserve(reservation);
             boolean published = false;
             try {
@@ -90,10 +103,10 @@ public final class InMemoryMessageLog implements MessageLog {
                     int take = Math.min(CHUNK_RECORDS - count, owned.size() - position);
                     for (int i = 0; i < take; i++) {
                         MessageValue value = owned.get(position++);
+                        bytes += recordMemoryBytes(value, count == 0 ? null : records[count - 1]);
                         records[count] = value;
                         if (trackRetention) times[count] = now;
                         count++;
-                        bytes += recordMemoryBytes(value);
                     }
                     active = new Chunk(base, records, times, count, discarded, bytes, chunkMemoryBytes);
                     root = put(root, active);
@@ -126,20 +139,25 @@ public final class InMemoryMessageLog implements MessageLog {
         if (start >= snapshot.nextOffset) return List.of();
         List<LogRecord> result = new ArrayList<>();
         long bytesRead = 0;
+        long retainedFrames = 0;
+        MessageValue previous = null;
         Cursor cursor = new Cursor(snapshot.root, start);
         Chunk chunk;
         while ((chunk = cursor.next()) != null) {
             int from = (int) Math.max(chunk.discarded, start - chunk.base);
             int end = from;
             while (end < chunk.count && result.size() + end - from < MAX_RECORDS_PER_READ) {
-                int length = chunk.records[end].length();
+                MessageValue value = chunk.records[end];
+                int length = value.length();
                 if (bytesRead + length > maxBytes) break;
                 bytesRead += length;
+                if (!value.sharesFrameWith(previous)) retainedFrames += value.retainedFrameBytes();
+                previous = value;
                 end++;
             }
             // Reserve the complete chunk before allocating any result records. The snapshot is
             // immutable, so sizing and materialization cannot disagree under append/reclamation.
-            if (end > from) admission.reserve(bytesRead + 64L * (result.size() + end - from) + 22);
+            if (end > from) admission.reserve(bytesRead + retainedFrames + 64L * (result.size() + end - from) + 22);
             for (int i = from; i < end; i++) result.add(new LogRecord(chunk.base + i, chunk.records[i]));
             if (end < chunk.count || result.size() == MAX_RECORDS_PER_READ) return List.copyOf(result);
         }
@@ -196,7 +214,9 @@ public final class InMemoryMessageLog implements MessageLog {
         return true;
     }
 
-    private static long recordMemoryBytes(MessageValue value) { return ((value.retainedArrayLength() + 24L + 7) & ~7L) + 32; }
+    private static long recordMemoryBytes(MessageValue value, MessageValue previous) {
+        return 32 + (value.sharesFrameWith(previous) ? 0 : value.retainedBackingBytes());
+    }
     private void validateLength(int length) throws IOException {
         if (length > maxRecordBytes) throw new IOException("Record size " + length + " exceeds maximum " + maxRecordBytes);
     }
@@ -223,8 +243,12 @@ public final class InMemoryMessageLog implements MessageLog {
         Chunk discard(long target) {
             int removed = (int) (target - base);
             MessageValue[] retained = records.clone();
-            long bytes = payloadBytes;
-            for (int i = discarded; i < removed; i++) bytes -= recordMemoryBytes(retained[i]);
+            long bytes = 0;
+            MessageValue previous = null;
+            for (int i = removed; i < count; i++) {
+                bytes += recordMemoryBytes(retained[i], previous);
+                previous = retained[i];
+            }
             Arrays.fill(retained, discarded, removed, null);
             // Timestamps contain no payload references and can remain shared.
             return new Chunk(base, retained, appendedNanos, count, removed, bytes, overheadBytes);

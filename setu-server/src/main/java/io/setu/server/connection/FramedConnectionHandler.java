@@ -72,7 +72,7 @@ public final class FramedConnectionHandler implements ConnectionHandler {
 
     private static RequestProcessor plaintextProcessor(RequestHandler requestHandler) {
         Objects.requireNonNull(requestHandler, "requestHandler");
-        return (identity, request) -> requestHandler.handle(request);
+        return RequestProcessor.plaintext(requestHandler);
     }
 
     @Override
@@ -102,8 +102,7 @@ public final class FramedConnectionHandler implements ConnectionHandler {
                      var requestContext = io.setu.core.protocol.RequestBuffers.activate(requestCredit);
                      var responseCredit = new io.setu.core.protocol.ResponseBuffers(responseBudget);
                      var context = responseCredit.activate()) {
-                    byte[] request = new byte[length];
-                    input.readFully(request);
+                    var request = io.setu.storage.log.MessageValue.Frame.readFrom(input, length);
                     byte[] response = Objects.requireNonNull(
                             requestProcessor.process(session.identity(), request), "request processor response");
                     responseCredit.ensure(response.length);

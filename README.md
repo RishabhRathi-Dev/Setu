@@ -133,6 +133,8 @@ The single-node throughput targets are **500,000 records/s in memory** (~488 MiB
 
 The [local JFR optimization and node-target report](setu-benchmark/optimization-2026-10-14.md) records three 30-second repetitions at the offered targets, including actual throughput, latency, heap and earlier failed attempts. Automatic CI replaces the locally labeled badge data with measurements from its resource-enforced target profile.
 
+The [15 October optimization measurements](setu-benchmark/README.md#15-october-optimization-measurements) cover immutable produce frames, immediate flush of complete batches, windowed recovery and the OpenHFT evaluation. The optional `openhft` Maven profile provides a Linux Chronicle Queue comparison; production file storage keeps its force-before-ack behavior.
+
 The project is primarily concerned with the trade-offs between:
 
 ```text

@@ -44,7 +44,7 @@ public final class SelectorTcpServer implements AutoCloseable {
         responses = new BufferBudget(options.responseBufferBytes());
     }
     public SelectorTcpServer(InetSocketAddress address, int maxFrameSize, TcpServerOptions options, RequestHandler handler) {
-        this(address, maxFrameSize, options, (identity, request) -> handler.handle(request));
+        this(address, maxFrameSize, options, RequestProcessor.plaintext(handler));
     }
     public synchronized void start() throws IOException {
         if (running.get()) throw new IllegalStateException("Server is already running");
@@ -138,13 +138,13 @@ public final class SelectorTcpServer implements AutoCloseable {
             client.header.clear();
             if (length < 0 || length > maxFrameSize) throw new IOException("Invalid frame length");
             client.requestCredit = requests.reserve(2L * length + 1024);
-            client.body = ByteBuffer.allocate(length); // no growth/copy and no read-ahead into the next frame
+            client.body = new io.setu.storage.log.MessageValue.Frame.Reader(length);
         }
-        int count = client.channel.read(client.body);
+        int count = client.body.readFrom(client.channel);
         if (count < 0) { closeClient(client); return; }
         if (count > 0) client.activity = System.nanoTime();
-        if (client.body.hasRemaining()) return;
-        byte[] request = client.body.array();
+        if (!client.body.isComplete()) return;
+        var request = client.body.finish();
         client.body = null;
         client.inFlight = true;
         key.interestOps(0);
@@ -153,7 +153,7 @@ public final class SelectorTcpServer implements AutoCloseable {
         try { workers.execute(() -> dispatch(client, request, requestCredit)); }
         catch (RuntimeException e) { requestCredit.close(); throw e; }
     }
-    private void dispatch(Client client, byte[] request, BufferBudget.Lease credit) {
+    private void dispatch(Client client, io.setu.storage.log.MessageValue.Frame request, BufferBudget.Lease credit) {
         ResponseBuffers responseCredit = new ResponseBuffers(responses);
         boolean transferred = false;
         try (credit; var requestContext = io.setu.core.protocol.RequestBuffers.activate(credit);
@@ -162,7 +162,7 @@ public final class SelectorTcpServer implements AutoCloseable {
             byte[] response = Objects.requireNonNull(processor.process(null, request));
             if (response.length > maxFrameSize) throw new IOException("Response exceeds frame limit");
             responseCredit.ensure(response.length);
-            LOG.debug("Selector frame exchanged session={} request_bytes={} response_bytes={}", client.sessionId, request.length, response.length);
+            LOG.debug("Selector frame exchanged session={} request_bytes={} response_bytes={}", client.sessionId, request.length(), response.length);
             // The four-byte header is separate; no second framed copy of the entire response.
             completions.add(() -> {
                 if (!running.get() || !client.key.isValid()) { responseCredit.close(); return; }
@@ -230,7 +230,7 @@ public final class SelectorTcpServer implements AutoCloseable {
         final ByteBuffer header = ByteBuffer.allocate(4);
         final BufferBudget.Lease connectionCredit;
         SelectionKey key;
-        ByteBuffer body;
+        io.setu.storage.log.MessageValue.Frame.Reader body;
         BufferBudget.Lease requestCredit;
         ResponseBuffers responseCredit;
         ByteBuffer[] outbound;
