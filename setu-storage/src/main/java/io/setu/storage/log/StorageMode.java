@@ -1,6 +1,6 @@
 package io.setu.storage.log;
 
-/** Selects whether partition records live only in process memory or in local files. */
+/** Selects volatile process memory or the default durable OpenHFT Chronicle Queue backend. */
 public enum StorageMode {
     IN_MEMORY,
     FILE

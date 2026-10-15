@@ -35,9 +35,9 @@ class CapacityOomReportingChaosTests {
         Path output = Files.createDirectories(tempDir.resolve("logs")).resolve(mode + "-" + path + ".log");
         String executable = Path.of(System.getProperty("java.home"), "bin",
                 System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java").toString();
-        Process child = new ProcessBuilder(executable, "-XX:+UseZGC", "-XX:+UseStringDeduplication", "-Xms16m", "-Xmx32m", "-cp",
+        Process child = new ProcessBuilder(BenchmarkRuntime.childCommand(executable, "-Xms16m", "-Xmx32m", "-cp",
                 System.getProperty("surefire.test.class.path", System.getProperty("java.class.path")),
-                CapacityOomReportingWorker.class.getName(), mode, path)
+                CapacityOomReportingWorker.class.getName(), mode, path))
                 .redirectErrorStream(true).redirectOutput(output.toFile()).start();
         try {
             assertTrue(child.waitFor(20, TimeUnit.SECONDS), "OOM fixture did not terminate");

@@ -192,7 +192,7 @@ final class BrokerAotTraining {
     private static void trainMemoryBackpressure() throws Exception {
         long budget = 64 * 1024;
         try (var broker = new DefaultBroker(StorageMode.IN_MEMORY, null, RECORD_BYTES,
-                     MessageLogs.DEFAULT_MAX_SEGMENT_BYTES, DefaultBroker.DEFAULT_ACK_TIMEOUT_MILLIS,
+                     MessageLogs.DEFAULT_QUEUE_BLOCK_BYTES, DefaultBroker.DEFAULT_ACK_TIMEOUT_MILLIS,
                      DefaultBroker.DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS, budget);
              var server = new TcpServer(new InetSocketAddress("127.0.0.1", 0),
                      new FramedConnectionHandler(new BrokerRequestHandler(broker)))) {

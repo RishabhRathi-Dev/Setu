@@ -2,7 +2,7 @@
 
 ## 15 October optimization measurements
 
-The changes on baseline `26aa179` share immutable produce-frame slices through decoding and storage, retain correct frame/chunk admission and reclamation accounting, flush groups of at least 256 KiB immediately, and scan recovery headers through 64 KiB windows. Smaller writes retain group-commit coalescing; file acknowledgments still follow `force(true)`. Fetch response encoding remains a major allocation/CPU candidate for future profiling.
+These historical results predate the Chronicle consolidation and measure the retired custom file backend. They do not qualify the current Chronicle engine. The changes on baseline `26aa179` share immutable produce-frame slices through decoding and storage, retain correct frame/chunk admission and reclamation accounting, flush groups of at least 256 KiB immediately, and scan recovery headers through 64 KiB windows. Smaller writes retain group-commit coalescing; file acknowledgments still follow `force(true)`. Fetch response encoding remains a major allocation/CPU candidate for future profiling.
 
 All 18 target windows passed the existing qualification checks: three fresh JVM repetitions per mode, 10-second adaptive warmup and 30-second measurements at 50%, 80% and 100% of target. Host: AMD Ryzen 5 7600X, Windows 11/NTFS, Java 26.0.2.1, approximately 31.1 GiB RAM. JVM active processor count was eight, without an OS CPU quota; retained-log budget was 64 MiB and heaps were 256 MiB for memory / 128 MiB for file storage. These local results do not replace the resource-enforced CI badges.
 
@@ -15,17 +15,29 @@ Every window recorded zero errors and stable warmup/heap. Memory recorded 1,280 
 
 Validation passed 131 regression/chaos checks, with two conditional skips (launcher-envelope configuration and the Linux-only OpenHFT comparison), plus both target test cases. Packaging, AOT cache generation and cached plaintext/mTLS training passed, including authorization/quota allow-and-deny handling and backpressure recovery. Reproduction commands for short and full target profiles appear below; logs/JFR remain under `logs/benchmarks/`.
 
-## OpenHFT storage comparison
+## Default OpenHFT storage
 
-The optional module compares `FileMessageLog` with Chronicle Queue **2026.6**, using 1 KiB records in 256-record batches. It adds no OpenHFT runtime dependency or JVM module flags to the broker. Run on **Linux with Java 26**:
+`FILE` now exercises the production Chronicle Queue 2026.6 adapter directly. The optional OpenHFT comparison module/profile and duplicate custom file backends were removed. Standard sustained, target, crash and integration tests cover the default engine, including dense offsets, rollover, byte admission, ownership and migration. The shared [JVM configuration](../config/jvm.options) is applied to all benchmark child processes.
 
-```bash
-bash ./mvnw -Popenhft -pl setu-benchmark/openhft -am test
-```
+The adapter forces native mapped files through JDK `MemorySegment.force()` and `FileChannel.force(true)`. It does not count OpenHFT's no-op Windows `msync` as durable completion. Historical custom-engine captures remain as baseline evidence; new throughput/latency measurements must identify the current Chronicle engine. See [storage semantics and migration](../setu-storage/README.md) and [Chronicle Queue](https://github.com/OpenHFT/Chronicle-Queue).
 
-The module supplies native/module flags and disables Chronicle analytics. Three repetitions alternate engine order, with 64 warmup batches and 1,024 measured batches (256 MiB payload) per engine. Setu forces each batch; Chronicle requests `SyncMode.SYNC` and calls `appender.sync()` after every batch document. Every record is verified after reopen. Output includes append throughput, batch p50/p99 and reopen time. These short storage-only measurements exclude TCP and concurrent broker work, and cannot establish broker capacity or certify crash durability. Reopen work also differs: Setu rebuilds its index while Chronicle opens persisted structures lazily.
+The final Windows/NTFS diagnostic used Java 26.0.2.1, eight active processors (no OS CPU quota), a 128 MiB heap, 1 KiB records, 256-record batches, JFR, 5-second warmup and 10-second measurement per stage. The flush view is scoped to each force, including growth across native mapping blocks. All five stages completed with zero request errors; results remain **unqualified**, and the half-load p99 exceeded its 10 ms gate.
 
-The durable comparison skips Windows: the resolved `net.openhft:posix:2026.2` implementation of `WinJNRPosixAPI.msync(long,long,int)` returns zero without an OS flush. A Windows read/write probe succeeded, but its apparent Chronicle speedup was rejected as a durability mismatch; cleanup also encountered a still-mapped file after close. The Linux test rejects a no-op native backend and drains pending resource releases before cleanup. Production adoption still needs a tested adapter for logical offsets, rollover, reads, byte admission, thread ownership, failure/shutdown, migration and crash recovery. See [Chronicle Queue](https://github.com/OpenHFT/Chronicle-Queue) and [OpenHFT POSIX](https://github.com/OpenHFT/posix).
+| Chronicle FILE stage | Pairs | Actual produce/s | p99 ms | Consume ratio |
+| --- | ---: | ---: | ---: | ---: |
+| Unpaced ramp | 1 | 35,404.8 | 12.812 | 0.9928 |
+| Unpaced ramp | 2 | 54,604.8 | 15.884 | 0.9981 |
+| 100% of measured knee | 2 | 54,579.2 | 47.055 scheduled | 1.0005 |
+
+This is substantially slower than the retired custom backend on this host with real Windows mapped-file forcing. Consolidation does not establish a performance gain or attainment of the 250K/s target. The retained capture is `logs/benchmarks/sustained/FILE-84f90463-3003-4c54-ab33-beaa184afa6f/worker.log`; the JFR recording is alongside it. Reproduce with `SustainedThroughputBenchmarkTests#file`, `setu.benchmark.cpu.cores=8`, `setu.benchmark.heap.mib=128`, `setu.benchmark.max.concurrency=2`, `setu.benchmark.stage.millis=10000`, `setu.benchmark.warmup.millis=5000` and `setu.benchmark.jfr=true`.
+
+## Earlier measurements
+
+The former standalone reports and stale target TODO have been consolidated here. Their raw JSON snapshots remain linked; all results below predate the Chronicle default.
+
+On 14 October, three 30-second repetitions per load (50%, 80%, 100%) passed all 18 windows after at least 10-second warmup. At target, memory delivered a median 499,985/s (worst p99 2.041 ms) and the custom file engine 249,993/s (worst p99 8.057 ms). Matched single-run JFR diagnostics showed memory / one pair at 1,111,168 to 1,182,029/s (+6.38%), and file / two pairs at 448,845 to 466,611/s (+3.96%); sampled allocation fell 19.38% and 16.26%. Host/JVM matched the 15 October baseline above. These diagnostics preceded compact file indexing; the final targets used 256 MiB memory / 128 MiB file heaps. Earlier failed heap-slope/OOM attempts are retained in the [14 October raw snapshot](optimization-2026-10-14.json).
+
+The 12 October lock-free comparison used Java 26.0.2.1 on Windows, 12 available processors, 768 MiB heap, 1 KiB / 256-record batches, five-second warmup and five-second measurements. Three repetitions compared `0425cff` against CAS memory publication, bounded MPSC group commit, and reduced broker fetch locking. Aggregate consumers broadcast-read the same records; those consume rates do not represent unique delivery. Results showed no material throughput gain, and do not establish sustained capacity. Highest changed median memory production was 1,019,401/s at one pair (baseline 1,025,998/s); custom file production was 639,125/s at 16 pairs (baseline 639,515/s), with only 544,222 aggregate consumed/s. The detailed local captures remain in `logs/lock-free/`. Protocol/frame allocation, fetch response encoding, fanout and serialized file I/O were the main profiling candidates. The full broker remains coordinated even where publication uses CAS.
 
 ## Sustained throughput profiles
 
@@ -72,7 +84,7 @@ A qualifying window lasts at least 30 seconds, consumes at least 95% of produced
 
 A capacity profile's sustained rate is the median of the three qualified knees, and all three repetitions must also pass all fixed-load stages. If any repetition cannot qualify, the gate fails. The full capacity launcher automatically enforces the 200K/150K gates for the 1,024-byte payload. Other payload sizes are comparisons, not applications of a 1 KiB threshold. Missing stages, duplicate runs, non-finite metrics, incorrect offered rates, mixed payloads and incomplete captures fail validation. Reports are saved before gate evaluation, so a failed gate retains its evidence. The latest badges use the separate fixed-load node-target profile below.
 
-File durability is **force each group commit before acknowledgment**: `GroupCommitMessageLog` batches writes and `FileMessageLog` calls `FileChannel.force(true)` for each touched segment before acknowledging success. In-memory storage is volatile. The report records filesystem/media information; an unknown or virtual disk is labeled as such rather than assumed to be SSD. File mode on tmpfs measures the file-code path in RAM.
+File durability is **force each group commit before acknowledgment**: `GroupCommitMessageLog` batches writes and `ChronicleMessageLog` forces each touched mapped queue file, native indexes and roll metadata through the JDK before acknowledging success. In-memory storage is volatile. The report records filesystem/media information; an unknown or virtual disk is labeled as such rather than assumed to be SSD. File mode on tmpfs measures the file-code path in RAM.
 
 `comparison.txt` and `comparison.json` retain per-concurrency medians and ranges for records/s, payload MiB/s, latency, backlog and resource usage, plus records/s per allocated CPU core. Hardware information includes CPU model/vCPU allocation, RAM, data filesystem/media and the enforced budget. Each raw capture retains its repeat number and explicit workload configuration. Runs that stop early are not averaged as if later stages had completed.
 

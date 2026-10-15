@@ -4,7 +4,6 @@ import io.setu.core.protocol.BrokerRequest;
 import io.setu.core.protocol.BrokerResponse;
 import io.setu.core.protocol.Command;
 import io.setu.core.protocol.ProtocolRecord;
-import io.setu.storage.log.FileMessageLog;
 import io.setu.storage.log.StorageMode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -81,7 +80,7 @@ class DefaultBrokerTests {
     }
 
     @Test
-    void brokerRotatesFileSegmentsAndRecoversRecordsInOffsetOrder() throws Exception {
+    void brokerUsesChronicleByDefaultAndRecoversRecordsInOffsetOrder() throws Exception {
         try (DefaultBroker broker = new DefaultBroker(StorageMode.FILE, tempDir, 1024, 10, 5_000, 5_000)) {
             createTopic(broker);
             assertEquals(0, produce(broker, "abc").offset());
@@ -89,8 +88,9 @@ class DefaultBrokerTests {
         }
 
         Path partition = tempDir.resolve("orders").resolve("partition-0");
-        assertTrue(Files.exists(partition.resolve("000000000000.log")));
-        assertTrue(Files.exists(partition.resolve("000000000001.log")));
+        try (var files = Files.list(partition)) {
+            assertTrue(files.anyMatch(path -> path.toString().endsWith(".cq4")));
+        }
 
         try (DefaultBroker recovered = new DefaultBroker(StorageMode.FILE, tempDir, 1024, 10, 5_000, 5_000)) {
             var records = fetch(recovered, null, null, 0).records();
@@ -103,19 +103,31 @@ class DefaultBrokerTests {
     }
 
     @Test
-    void brokerRecoversLegacySingleFilePartitionsAsFirstSegment() throws Exception {
+    void legacyPartitionsAreRejectedWithoutChangingTheirData() throws Exception {
         Path partition = tempDir.resolve("orders").resolve("partition-0");
         Files.createDirectories(partition);
-        try (FileMessageLog legacy = new FileMessageLog(partition.resolve("000000000000.log"), 1024)) {
-            legacy.append("legacy-record".getBytes());
-        }
+        Path legacy = partition.resolve("000000000000.log");
+        byte[] original = new byte[]{0, 0, 0, 1, 7};
+        Files.write(legacy, original);
+        var failure = assertThrows(java.io.IOException.class, () -> new DefaultBroker(tempDir, 1024));
+        assertTrue(failure.getMessage().contains("offline migration"));
+        assertArrayEquals(original, Files.readAllBytes(legacy));
+    }
 
+    @Test
+    void failedRecoveryReleasesEarlierChroniclePartitions() throws Exception {
         try (DefaultBroker broker = new DefaultBroker(tempDir, 1024)) {
-            var records = fetch(broker, null, null, 0).records();
-            assertEquals(1, records.size());
-            assertEquals(0, records.getFirst().offset());
-            assertArrayEquals("legacy-record".getBytes(), records.getFirst().value());
-            assertEquals(1, produce(broker, "next-record").offset());
+            createTopic(broker);
+            produce(broker, "preserved");
+        }
+        Path legacy = tempDir.resolve("zzz-legacy/partition-0/000000000000.log");
+        Files.createDirectories(legacy.getParent());
+        Files.write(legacy, new byte[]{0, 0, 0, 1, 7});
+        assertThrows(java.io.IOException.class, () -> new DefaultBroker(tempDir, 1024));
+        try (var log = io.setu.storage.log.MessageLogs.open(StorageMode.FILE,
+                tempDir.resolve("orders/partition-0"), 1024)) {
+            assertEquals(1, log.nextOffset());
+            assertArrayEquals("preserved".getBytes(), log.read(0, 1024).getFirst().value());
         }
     }
 

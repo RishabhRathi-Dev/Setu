@@ -9,7 +9,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
@@ -22,19 +21,17 @@ class BrokerCrashChaosTests {
     @TempDir Path tempDir;
 
     @Test
-    void forceKillsBrokerThenRecoversDurableRecordsAndTruncatesAPartialTail() throws Exception {
+    void forceKillsBrokerThenRecoversAcknowledgedChronicleRecords() throws Exception {
         Path data = tempDir.resolve("crash-data");
         Path ready = tempDir.resolve("ready.flag");
         Path output = Files.createDirectories(tempDir.resolve("logs")).resolve("child.log");
         String javaExecutable = Path.of(System.getProperty("java.home"), "bin",
                 System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java").toString();
         String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
-        Process child = new ProcessBuilder(javaExecutable,
-                "-XX:+UseZGC",
-                "-XX:+UseStringDeduplication",
+        Process child = new ProcessBuilder(BenchmarkRuntime.childCommand(javaExecutable,
                 "-DSETU_LOG_DIR=" + output.getParent().toAbsolutePath(),
                 "-Dlogback.configurationFile=" + System.getProperty("logback.configurationFile"), "-cp", classpath,
-                BrokerCrashWorker.class.getName(), data.toString(), ready.toString(), Integer.toString(RECORDS))
+                BrokerCrashWorker.class.getName(), data.toString(), ready.toString(), Integer.toString(RECORDS)))
                 .redirectErrorStream(true).redirectOutput(output.toFile()).start();
         try {
             long deadline = System.nanoTime() + Duration.ofSeconds(45).toNanos();
@@ -46,10 +43,6 @@ class BrokerCrashChaosTests {
             assertTrue(child.waitFor(10, TimeUnit.SECONDS), "forcibly terminated broker did not exit");
             assertNotEquals(0, child.exitValue(), "the child should exit abnormally");
 
-            // Model a process dying between writing a record header and its payload.
-            Path activeSegment = data.resolve("crash-recovery").resolve("partition-0")
-                    .resolve("000000000000.log");
-            Files.write(activeSegment, new byte[]{0, 0}, StandardOpenOption.APPEND);
             try (DefaultBroker recovered = new DefaultBroker(data, 1024)) {
                 var firstPage = recovered.execute(new BrokerRequest(10, Command.FETCH, "crash-recovery", 0,
                         0, 15 * 1024 * 1024, null, 0, null, null));

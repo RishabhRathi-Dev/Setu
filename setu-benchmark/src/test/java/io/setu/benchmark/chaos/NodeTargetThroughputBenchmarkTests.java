@@ -27,7 +27,7 @@ class NodeTargetThroughputBenchmarkTests {
             Path log = capture.resolve("worker.log");
             String java = Path.of(System.getProperty("java.home"), "bin",
                     System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java").toString();
-            List<String> command = new ArrayList<>(List.of(java, "-XX:+UseZGC", "-XX:+UseStringDeduplication"));
+            List<String> command = new ArrayList<>(List.of(java));
             BenchmarkSettings.addJvmArguments(command, mode.equals("IN_MEMORY") ? 256 : 128);
             command.addAll(List.of("-Dsetu.benchmark.measurement=full", "-Dsetu.benchmark.stage.millis=30000",
                     "-Dsetu.benchmark.warmup.millis=10000", "-Dsetu.benchmark.jfr=" + System.getProperty("setu.benchmark.jfr", "true"),

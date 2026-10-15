@@ -1,6 +1,6 @@
 package io.setu.server.connection;
 
-import io.setu.server.codec.FrameCodec;
+import io.setu.core.protocol.FrameCodec;
 import io.setu.server.dispatcher.RequestHandler;
 import io.setu.server.dispatcher.RequestProcessor;
 

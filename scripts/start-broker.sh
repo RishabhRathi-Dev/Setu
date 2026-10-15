@@ -7,7 +7,7 @@ if [[ ! -f "$jar_path" ]]; then
   exit 1
 fi
 java_executable="${JAVA_HOME:+$JAVA_HOME/bin/}java"
-jvm_arguments=(-XX:+UseZGC -XX:+UseStringDeduplication)
+jvm_arguments=("@$repo_root/config/jvm.options")
 cache_path="$repo_root/setu-server/target/setu-server.aot"
 if [[ "${1:-}" == --train-aot ]]; then
   if [[ $# != 1 ]]; then

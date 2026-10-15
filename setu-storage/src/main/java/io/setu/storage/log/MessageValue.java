@@ -2,10 +2,8 @@ package io.setu.storage.log;
 
 import java.io.DataInput;
 import java.io.DataOutput;
-import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.channels.ReadableByteChannel;
 import java.util.Arrays;
 import java.util.Objects;
@@ -60,14 +58,6 @@ public final class MessageValue {
             return new Frame(bytes);
         }
 
-        static Frame readFrom(FileChannel channel, int length) throws IOException {
-            byte[] bytes = new byte[length];
-            ByteBuffer buffer = ByteBuffer.wrap(bytes);
-            while (buffer.hasRemaining()) {
-                if (channel.read(buffer) < 0) throw new EOFException("Unexpected end of log window");
-            }
-            return new Frame(bytes);
-        }
         public ByteBuffer cursor() { return ByteBuffer.wrap(bytes).asReadOnlyBuffer(); }
         /** Defensive compatibility copy for handlers that accept mutable byte arrays. */
         public byte[] copy() { return bytes.clone(); }

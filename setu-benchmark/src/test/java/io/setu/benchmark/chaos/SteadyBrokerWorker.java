@@ -18,7 +18,7 @@ public final class SteadyBrokerWorker {
         Path control = Path.of(args[1]);
         Path data = args.length > 2 ? Path.of(args[2]) : control.resolve("data");
         try (var broker = new DefaultBroker(mode, mode == StorageMode.FILE ? data : null, BenchmarkSettings.recordBytes(),
-                MessageLogs.DEFAULT_MAX_SEGMENT_BYTES, DefaultBroker.DEFAULT_ACK_TIMEOUT_MILLIS,
+                MessageLogs.DEFAULT_QUEUE_BLOCK_BYTES, DefaultBroker.DEFAULT_ACK_TIMEOUT_MILLIS,
                 DefaultBroker.DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS,
                 BenchmarkSettings.integer("setu.benchmark.memory.log.bytes", 256 * 1024 * 1024, 0, Integer.MAX_VALUE));
              var server = new TcpServer(new java.net.InetSocketAddress("127.0.0.1", 0),

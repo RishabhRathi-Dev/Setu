@@ -23,7 +23,7 @@ public final class SetuServerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length == 1 && args[0].equals("--help")) {
-            System.out.println("Usage: java -XX:+UseZGC -XX:+UseStringDeduplication -jar setu-server-1.0.0-SNAPSHOT.jar [--config <properties-file> | --aot-train]");
+            System.out.println("Usage: java @config/jvm.options -jar setu-server-1.0.0-SNAPSHOT.jar [--config <properties-file> | --aot-train]");
             System.out.println("Default: plaintext 127.0.0.1:9092, file storage in ./data, rolling logs in ./logs.");
             return;
         }
@@ -38,7 +38,7 @@ public final class SetuServerMain {
             try (var input = Files.newInputStream(Path.of(args[1]))) { properties.load(input); }
         }
         Set<String> supported = Set.of("bind.host", "bind.port", "storage.mode", "data.dir",
-                "record.max.bytes", "segment.max.bytes", "connections.max", "accept.backlog",
+                "record.max.bytes", "queue.block.bytes", "connections.max", "accept.backlog",
                 "socket.timeout.millis", "ack.timeout.millis", "consumer.timeout.millis", "transport", "memory.log.max.bytes",
                 "requests.max.bytes", "responses.max.bytes", "memory.retention.millis", "write.timeout.millis");
         for (String key : properties.stringPropertyNames())
@@ -64,7 +64,7 @@ public final class SetuServerMain {
         try (DefaultBroker broker = new DefaultBroker(mode, mode == StorageMode.FILE
                 ? Path.of(properties.getProperty("data.dir", "data")) : null,
                 Math.toIntExact(number(properties, "record.max.bytes", 1024 * 1024)),
-                number(properties, "segment.max.bytes", MessageLogs.DEFAULT_MAX_SEGMENT_BYTES),
+                number(properties, "queue.block.bytes", MessageLogs.DEFAULT_QUEUE_BLOCK_BYTES),
                 number(properties, "ack.timeout.millis", DefaultBroker.DEFAULT_ACK_TIMEOUT_MILLIS),
                 number(properties, "consumer.timeout.millis", DefaultBroker.DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS),
                 number(properties, "memory.log.max.bytes", DefaultBroker.DEFAULT_MAX_RETAINED_MEMORY_BYTES),

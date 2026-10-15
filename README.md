@@ -1,5 +1,7 @@
 # Setu
 
+Durable storage now defaults to OpenHFT Chronicle Queue. The benchmark badges below retain their recorded source revisions and predate this consolidation; they do not qualify the new engine.
+
 [CI workflow](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
 <!-- benchmark-metrics-badges:start -->
 [![in-memory: 500.00K/s target, 439.95K/s CI, 88% unqualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38628142838)
@@ -131,9 +133,9 @@ Setu aims to provide:
 
 The single-node throughput targets are **500,000 records/s in memory** (~488 MiB/s at 1 KiB) and **250,000 records/s with file storage** (~244 MiB/s), with stretch targets of 1M/s and 500K/s respectively. The full CI profile gates 1 KiB runs at 200K/s in memory and 150K/s with file storage, subject to the same sustainability criteria. Broker and load clients share the host. Performance is reported per allocated CPU core and with hardware, durability, backlog and resource usage; targets are not claims of measured performance. See [benchmark profiles and qualification](setu-benchmark/README.md).
 
-The [local JFR optimization and node-target report](setu-benchmark/optimization-2026-10-14.md) records three 30-second repetitions at the offered targets, including actual throughput, latency, heap and earlier failed attempts. Automatic CI replaces the locally labeled badge data with measurements from its resource-enforced target profile.
+The [historical JFR and node-target measurements](setu-benchmark/README.md#earlier-measurements) records three 30-second repetitions at the offered targets, including actual throughput, latency, heap and earlier failed attempts. Automatic CI replaces the locally labeled badge data with measurements from its resource-enforced target profile.
 
-The [15 October optimization measurements](setu-benchmark/README.md#15-october-optimization-measurements) cover immutable produce frames, immediate flush of complete batches, windowed recovery and the OpenHFT evaluation. The optional `openhft` Maven profile provides a Linux Chronicle Queue comparison; production file storage keeps its force-before-ack behavior.
+**OpenHFT Chronicle Queue 2026.6 is the default durable storage engine.** The custom file backends and optional comparison module have been consolidated into the production adapter. File acknowledgments follow a JDK force of touched mapped files, indexes and roll metadata. See [storage, JVM options and offline migration](setu-storage/README.md). The [15 October optimization measurements](setu-benchmark/README.md#15-october-optimization-measurements) and existing local badges describe the earlier custom engine; they do not qualify Chronicle performance.
 
 The project is primarily concerned with the trade-offs between:
 
@@ -473,75 +475,17 @@ They operate on logical topics, partitions, and offsets.
 
 ---
 
-# 9. Persistent Log (target design)
+# 9. Persistent Log
 
-The target design stores messages using append-only segmented files. File mode now writes one or more length-prefixed `.log` segments per partition and rotates at a configurable size (1 GiB by default). Existing one-file partitions remain readable as the first segment.
+File mode uses OpenHFT Chronicle Queue with native daily rolled `.cq4` files under `<data.dir>/<topic>/partition-<id>/`. Chronicle owns mappings and physical indexes; Setu stores versioned batch documents and exposes dense logical offsets across rolls and restart. The bounded MPSC writer shares durable flushes across adjacent requests.
 
-Example:
-
-```text
-data/
-└── orders/
-    ├── partition-0/
-    │   ├── 000000000000.log  ← starts at offset 0
-    │   ├── 000000000500.log  ← starts at offset 500
-    │   └── 000000001000.log  ← starts at offset 1,000
-    │
-    └── partition-1/
-        ├── 000000000000.log
-        └── 000000000001.log
-```
-
-Each segment contains sequential records.
-
-```text
-┌───────────────────────────────────────┐
-│ Segment                               │
-│                                       │
-│ offset 0   → record                   │
-│ offset 1   → record                   │
-│ offset 2   → record                   │
-│ offset 3   → record                   │
-│ ...                                   │
-└───────────────────────────────────────┘
-```
+See the [storage README](setu-storage/README.md) for the format, force-before-ack boundary, recovery and migration. Old length-prefixed `.log` data requires an offline import into a fresh data root.
 
 ---
 
-# 10. Segment Lifecycle
+# 10. Queue Lifecycle
 
-Each partition has an active segment.
-
-```text
-             ┌──────────────┐
-             │    ACTIVE    │
-             └──────┬───────┘
-                    │
-                 rotate
-                    │
-                    ▼
-             ┌──────────────┐
-             │    SEALED    │
-             └──────┬───────┘
-                    │
-                    ▼
-             Retained / Expired
-```
-
-The current file backend rotates on maximum segment size. Age-based rotation and retention remain future work:
-
-* Maximum segment age
-* Retention policy
-
-Example:
-
-```text
-partition-0/
-
-000000000000.log  ← starts at offset 0
-000000000500.log  ← starts at offset 500
-000000001000.log  ← active, starts at offset 1,000
-```
+Chronicle rolls each partition daily. `queue.block.bytes` configures mapping blocks with a 64 MiB minimum/default; it does not limit daily file size. Closed roll files remain available for full-history reads. Automatic file retention and deletion remain future work.
 
 ---
 
@@ -1423,7 +1367,7 @@ setu/
 | Module           | Responsibility                                                     |
 | ---------------- | ------------------------------------------------------------------ |
 | `setu-core`      | Current: broker API/implementation, v1 protocol values/codec, and single-record plus batch produce. Target: full topics, partitions, producers, consumers, groups |
-| `setu-storage`   | Current: in-memory logs and file-backed partition logs with configurable 1 GiB segments, shared logical-offset APIs, and startup recovery. Target: FFM, persisted indexes, retention |
+| `setu-storage`   | Current: in-memory logs and default Chronicle Queue partition logs, native mapping/indexes, dense logical offsets, group commit and startup recovery. Target: file retention, checksums, replication |
 | `setu-security`  | Current: TLS configuration/authentication, ACL interfaces and in-memory authorizer, quotas |
 | `setu-server`    | Current: TCP/TLS connections, framing, request authorization, dispatch, plaintext selector transport |
 | `setu-client`    | Current: synchronous protocol v1 socket client. Target: producer/consumer APIs |
@@ -1439,11 +1383,11 @@ This section distinguishes the current integrated implementation from the broade
 | Protocol and transport | Version 1 commands, framed TCP, strict request decoding, correlation IDs, structured errors, single and batched produce, optional member-aware fetch/ack fields with legacy-body support, TLS/mTLS blocking transport, plaintext selector multiplexing | Selector TLS, asynchronous/pipelined client API, negotiated protocol compatibility |
 | Security | mTLS identity, command/resource authorization mapping, exact default-deny in-memory ACLs, per-principal token-bucket quota checks | Persistent/cluster ACLs, wildcard policy, credential issuance/rotation, distributed quotas |
 | Broker | Topic creation, metadata, produce/fetch, group join/leave/heartbeat, per-member offset acknowledgements, acknowledgement and inactivity expiry | Partition assignment/rebalance, durable metadata/offsets, replication |
-| Storage | CAS-published in-memory batches and immutable fetch snapshots with acknowledgement-based prefix reclamation and a shared retained-memory budget; segmented file logs with continuous logical offsets, tail recovery, full-history reads, and bounded lock-free MPSC group commit | FFM, file retention, checksums, persisted indexes, configurable file ack modes |
+| Storage | CAS-published in-memory batches and immutable fetch snapshots with acknowledgement-based prefix reclamation and a shared retained-memory budget; default Chronicle Queue logs with continuous logical offsets, validated recovery, full-history reads, native persisted indexes/mapping, and bounded lock-free MPSC group commit | File retention, payload checksums, persisted Setu logical index, configurable file ack modes |
 | Client | Synchronous plaintext and TLS/mTLS requests with timeouts/hostname verification; create, single and batched produce, fetch, group join/leave, heartbeat, acknowledgement, and metadata helpers | High-level producer/consumer APIs, retries, async I/O |
 | Operations | Runnable local-development JAR with properties configuration, blocking/selector transport and persistent rolling operational logs; configurable connection cap/backlog and read/idle timeout; functional integration-test module, development certificate script, ordered CI stages, and progressive real-TCP capacity benchmark with per-stage throughput, p99 latency, CPU, and heap reports | Metrics endpoint, secure standalone deployment configuration, distributed load/failure testing |
 
-Consumer membership and committed offsets remain process-local and disappear on restart. File mode stores topic/partition logs as segments named by base offset under the configured data directory; the default segment size is 1 GiB and can be configured through `DefaultBroker`. Existing single-file partitions remain readable as the first segment. File mode retains complete history and reads from offset zero. In-memory mode creates no data directory, starts new members at join-time offsets, and reclaims acknowledged prefixes while preserving monotonic logical offsets. `DefaultBroker` uses a 30-second acknowledgement deadline and a 60-second inactivity deadline by default in either mode; expired members are removed during broker request processing. See [setu-core/README.md](setu-core/README.md), [setu-storage/README.md](setu-storage/README.md), [setu-client/README.md](setu-client/README.md), [setu-server/README.md](setu-server/README.md), and [setu-security/README.md](setu-security/README.md) for module-level details.
+Consumer membership and committed offsets remain process-local and disappear on restart. File mode uses Chronicle Queue daily rolls under the configured topic/partition directory, with a 64 MiB default mapping block configurable through `queue.block.bytes` or `DefaultBroker`. Existing `.log` data requires [offline migration](setu-storage/README.md#migrating-existing-data). File mode retains complete history and reads from offset zero. In-memory mode creates no data directory, starts new members at join-time offsets, and reclaims acknowledged prefixes while preserving monotonic logical offsets. `DefaultBroker` uses a 30-second acknowledgement deadline and a 60-second inactivity deadline by default in either mode; background maintenance expires inactive or unacknowledged members. See [setu-core/README.md](setu-core/README.md), [setu-storage/README.md](setu-storage/README.md), [setu-client/README.md](setu-client/README.md), [setu-server/README.md](setu-server/README.md), and [setu-security/README.md](setu-security/README.md) for module-level details.
 
 The later numbered sections remain design goals unless the snapshot above or a module README explicitly marks them implemented.
 
@@ -1584,4 +1528,4 @@ Setu is successful when it can demonstrate:
 
 The generated CI badges and sustained tables at the top of this README are the source of published performance results. The new full profile has not been certified by the short local smoke checks. It uses one topic per producer/consumer pair so consumed records represent unique delivery, warmup at each concurrency, measured HDR percentiles, and bounded resource-aware concurrency. Historical burst and fanout results remain diagnostic only.
 
-Memory-log operations use immutable chunk/index snapshots published with CAS; file group-commit admission and queue publication also use CAS. Memory fetches materialize outside the partition coordination lock, and memory producers skip wakeup locking when no long poll is registered. Membership bookkeeping, long-poll waits, file-fetch scheduling, and file I/O still require coordination. Local comparison results are recorded in [setu-benchmark/lock-free-results.md](setu-benchmark/lock-free-results.md).
+Memory-log operations use immutable chunk/index snapshots published with CAS; file group-commit admission and queue publication also use CAS. Memory fetches materialize outside the partition coordination lock, and memory producers skip wakeup locking when no long poll is registered. Membership bookkeeping, long-poll waits, file-fetch scheduling, and file I/O still require coordination. Local comparison results are recorded in [the consolidated benchmark history](setu-benchmark/README.md#earlier-measurements).

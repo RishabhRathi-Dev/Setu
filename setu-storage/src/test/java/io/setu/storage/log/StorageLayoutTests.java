@@ -15,29 +15,6 @@ class StorageLayoutTests {
     @TempDir Path directory;
 
     @Test
-    void recoveryHandlesHeadersStraddlingWindowsAndTruncatesAnIncompleteTail() throws Exception {
-        Path path = directory.resolve("recovery-windows.log");
-        var values = List.of(new byte[65_530], new byte[0], new byte[65_533], new byte[]{7});
-        long validSize;
-        try (var log = new FileMessageLog(path, 70_000)) {
-            log.appendBatch(values);
-            validSize = java.nio.file.Files.size(path);
-        }
-        java.nio.file.Files.write(path, new byte[]{0, 0}, java.nio.file.StandardOpenOption.APPEND);
-        try (var log = new FileMessageLog(path, 70_000)) {
-            assertEquals(validSize, java.nio.file.Files.size(path));
-            assertEquals(4, log.nextOffset());
-            var records = log.read(0, 200_000);
-            for (int i = 0; i < values.size(); i++) assertArrayEquals(values.get(i), records.get(i).value());
-            assertEquals(4, log.append(new byte[]{8}));
-        }
-        try (var log = new FileMessageLog(path, 70_000)) {
-            assertEquals(5, log.nextOffset());
-            assertArrayEquals(new byte[]{8}, log.read(4, 1).getFirst().value());
-        }
-    }
-
-    @Test
     void memoryReclamationKeepsOffsetsAndValuesAcrossPartialAndWholeChunks() throws Exception {
         byte[] value = new byte[513];
         Arrays.fill(value, (byte) 7);
@@ -64,7 +41,7 @@ class StorageLayoutTests {
     @Test
     void bothBackendsValidateBatchesBeforeAppendingAndBoundEmptyRecordReads() throws Exception {
         for (MessageLog log : List.of(new InMemoryMessageLog(1),
-                new FileMessageLog(directory.resolve("empty.log"), 1))) {
+                new ChronicleMessageLog(directory.resolve("empty"), 1, 64L << 20))) {
             try (log) {
                 assertThrows(java.io.IOException.class, () -> log.appendBatch(List.of(new byte[0], new byte[2])));
                 assertEquals(0, log.nextOffset());
@@ -78,7 +55,7 @@ class StorageLayoutTests {
 
     @Test
     void fileReadsRespectPayloadBudgetsAcrossWindowsAndSurviveRestart() throws Exception {
-        Path path = directory.resolve("windows.log");
+        Path path = directory.resolve("windows");
         var values = new ArrayList<byte[]>();
         for (int i = 0; i < 5000; i++) {
             byte[] value = new byte[513];
@@ -88,7 +65,7 @@ class StorageLayoutTests {
         values.add(new byte[1024 * 1024 + 1]);
         values.add(new byte[0]);
         for (int open = 0; open < 2; open++) {
-            try (var log = new FileMessageLog(path, 2 * 1024 * 1024)) {
+            try (var log = new ChronicleMessageLog(path, 2 * 1024 * 1024, 64L << 20)) {
                 if (open == 0) assertEquals(0, log.appendBatch(values));
                 assertEquals(values.size(), log.nextOffset());
                 var records = log.read(0, 5000 * 513);

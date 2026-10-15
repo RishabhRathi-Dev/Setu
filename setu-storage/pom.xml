@@ -13,6 +13,10 @@
 
     <dependencies>
         <dependency>
+            <groupId>net.openhft</groupId>
+            <artifactId>chronicle-queue</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
@@ -23,4 +27,13 @@
         </dependency>
     </dependencies>
 
+    <build>
+        <resources>
+            <resource><directory>src/main/resources</directory></resource>
+            <resource>
+                <directory>../config</directory>
+                <includes><include>jvm.options</include></includes>
+            </resource>
+        </resources>
+    </build>
 </project>

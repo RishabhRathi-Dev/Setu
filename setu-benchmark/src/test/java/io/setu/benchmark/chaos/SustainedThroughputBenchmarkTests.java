@@ -21,7 +21,7 @@ class SustainedThroughputBenchmarkTests {
         Path log = capture.resolve("worker.log");
         String java = Path.of(System.getProperty("java.home"), "bin",
                 System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java").toString();
-        List<String> command = new ArrayList<>(List.of(java, "-XX:+UseZGC", "-XX:+UseStringDeduplication"));
+        List<String> command = new ArrayList<>(List.of(java));
         BenchmarkSettings.addJvmArguments(command, 768);
         for (String key : List.of("setu.benchmark.measurement", "setu.benchmark.stage.millis",
                 "setu.benchmark.warmup.millis", "setu.benchmark.max.concurrency", "setu.benchmark.batch.records", "setu.benchmark.jfr")) {

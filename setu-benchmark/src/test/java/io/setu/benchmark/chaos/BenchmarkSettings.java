@@ -29,6 +29,7 @@ final class BenchmarkSettings {
     }
 
     static void addJvmArguments(List<String> command, int defaultHeapMiB) {
+        command.addAll(io.setu.storage.runtime.JvmOptions.arguments());
         command.add("-Xms64m");
         command.add("-Xmx" + integer("setu.benchmark.heap.mib", defaultHeapMiB, 128, 1_048_576) + "m");
         command.add("-XX:MaxDirectMemorySize=" + integer("setu.benchmark.direct.mib", 128, 16, 1_048_576) + "m");

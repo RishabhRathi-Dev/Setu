@@ -27,8 +27,8 @@
         <slf4j.version>2.0.17</slf4j.version>
         <junit.version>6.0.2</junit.version>
         <mockito.version>5.24.0</mockito.version>
+        <chronicle.queue.version>2026.6</chronicle.queue.version>
         <argLine/>
-        <setu.jvm.gc.args>-XX:+UseZGC -XX:+UseStringDeduplication</setu.jvm.gc.args>
     </properties>
 
     <dependencyManagement>
@@ -55,21 +55,17 @@
                 <scope>import</scope>
             </dependency>
             <dependency>
+                <groupId>net.openhft</groupId>
+                <artifactId>chronicle-queue</artifactId>
+                <version>${chronicle.queue.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.projectlombok</groupId>
                 <artifactId>lombok</artifactId>
                 <version>${lombok.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
-
-    <profiles>
-        <profile>
-            <id>openhft</id>
-            <modules>
-                <module>setu-benchmark/openhft</module>
-            </modules>
-        </profile>
-    </profiles>
 
     <build>
         <pluginManagement>
@@ -100,7 +96,7 @@
                     <version>3.5.3</version>
                     <configuration>
                         <!-- Resolve CLI argLine overrides, including heap and temp directory, before JVM startup. -->
-                        <argLine>${argLine} ${setu.jvm.gc.args}</argLine>
+                        <argLine>${argLine} "@${maven.multiModuleProjectDirectory}/config/jvm.options"</argLine>
                     </configuration>
                 </plugin>
             </plugins>

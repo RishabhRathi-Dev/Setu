@@ -47,7 +47,7 @@ class GroupCommitMessageLogTests {
     }
     @Test void concurrentRequestsShareAFlushAndRemainRecoverable() throws Exception {
         var calls = new AtomicInteger();
-        var file = new SegmentedFileMessageLog(directory, 64, 1024);
+        var file = new ChronicleMessageLog(directory, 64, 1024);
         MessageLog counted = new MessageLog() {
             public long append(byte[] value) throws java.io.IOException { return file.append(value); }
             public long appendValues(List<MessageValue> values) throws java.io.IOException { calls.incrementAndGet(); return file.appendValues(values); }
@@ -69,7 +69,7 @@ class GroupCommitMessageLogTests {
             assertTrue(calls.get() < 16, "concurrent appends should share durable calls");
             assertEquals(16, log.read(0, 4096).size());
         }
-        try (var recovered = new SegmentedFileMessageLog(directory, 64, 1024)) {
+        try (var recovered = new ChronicleMessageLog(directory, 64, 1024)) {
             assertEquals(16, recovered.nextOffset());
             assertEquals(16, recovered.read(0, 4096).size());
         }

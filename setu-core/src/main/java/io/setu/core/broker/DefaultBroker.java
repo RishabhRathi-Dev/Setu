@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Single-process broker with selectable in-memory or segmented file partition logs. */
+/** Single-process broker with selectable in-memory or Chronicle Queue partition logs. */
 public final class DefaultBroker implements Broker {
     private static final Logger LOG = LoggerFactory.getLogger(DefaultBroker.class);
     private static final int MAX_TOPICS = 10_000;
@@ -34,7 +34,7 @@ public final class DefaultBroker implements Broker {
     private final Path dataDirectory;
     private final int maxRecordBytes;
     private final StorageMode storageMode;
-    private final long maxSegmentBytes;
+    private final long queueBlockBytes;
     private final long ackTimeoutNanos;
     private final long consumerInactivityTimeoutNanos;
     private final MemoryLogBudget memoryBudget;
@@ -69,29 +69,29 @@ public final class DefaultBroker implements Broker {
      */
     public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
                          long ackTimeoutMillis, long consumerInactivityTimeoutMillis) throws IOException {
-        this(storageMode, dataDirectory, maxRecordBytes, MessageLogs.DEFAULT_MAX_SEGMENT_BYTES,
+        this(storageMode, dataDirectory, maxRecordBytes, MessageLogs.DEFAULT_QUEUE_BLOCK_BYTES,
                 ackTimeoutMillis, consumerInactivityTimeoutMillis);
     }
 
-    /** Creates a broker with explicit file segment size and consumer deadlines. */
+    /** Creates a broker with explicit Chronicle mapped block size and consumer deadlines. */
     public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
-                         long maxSegmentBytes, long ackTimeoutMillis,
+                         long queueBlockBytes, long ackTimeoutMillis,
                          long consumerInactivityTimeoutMillis) throws IOException {
-        this(storageMode, dataDirectory, maxRecordBytes, maxSegmentBytes, ackTimeoutMillis,
+        this(storageMode, dataDirectory, maxRecordBytes, queueBlockBytes, ackTimeoutMillis,
                 consumerInactivityTimeoutMillis, DEFAULT_MAX_RETAINED_MEMORY_BYTES);
     }
 
     /** Shares one memory-log budget across all partitions; zero disables this limit. */
     public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
-                         long maxSegmentBytes, long ackTimeoutMillis,
+                         long queueBlockBytes, long ackTimeoutMillis,
                          long consumerInactivityTimeoutMillis, long maxRetainedMemoryBytes) throws IOException {
-        this(storageMode, dataDirectory, maxRecordBytes, maxSegmentBytes, ackTimeoutMillis,
+        this(storageMode, dataDirectory, maxRecordBytes, queueBlockBytes, ackTimeoutMillis,
                 consumerInactivityTimeoutMillis, maxRetainedMemoryBytes, 0);
     }
 
     /** Positive retention enables lossy memory expiry even when a consumer never acknowledges. */
     public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
-                         long maxSegmentBytes, long ackTimeoutMillis, long consumerInactivityTimeoutMillis,
+                         long queueBlockBytes, long ackTimeoutMillis, long consumerInactivityTimeoutMillis,
                          long maxRetainedMemoryBytes, long memoryRetentionMillis) throws IOException {
         this.storageMode = Objects.requireNonNull(storageMode, "storageMode");
         if (storageMode == StorageMode.FILE && dataDirectory == null)
@@ -99,11 +99,11 @@ public final class DefaultBroker implements Broker {
         this.dataDirectory = dataDirectory == null ? null : dataDirectory.toAbsolutePath().normalize();
         if (maxRecordBytes < 0 || maxRecordBytes > 15 * 1024 * 1024)
             throw new IllegalArgumentException("maxRecordBytes must be between 0 and 15 MiB");
-        if (maxSegmentBytes <= 0) throw new IllegalArgumentException("maxSegmentBytes must be positive");
+        if (queueBlockBytes <= 0) throw new IllegalArgumentException("queueBlockBytes must be positive");
         if (ackTimeoutMillis <= 0 || consumerInactivityTimeoutMillis <= 0)
             throw new IllegalArgumentException("consumer timeouts must be positive");
         this.maxRecordBytes = maxRecordBytes;
-        this.maxSegmentBytes = maxSegmentBytes;
+        this.queueBlockBytes = queueBlockBytes;
         this.ackTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(ackTimeoutMillis);
         this.consumerInactivityTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(consumerInactivityTimeoutMillis);
         this.memoryBudget = new MemoryLogBudget(maxRetainedMemoryBytes);
@@ -112,7 +112,13 @@ public final class DefaultBroker implements Broker {
         memoryRetentionNanos = TimeUnit.MILLISECONDS.toNanos(memoryRetentionMillis);
         if (storageMode == StorageMode.FILE) {
             Files.createDirectories(this.dataDirectory);
-            recoverTopics();
+            try { recoverTopics(); }
+            catch (IOException | RuntimeException | Error failure) {
+                for (TopicState topic : topics.values()) for (MessageLog log : topic.partitions) {
+                    try { log.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                }
+                throw failure;
+            }
         }
         maintenance = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(task ->
                 Thread.ofPlatform().daemon().name("setu-consumer-maintenance").unstarted(task));
@@ -124,8 +130,8 @@ public final class DefaultBroker implements Broker {
                         ((io.setu.storage.log.InMemoryMessageLog) log).discardExpired(System.nanoTime(), memoryRetentionNanos);
             } catch (Exception e) { if (!closed) LOG.warn("Consumer maintenance failed", e); }
         }, 10, 10, java.util.concurrent.TimeUnit.MILLISECONDS);
-        LOG.info("Broker opened storage={} data_directory={} recovered_topics={} max_record_bytes={} segment_bytes={} memory_log_budget_bytes={} ack_timeout_ms={} inactivity_timeout_ms={}",
-                storageMode, this.dataDirectory, topics.size(), maxRecordBytes, maxSegmentBytes,
+        LOG.info("Broker opened storage={} data_directory={} recovered_topics={} max_record_bytes={} queue_block_bytes={} memory_log_budget_bytes={} ack_timeout_ms={} inactivity_timeout_ms={}",
+                storageMode, this.dataDirectory, topics.size(), maxRecordBytes, queueBlockBytes,
                 maxRetainedMemoryBytes, ackTimeoutMillis, consumerInactivityTimeoutMillis);
     }
 
@@ -166,9 +172,9 @@ public final class DefaultBroker implements Broker {
                 if (storageMode == StorageMode.FILE) {
                     Path partitionDir = topicPath.resolve("partition-" + i);
                     Files.createDirectories(partitionDir);
-                    file = partitionDir.resolve("000000000000.log");
+                    file = partitionDir;
                 }
-                partitions.add(MessageLogs.open(storageMode, file, maxRecordBytes, maxSegmentBytes, memoryBudget, memoryRetentionNanos > 0));
+                partitions.add(MessageLogs.open(storageMode, file, maxRecordBytes, queueBlockBytes, memoryBudget, memoryRetentionNanos > 0));
             }
             topics.put(request.topic(), new TopicState(List.copyOf(partitions)));
             LOG.info("Topic created topic={} partitions={} storage={}", request.topic(), partitions.size(), storageMode);
@@ -483,7 +489,7 @@ public final class DefaultBroker implements Broker {
                         int partitionId = Integer.parseInt(partitionPaths.get(i).getFileName().toString().substring(10));
                         if (partitionId != i) throw new IOException("Partition directories must be contiguous for topic " + name);
                         logs.add(MessageLogs.open(storageMode,
-                                partitionPaths.get(i).resolve("000000000000.log"), maxRecordBytes, maxSegmentBytes, memoryBudget));
+                                partitionPaths.get(i), maxRecordBytes, queueBlockBytes, memoryBudget));
                     }
                     topics.put(name, new TopicState(List.copyOf(logs)));
                     LOG.info("Topic recovered topic={} partitions={} directory={}", name, logs.size(), topicPath);
