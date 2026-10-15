@@ -1,87 +1,78 @@
 # setu-core
 
-`setu-core` contains the broker API and the first single-process broker implementation, plus the protocol v1 request, response, and codec types shared by the server and client. It depends on `setu-storage` for the per-partition append-only log. The intended module boundaries and overall status are summarized in the [parent README](../README.md#current-implementation-snapshot).
-
-## Implemented
-
-- `Broker` and `BrokerException` define the broker execution/close boundary and structured broker failures.
-- `DefaultBroker` implements topic creation, metadata, produce, fetch, offset commits, and basic consumer-group join/leave/heartbeat.
-- File-backed partitions use OpenHFT Chronicle Queue with daily rolls and dense logical offsets recovered at startup; memory-backed topics are process-local.
-- `Command`, `BrokerRequest`, `BrokerResponse`, `ProtocolRecord`, `ErrorCode`, and `ProtocolException` define protocol v1 values.
-- `ProtocolCodec` encodes and validates request/response bodies. `FrameCodec` provides the shared length-prefixed TCP frame format used by client and server.
-- Request and response decoders use bounded `ByteBuffer` cursors. The byte-array APIs copy payloads defensively; `decodeRequest(MessageValue.Frame)` and `decodeResponse(MessageValue.Frame)` share immutable slices of a privately read frame. `encodeProduceBatch` copies caller payloads directly into their final wire frame with the same topic, batch-count, partition, and payload-byte limits.
-- Unit tests cover protocol encoding/validation and the broker operations/recovery paths.
+`setu-core` owns the single-process broker and protocol v1 types shared by client and server. It uses [setu-storage](../setu-storage/README.md) for partition logs; transport and security enforcement belong to [setu-server](../setu-server/README.md).
 
 ## Broker usage
 
 ```java
-import io.setu.core.broker.Broker;
 import io.setu.core.broker.DefaultBroker;
 import io.setu.core.protocol.BrokerRequest;
-import io.setu.core.protocol.BrokerResponse;
 import io.setu.core.protocol.Command;
+import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 
-try (Broker broker = new DefaultBroker(dataDirectory, 1024 * 1024)) {
-    BrokerResponse created = broker.execute(new BrokerRequest(
-            1, Command.CREATE_TOPIC, "orders", -1, -1, -1,
-            null, 4, null, null));
-    BrokerResponse appended = broker.execute(new BrokerRequest(
-            2, Command.PRODUCE, "orders", 0, -1, -1,
-            "order-1".getBytes(java.nio.charset.StandardCharsets.UTF_8), 0, null, null));
+try (var broker = new DefaultBroker(Path.of("data"), 1024 * 1024)) {
+    broker.execute(new BrokerRequest(1, Command.CREATE_TOPIC, "orders", -1,
+            -1, -1, null, 1, null, null));
+    var result = broker.execute(new BrokerRequest(2, Command.PRODUCE, "orders", 0,
+            -1, -1, "order-1".getBytes(StandardCharsets.UTF_8), 0, null, null));
+    System.out.println(result.offset());
 }
 ```
 
-The constructor above uses durable OpenHFT Chronicle Queue logs with a 64 MiB default mapping block. For ephemeral in-process logs, use `new DefaultBroker(1024 * 1024)`. To select explicitly, use `new DefaultBroker(StorageMode.IN_MEMORY, null, maxRecordBytes)` or `new DefaultBroker(StorageMode.FILE, dataDirectory, maxRecordBytes)` (import `io.setu.storage.log.StorageMode`). The six-argument constructor also accepts a custom queue mapping block size before the acknowledgement and inactivity deadlines. In-memory brokers do not create or scan a data directory; their topics and records are lost when the broker closes.
+`DefaultBroker(Path, maxRecordBytes)` selects durable Chronicle Queue storage. `DefaultBroker(maxRecordBytes)` selects volatile memory. Constructors also accept an explicit `StorageMode`, queue mapping block size, consumer deadlines, retained-memory budget and optional lossy memory expiry. File use requires the shared [JVM options](../config/jvm.options).
 
-Use the shared [JVM options](../config/jvm.options) for direct Java launches; see [storage runtime and migration](../setu-storage/README.md). Old `.log` partitions require offline migration into a new data root.
+Direct broker calls bypass network authentication, ACLs and quotas. `BrokerException` carries application errors; I/O failures propagate to the embedding application. The server translates these into wire responses.
 
-Applications that expose a network listener should use `setu-server` to handle transport, protocol framing, security checks, and dispatch. A direct call to `Broker.execute` bypasses those network security gates.
+## Broker semantics
 
-## Protocol v1 commands
+| Concern | Current behavior |
+| --- | --- |
+| Topics | ASCII letters, digits, `.`, `_`, `-`; 1–249 characters; `.` and `..` rejected |
+| Limits | Up to 10,000 topics and 1–1,024 contiguous partitions per topic |
+| Offsets | Dense, zero-based record offsets within each partition; batch produce returns the first offset |
+| Fetch | Whole records within a payload-byte budget; an oversized first record yields an empty page |
+| Long polling | Optional wait of 0–30,000 ms; append, timeout, eviction or shutdown wakes the request |
+| Membership | Explicit join, leave, heartbeat and next-offset acknowledgement |
+| Expiry | Default 30-second acknowledgement / 60-second inactivity deadlines; maintenance runs every 10 ms |
+| Restart | File topics and records recover; memberships and committed offsets do not |
 
-| Command | Request fields | Successful response data |
-| --- | --- | --- |
-| `PRODUCE` | topic, partition, value bytes | appended offset |
-| `FETCH` | topic, partition, starting offset, maximum payload bytes, optional group/member | records with offsets and byte values |
-| `COMMIT_OFFSET` | consumer group, topic, partition, next offset, optional member acknowledgement | none |
-| `JOIN_GROUP` | group, topic, member | none |
-| `LEAVE_GROUP` | group, member | none |
-| `HEARTBEAT` | group, member | none |
-| `METADATA` | none | topic to partition-count map |
-| `CREATE_TOPIC` | topic, partition count | none |
+Memory members start at the partition end when they join. Acknowledgements reclaim through the lowest registered member's next offset; leaving or expiry removes that member's retention claim. File storage keeps full history and permits reads from zero. Consumer state is bookkeeping, without partition assignment or rebalancing.
 
-The binary body starts with a 12-byte header: the `SETU` magic integer, version byte, message-kind byte, command ID, and correlation ID. Strings and byte arrays are length-prefixed. TCP framing adds a separate four-byte body length. The server README documents the field encoding and the request/error flow in more detail.
+Memory brokers share a 256 MiB retained-log budget by default. Whole-batch admission failure returns `QUOTA_EXCEEDED` without consuming offsets. Zero disables that budget. Protocol buffers and file indexes are outside it. See [storage ownership and admission](../setu-storage/README.md).
 
-The codec validates magic, version, message kind, known command, correlation ID, UTF-8, field lengths, command-specific required fields, and trailing bytes. Request strings are limited to 4 KiB, record payloads to 16 MiB at codec level, and fetch requests to 15 MiB. The broker default may impose a smaller configured record maximum.
+Memory fetches use immutable snapshots outside the membership/long-poll lock. Durable storage serializes native I/O, while membership, acknowledgement and waiter coordination retain locks. CAS publication does not make the entire broker lock-free.
 
-## Current broker and persistence semantics
+## Protocol v1
 
-- Topic names use ASCII letters, digits, `.`, `_`, and `-`; `.` and `..` are rejected. Topic length is limited to 249 characters.
-- A topic may have 1–1,024 partitions. The broker currently limits the process to 10,000 topics.
-- Each partition has a zero-based, sequential offset namespace backed by one `MessageLog`.
-- File partitions use a bounded lock-free MPSC group-commit queue. Adjacent produces share a durable append, forcing mapped queue data, native indexes and roll metadata before any request in that group is acknowledged. Native files roll daily; logical offsets remain continuous. Memory partitions publish complete batches with CAS and retain records only for the broker lifetime.
-- Fetch uses an offset and byte limit. An oversized first record for the requested byte limit yields an empty batch; records are not split.
-- Memory fetch materialization runs outside the partition membership/long-poll lock using immutable storage snapshots. Long polls register under the lock and recheck the published offset, preserving wakeups during concurrent appends; memory producers skip wakeup locking when no poll is registered. File fetches and producer completion retain their scheduling lock because the file delegate still serializes reads/writes. Acknowledgement and membership changes serialize their retention bookkeeping. With members present, memory appends leave reclamation to acknowledgement/member-removal paths.
-- A joined group member can fetch with its group/member identity and acknowledge the next offset through `COMMIT_OFFSET`. In memory mode, a new member starts at the current partition end and records are reclaimed only through the lowest acknowledged offset across registered members for that topic. Leaving removes that member from the retention floor. File mode keeps the full log and permits reads from offset zero.
-- Members that leave fetched records unacknowledged past the configured acknowledgement deadline are removed from the group. Members with no fetch, acknowledgement, or heartbeat activity past the inactivity deadline are also removed. Defaults are 30 seconds for acknowledgement and 60 seconds for inactivity; the explicit `DefaultBroker` constructor can override both. Background maintenance checks expiry every 10 milliseconds, including while traffic is idle.
-- Memory brokers share a 256 MiB retained-log budget across all topics and partitions by default. Accounting includes copied payload arrays and chunk overhead, including empty records. Appends reserve the complete batch before changing the log; an exhausted budget returns `QUOTA_EXCEEDED` without consuming offsets or partially appending the rejected batch. Fetch, acknowledgement, membership, and metadata remain available. Acknowledgements, member removal/expiry, and log closure release the retained capacity. Producers should back off and retry after consumer progress; a batch that cannot fit by itself requires a smaller batch or larger budget.
-- The seven-argument `DefaultBroker` constructor accepts the retained-memory budget as its last argument; zero explicitly disables the limit. `retainedInMemoryBytes()` exposes accounted log bytes and append reservations. This budget excludes protocol buffers, fetch-result copies, file indexes, and unrelated JVM allocations, so it is not a total heap cap. File storage does not apply this memory-log limit.
-- Committed offsets and consumer group members are held in memory. The current group methods provide simple membership bookkeeping, not coordinator semantics.
-- On restart, topics/partition directories and message records are discovered from the data directory; group membership and committed offsets are not restored.
+`FrameCodec` adds a signed, big-endian four-byte body length. `ProtocolCodec` encodes a 12-byte body header: `SETU` magic (4 bytes), version (1), kind (1), command ID (2) and correlation ID (4). Strings are UTF-8 with signed four-byte lengths; integers are big-endian.
 
-## Not implemented
+| ID | Command | Successful result |
+| ---: | --- | --- |
+| 1 | `PRODUCE` | Assigned offset |
+| 2 | `FETCH` | Offset/value records |
+| 3 | `COMMIT_OFFSET` | Commit or member acknowledgement accepted |
+| 4 | `JOIN_GROUP` | Membership registered |
+| 5 | `LEAVE_GROUP` | Membership removed |
+| 6 | `HEARTBEAT` | Member refreshed |
+| 7 | `METADATA` | Topic/partition-count map |
+| 8 | `CREATE_TOPIC` | Topic created |
+| 9 | `PRODUCE_BATCH` | First assigned offset; records follow in input order |
 
-- Full producer/consumer objects, partition routing, partition assignment, consumer coordination, rebalancing, and delivery guarantees.
-- Durable control-plane metadata, PostgreSQL integration, topic configuration, replication, or multi-broker coordination.
-- Storage retention, payload checksums, or configurable file acknowledgement modes. Chronicle persists native indexes; Setu rebuilds its sparse logical-offset index.
-- Protocol negotiation beyond version 1, paging/cursors, async dispatch contracts, and schema evolution tooling.
+Responses repeat command and correlation ID, then carry a 16-bit error code and length-prefixed error message. Success adds the command's result; failures omit it. See [ErrorCode.java](src/main/java/io/setu/core/protocol/ErrorCode.java) for the error IDs and [ProtocolCodec.java](src/main/java/io/setu/core/protocol/ProtocolCodec.java) for field order.
 
-## Build and tests
+Decoding validates version, command, correlation ID, strict UTF-8, lengths, required fields and trailing bytes. String fields are capped at 4 KiB, batch payloads at 14 MiB / 10,000 records, and fetch payload budgets at 15 MiB. Transport and broker limits can be lower. Optional member and long-poll fields extend v1 requests; unsupported versions are rejected rather than negotiated.
 
-From the repository root with the project-required Java 26 JDK:
+Public byte-array APIs copy payloads. Internal `MessageValue.Frame` overloads share immutable slices between protocol and storage, with admission before materialization. Retaining a slice can retain its backing frame.
+
+## Limits and tests
+
+Replication, durable consumer metadata, automatic group coordination and idempotent/exactly-once delivery are not implemented. Storage migration and persistence boundaries are documented in the [storage guide](../setu-storage/README.md).
+
+From the repository root with Java 26:
 
 ```powershell
 .\mvnw.cmd -pl setu-core -am test
 ```
 
-The Maven reactor also builds `setu-storage`. The root README is the source of truth for project-wide goals versus shipped scope.
+Tests cover protocol validation/ownership, offsets, membership, long polling, memory reclamation, expiry and Chronicle recovery. See the [project overview](../README.md#current-implementation-snapshot) for module boundaries.

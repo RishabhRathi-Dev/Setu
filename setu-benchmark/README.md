@@ -1,107 +1,73 @@
-# Setu benchmarks and chaos tests
+# setu-benchmark
 
-## 15 October optimization measurements
+This module measures the broker through real TCP traffic and exercises crashes, limits and concurrent progress. Functional requirements belong to [setu-integration-tests](../setu-integration-tests/README.md). Short smoke runs validate mechanics; throughput claims require qualified full measurements.
 
-These historical results predate the Chronicle consolidation and measure the retired custom file backend. They do not qualify the current Chronicle engine. The changes on baseline `26aa179` share immutable produce-frame slices through decoding and storage, retain correct frame/chunk admission and reclamation accounting, flush groups of at least 256 KiB immediately, and scan recovery headers through 64 KiB windows. Smaller writes retain group-commit coalescing; file acknowledgments still follow `force(true)`. Fetch response encoding remains a major allocation/CPU candidate for future profiling.
+## Run profiles
 
-All 18 target windows passed the existing qualification checks: three fresh JVM repetitions per mode, 10-second adaptive warmup and 30-second measurements at 50%, 80% and 100% of target. Host: AMD Ryzen 5 7600X, Windows 11/NTFS, Java 26.0.2.1, approximately 31.1 GiB RAM. JVM active processor count was eight, without an OS CPU quota; retained-log budget was 64 MiB and heaps were 256 MiB for memory / 128 MiB for file storage. These local results do not replace the resource-enforced CI badges.
-
-| Mode | Offered target/s | Median actual at target/s | Worst target p99 ms | Peak heap MiB | Passed windows |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| IN_MEMORY | 500,000 | 499,993.600 | 2.023 | 248 | 9/9 |
-| FILE | 250,000 | 249,992.533 | 2.826 | 124 | 9/9 |
-
-Every window recorded zero errors and stable warmup/heap. Memory recorded 1,280 missed scheduled records across nine windows; file recorded zero. All windows exceeded the unchanged 95% offered-throughput gate. A separate single-run diagnostic with four active processors, 768 MiB heap, 256 MiB log budget, 2-second warmup and 3-second measurement showed one-pair memory throughput rising from 1.208M to 1.295M records/s and file throughput from 147.5K to 395.8K/s, with sampled allocation per record falling 17.1% and 18.5% respectively. Those short profiles remain unqualified: the final memory ramp failed heap slope and the file ramp stopped at an unhealthy two-pair stage. Intermediate mixed results are retained in the [raw measurement snapshot](performance-analysis-2026-10-15.json).
-
-Validation passed 131 regression/chaos checks, with two conditional skips (launcher-envelope configuration and the Linux-only OpenHFT comparison), plus both target test cases. Packaging, AOT cache generation and cached plaintext/mTLS training passed, including authorization/quota allow-and-deny handling and backpressure recovery. Reproduction commands for short and full target profiles appear below; logs/JFR remain under `logs/benchmarks/`.
-
-## Default OpenHFT storage
-
-`FILE` now exercises the production Chronicle Queue 2026.6 adapter directly. The optional OpenHFT comparison module/profile and duplicate custom file backends were removed. Standard sustained, target, crash and integration tests cover the default engine, including dense offsets, rollover, byte admission, ownership and migration. The shared [JVM configuration](../config/jvm.options) is applied to all benchmark child processes.
-
-The adapter forces native mapped files through JDK `MemorySegment.force()` and `FileChannel.force(true)`. It does not count OpenHFT's no-op Windows `msync` as durable completion. Historical custom-engine captures remain as baseline evidence; new throughput/latency measurements must identify the current Chronicle engine. See [storage semantics and migration](../setu-storage/README.md) and [Chronicle Queue](https://github.com/OpenHFT/Chronicle-Queue).
-
-The final Windows/NTFS diagnostic used Java 26.0.2.1, eight active processors (no OS CPU quota), a 128 MiB heap, 1 KiB records, 256-record batches, JFR, 5-second warmup and 10-second measurement per stage. The flush view is scoped to each force, including growth across native mapping blocks. All five stages completed with zero request errors; results remain **unqualified**, and the half-load p99 exceeded its 10 ms gate.
-
-| Chronicle FILE stage | Pairs | Actual produce/s | p99 ms | Consume ratio |
-| --- | ---: | ---: | ---: | ---: |
-| Unpaced ramp | 1 | 35,404.8 | 12.812 | 0.9928 |
-| Unpaced ramp | 2 | 54,604.8 | 15.884 | 0.9981 |
-| 100% of measured knee | 2 | 54,579.2 | 47.055 scheduled | 1.0005 |
-
-This is substantially slower than the retired custom backend on this host with real Windows mapped-file forcing. Consolidation does not establish a performance gain or attainment of the 250K/s target. The retained capture is `logs/benchmarks/sustained/FILE-84f90463-3003-4c54-ab33-beaa184afa6f/worker.log`; the JFR recording is alongside it. Reproduce with `SustainedThroughputBenchmarkTests#file`, `setu.benchmark.cpu.cores=8`, `setu.benchmark.heap.mib=128`, `setu.benchmark.max.concurrency=2`, `setu.benchmark.stage.millis=10000`, `setu.benchmark.warmup.millis=5000` and `setu.benchmark.jfr=true`.
-
-## Earlier measurements
-
-The former standalone reports and stale target TODO have been consolidated here. Their raw JSON snapshots remain linked; all results below predate the Chronicle default.
-
-On 14 October, three 30-second repetitions per load (50%, 80%, 100%) passed all 18 windows after at least 10-second warmup. At target, memory delivered a median 499,985/s (worst p99 2.041 ms) and the custom file engine 249,993/s (worst p99 8.057 ms). Matched single-run JFR diagnostics showed memory / one pair at 1,111,168 to 1,182,029/s (+6.38%), and file / two pairs at 448,845 to 466,611/s (+3.96%); sampled allocation fell 19.38% and 16.26%. Host/JVM matched the 15 October baseline above. These diagnostics preceded compact file indexing; the final targets used 256 MiB memory / 128 MiB file heaps. Earlier failed heap-slope/OOM attempts are retained in the [14 October raw snapshot](optimization-2026-10-14.json).
-
-The 12 October lock-free comparison used Java 26.0.2.1 on Windows, 12 available processors, 768 MiB heap, 1 KiB / 256-record batches, five-second warmup and five-second measurements. Three repetitions compared `0425cff` against CAS memory publication, bounded MPSC group commit, and reduced broker fetch locking. Aggregate consumers broadcast-read the same records; those consume rates do not represent unique delivery. Results showed no material throughput gain, and do not establish sustained capacity. Highest changed median memory production was 1,019,401/s at one pair (baseline 1,025,998/s); custom file production was 639,125/s at 16 pairs (baseline 639,515/s), with only 544,222 aggregate consumed/s. The detailed local captures remain in `logs/lock-free/`. Protocol/frame allocation, fetch response encoding, fanout and serialized file I/O were the main profiling candidates. The full broker remains coordinated even where publication uses CAS.
-
-## Sustained throughput profiles
-
-`SustainedThroughputBenchmarkTests` launches a fresh Java 26 worker for each storage mode and repetition. The broker, server and TCP load clients share that worker and its CPU/memory budget. Each producer/consumer pair owns one single-partition topic. A consumer fetches and acknowledges only that topic, so consumption counts unique deliveries rather than broadcast fanout. Setup, warmup and shutdown are excluded from throughput.
-
-Use Java 26 and Python 3 on Linux or WSL with systemd and cgroup v2:
+Use Java 26 and Python 3. The resource-enforced launcher requires Linux/WSL, systemd and cgroup v2. Run commands from the repository root:
 
 ```bash
-# Inspect hardware and the enforced resource budget.
+# Inspect detected hardware and the planned resource allocation.
 python3 scripts/run-benchmarks.py --dry-run
 
-# Routine smoke: 2s warmup and 3s measurement at every concurrency, one repeat.
+# Short sustained smoke for 1 KiB records.
 python3 scripts/run-benchmarks.py --kind sustained --measurement smoke --payload-sizes 1024
 
-# Full comparison: 10s warmup, 30s measurement, three independent repeats.
+# Full sustained comparison: three repetitions, 10s+ warmup, 30s measurement.
 python3 scripts/run-benchmarks.py --kind sustained --measurement full
 
-# One CI shard (the same host allocation is used for every repeat).
+# One full capacity shard.
 python3 scripts/run-benchmarks.py --kind sustained --measurement full \
   --storage-mode FILE --payload-sizes 1024
 ```
 
-Full runs rotate payload order between repetitions. Each measured concurrency gets its own warmup. After ten seconds, compare the mean producer rate in the first and second halves of the most recent ten one-second samples; both must be positive and differ by at most 5%. Extend warmup up to 60 seconds if needed. A stage whose warmup never stabilizes cannot qualify. The full profile requires exactly three repetitions, at least ten seconds warmup and at least thirty seconds measurement. Smoke retains short timings and is always labeled unqualified.
+| Kind | Purpose |
+| --- | --- |
+| `sustained` | Find a healthy throughput knee, then measure fixed loads at 50%, 80% and 100% of it |
+| `target` | Check fixed reference targets directly, independently of the measured knee |
+| `steady` | Separate broker/client JVMs at fixed load, with one and four partitions |
+| `chaos` | Bounded broker failure/limit checks |
+| `sweep`, `large-batch` | Historical fanout and batch-size diagnostics |
+| `capacity` | Explicit exhaustion ramp; does not qualify sustained throughput |
 
-The ramp doubles producers and consumers from one, up to the largest power of two no greater than twice the allocated CPU budget (minimum one pair). `--max-concurrency` can lower this ceiling. The first unhealthy stage stops the ramp; the highest healthy producer rate is the knee within the tested range. CPU and heap criteria apply as well as consumption and latency. A healthy ceiling is a lower bound on capacity, not evidence of a runtime limit. The worker then uses the knee's concurrency for three fixed offered-load runs, at 50%, 80% and 100% of that rate, with warmup before each.
+For a Windows smoke without OS resource enforcement:
 
-Fixed-load producers follow scheduled batch deadlines without dropping overdue slots. Completion latency includes scheduling and memory-admission waits, avoiding omission of delay under overload. `missed_records` includes slots that could not complete in the measurement window. Actual throughput must reach at least 95% of the offered rate. The final batch receives a full service interval; incomplete batches are excluded from rates but their observed latency is retained. Fetch and acknowledgment latency also includes requests initiated inside the window that finish during shutdown. No shutdown completions add to measured throughput.
+```powershell
+.\mvnw.cmd -pl setu-benchmark -am '-Dtest=SustainedThroughputBenchmarkTests' '-Dsurefire.failIfNoSpecifiedTests=false' '-Dsetu.benchmark.max.concurrency=2' test
+```
 
-[HdrHistogram](https://github.com/HdrHistogram/HdrHistogram) records nanosecond observations with three significant digits. Reports include p50, p99 and p99.9; the headline percentile is the maximum of the separate produce, fetch, acknowledgment and scheduled-completion percentiles, so fast fetch requests cannot dilute slow produces. Raw captures retain the separate p99 values. These are request/scheduled-completion latencies, not per-record end-to-end delivery latencies.
+All child JVMs load the shared [JVM configuration](../config/jvm.options). The launcher defaults to 80% of detected CPU/memory/free-disk availability; `--fraction` and per-resource fractions adjust it. The selected budget is reused for every repetition. Heap, direct-memory and retained-log allocations reserve process headroom. File space is sampled during measurement against a reserve, rather than enforced as a disk quota.
 
-## Qualification and targets
+Useful options include `--max-concurrency`, `--heap-mib`, `--direct-mib`, `--memory-log-mib`, `--data-directory` and `--output`. Default payloads are 256/512/1024/4096 bytes; Java workers default to 256-record batches. `--stage-millis`, `--warmup-millis` and `--repeats` remain subject to profile validation. See [run-benchmarks.py](../scripts/run-benchmarks.py) for all options.
 
-These 1 KiB targets assume broker and clients share approximately 4–8 vCPU and SSD storage:
+## Measurement and qualification
 
-| Metric | In-memory | File |
+Broker, server and load clients share the worker's allocated resources in the sustained/target profiles. Each producer/consumer pair owns a single-partition topic; consumption counts unique deliveries. Setup, warmup and shutdown do not add to measured throughput.
+
+The sustained ramp doubles pairs up to a power-of-two ceiling no greater than twice the CPU budget, unless capped lower. The first unhealthy stage stops the ramp. The highest healthy producer rate is the knee within that range; a healthy ceiling is only a lower bound on capacity. Fixed-load stages use that knee's concurrency.
+
+Full runs require three independent repetitions and at least 10-second warmup / 30-second measurement per stage. Warmup compares recent one-second rates, allowing at most 5% drift and extending to 60 seconds. Smoke uses two-second warmup / three-second measurement and is always unqualified.
+
+| Criterion | IN_MEMORY | FILE |
 | --- | ---: | ---: |
-| Sustained target | 500,000 records/s (~488 MiB/s) | 250,000 records/s (~244 MiB/s) |
-| Full CI minimum | 200,000 records/s | 150,000 records/s |
-| Stretch | 1,000,000 records/s | 500,000 records/s |
+| Reference target, 1 KiB | 500,000 records/s | 250,000 records/s |
+| Full capacity gate, 1 KiB | 200,000 records/s | 150,000 records/s |
 | p99 at 50% load | <5 ms | <10 ms |
-| p99 at 80% and 100% load, and ramp | <50 ms | <100 ms |
+| p99 at 80% / 100% load or ramp | <50 ms | <100 ms |
+| Consumption and offered-throughput attainment | At least 95% | At least 95% |
+| Request errors/timeouts | Zero | Zero |
+| Average CPU / peak heap | <=85% / <=1 GiB | <=85% / <=1 GiB |
+| Used-heap slope | <=1 MiB/s | <=1 MiB/s |
 
-A qualifying window lasts at least 30 seconds, consumes at least 95% of produced records, has zero rejected requests/errors/timeouts, and uses at most 85% average CPU and 1 GiB peak heap. Heap stability is defined as a least-squares slope no greater than 1 MiB/s over roughly 250 ms samples, a noise allowance for GC sawtooth; the raw slope is reported. Backlog at the start/end and peak sampled backlog are reported independently. In-memory admission pauses at half the retained-log budget; the wait is included in produce latency and no quota rejection is hidden or retried.
+Heap slope uses actual jittered sample times, roughly 40–70 ms apart. Full capacity qualification requires all three knees and their fixed-load stages to pass; its sustained rate is the median knee. The 200K/150K gates apply to 1 KiB full capacity runs, rather than every payload size.
 
-A capacity profile's sustained rate is the median of the three qualified knees, and all three repetitions must also pass all fixed-load stages. If any repetition cannot qualify, the gate fails. The full capacity launcher automatically enforces the 200K/150K gates for the 1,024-byte payload. Other payload sizes are comparisons, not applications of a 1 KiB threshold. Missing stages, duplicate runs, non-finite metrics, incorrect offered rates, mixed payloads and incomplete captures fail validation. Reports are saved before gate evaluation, so a failed gate retains its evidence. The latest badges use the separate fixed-load node-target profile below.
+HDR histograms retain produce, fetch, acknowledgement and scheduled-completion latency separately. The headline percentile is their maximum, preventing many fast operations from diluting a slow produce path. Scheduled latency includes overdue slots and memory-admission waits; missed records and actual completed throughput remain visible. These are request latencies, not per-record end-to-end delivery latencies. Backlog, consumption, CPU, heap and records/s per allocated core accompany every rate.
 
-File durability is **force each group commit before acknowledgment**: `GroupCommitMessageLog` batches writes and `ChronicleMessageLog` forces each touched mapped queue file, native indexes and roll metadata through the JDK before acknowledging success. In-memory storage is volatile. The report records filesystem/media information; an unknown or virtual disk is labeled as such rather than assumed to be SSD. File mode on tmpfs measures the file-code path in RAM.
-
-`comparison.txt` and `comparison.json` retain per-concurrency medians and ranges for records/s, payload MiB/s, latency, backlog and resource usage, plus records/s per allocated CPU core. Hardware information includes CPU model/vCPU allocation, RAM, data filesystem/media and the enforced budget. Each raw capture retains its repeat number and explicit workload configuration. Runs that stop early are not averaged as if later stages had completed.
+`FILE` forces every group commit before acknowledgement; memory mode is volatile. Filesystem/media details are recorded rather than assuming SSD durability/performance. Reports reject incomplete captures, duplicate runs, non-finite metrics, mixed payloads and invalid offered rates. Evidence is saved before evaluating qualification failures.
 
 ## Direct node-target verification
 
-`NodeTargetThroughputBenchmarkTests` checks the stated 1 KiB node targets directly: 500K offered records/s in memory with one producer/consumer pair, and 250K/s with file storage with two pairs. It launches three fresh JVMs per mode and measures 50%, 80% and 100% of each target for 30 seconds after at least ten seconds of adaptive warmup. It uses the same workload, scheduled completion latency, unique consumption, durability and health criteria as the capacity profile. All nine windows per mode must pass. Actual throughput and missed records remain in the capture; health requires at least 95% of offered throughput.
-
-This longer test requires an explicit opt-in. Default worker heaps are 256 MiB in memory and 128 MiB with file storage. The example uses a 64 MiB retained-log budget to keep allocation-driven GC cycles within a smaller envelope. JFR is enabled by default and retained beside each worker log under `logs/benchmarks/node-target/`.
-
-```powershell
-.\mvnw.cmd -pl setu-benchmark -am '-Dtest=NodeTargetThroughputBenchmarkTests' `
-  '-Dsurefire.failIfNoSpecifiedTests=false' '-Dsetu.benchmark.node.targets=true' `
-  '-Dsetu.benchmark.cpu.cores=8' `
-  '-Dsetu.benchmark.memory.log.bytes=67108864' test
-```
-
-The run takes about twelve minutes across both modes before adaptive warmup and setup. `ActiveProcessorCount` configures JVM scheduling; this direct command does not enforce an OS CPU quota. For the enforced CI profile, run one mode per shard on Linux/WSL:
+This profile offers 500K/s in memory with one pair and 250K/s with file storage with two pairs. Three fresh JVMs per mode measure 50%, 80% and 100% of the reference target. All nine windows per mode must qualify.
 
 ```bash
 python3 scripts/run-benchmarks.py --kind target --measurement full \
@@ -110,66 +76,62 @@ python3 scripts/run-benchmarks.py --kind target --measurement full \
   --storage-mode FILE --payload-sizes 1024
 ```
 
-The Java test owns the three fresh-JVM repetitions, so the Python launcher starts it once. Both direct Maven and Python commands above enforce target qualification. The Python launcher saves and prints all measurements and the specific failed limits before returning a target failure. Add `--report-only` to collect valid, completed measurements on smaller hosts without treating an aspirational target miss as an execution failure; badges still say **unqualified**. Worker exceptions, nonzero exits, request errors, empty stages, missing JFR and invalid or incomplete captures still fail in this mode. The launcher disables only Java's final target assertion and independently evaluates the saved results; direct Maven runs keep that assertion enabled by default.
-
-## Resource budgets
-
-The Python launcher detects CPU affinity, ancestor cgroup CPU quotas, available RAM, ancestor memory limits/usage, CPU model and free space on the data filesystem. `resources.json` records this snapshot beside every capture. The `host` resource profile allocates 80% of available CPU/RAM by default. `--fraction` changes that shared fraction; `--cpu-fraction`, `--memory-fraction` and `--disk-fraction` override it separately. CPU quotas round down to 1% of a core. `--profile github-private` caps the allocation at two CPUs/8 GiB; `github-public` caps it at four CPUs/16 GiB. These are reproducibility ceilings, not guarantees of runner hardware or disk speed.
-
-A transient systemd service enforces `CPUQuota`, `MemoryMax`, `MemoryHigh`, disabled swap and process-tree cleanup. Non-root users need passwordless sudo for `systemd-run`. WSL needs systemd enabled. There is no fallback to an unbounded run; resource-limit kills fail the benchmark.
-
-Maven receives 512 MiB heap and Surefire 256 MiB within the envelope. Workers reserve headroom for direct buffers, native allocations and charged file cache. The sustained worker's default heap is capped at 1 GiB, and retained log memory at one quarter of heap. `--heap-mib`, `--direct-mib` and `--memory-log-mib` allow explicit allocations subject to validation. `--data-directory` chooses the temporary data filesystem. File stages check free space against the configured reserve every 250 ms while measuring, then delete only their own temporary data. This is a sampled reserve check, not a disk quota.
-
-All workers use `-XX:+UseZGC -XX:+UseStringDeduplication` and verify these settings at startup. `--stage-millis`, `--warmup-millis` and `--repeats` configure timing within profile validation. The defaults remain 1,024-byte records and 256-record batches in Java; the launcher compares 256/512/1024/4096-byte payloads by default.
-
-For direct Windows smoke testing (without the Linux cgroup envelope):
+Add `--report-only` to retain completed target misses without failing the target gate; crashes, request errors and incomplete runs remain errors. The Java test owns the three fresh-JVM repetitions. Direct Maven execution is also available:
 
 ```powershell
-.\mvnw.cmd -pl setu-benchmark -am '-Dtest=SustainedCriteriaTests,SustainedThroughputBenchmarkTests' '-Dsetu.benchmark.max.concurrency=2' '-Dsurefire.failIfNoSpecifiedTests=false' test
+.\mvnw.cmd -pl setu-benchmark -am '-Dtest=NodeTargetThroughputBenchmarkTests' '-Dsurefire.failIfNoSpecifiedTests=false' '-Dsetu.benchmark.node.targets=true' '-Dsetu.benchmark.cpu.cores=8' '-Dsetu.benchmark.memory.log.bytes=67108864' test
 ```
 
-## CI and publication
+Direct Maven runs do not impose an OS CPU quota. Target defaults are 256 MiB memory / 128 MiB file heaps; JFR is enabled by default and saved beside captures under `logs/benchmarks/node-target/`. These long runs are opt-in.
 
-Every push and pull request runs production unit tests, benchmark-helper tests, integration tests, bounded chaos, isolated steady checks, sustained smoke, and two full 1 KiB node-target shards with JFR. Each target shard runs three independent repetitions at 50%, 80% and 100% of 500K/s in memory or 250K/s with file storage. Automatic target shards use `--report-only`: a two-vCPU runner with the default 80% allocation has only 1.6 cores, below the 4–8 vCPU reference for these targets. Completed target misses produce warnings and unqualified badges; execution failures remain errors. Fail-fast is disabled so a failed mode does not suppress the other mode's measurements. Surefire test reports and benchmark artifacts are retained, including failures. Enable **full_benchmark** in workflow dispatch for the additional eight capacity-comparison jobs across four payloads and two storage modes, with the separate 200K/150K capacity gates.
+## Default OpenHFT storage
 
-Default-branch push and dispatch runs automatically publish the latest target results with `scripts/publish-node-target-badges.py`. The publisher independently validates three repetitions, every target load, actual counters/rates, warmup, durability, resource allocation, source revision and all three measured JFR stages. Badges show target, median actual throughput, progress and qualification, plus p99, resources and JFR. Unhealthy measurements are labeled unqualified; incomplete runs are labeled incomplete instead of leaving an old success looking current. Unit and integration tests must pass before publication. A source-revision check prevents an older workflow from overwriting a newer commit's metrics. Bot updates use `[skip ci]` to avoid loops.
+`FILE` measures the production Chronicle Queue 2026.6 adapter directly. It uses JDK mapped-file/channel forces, rather than counting OpenHFT's no-op native Windows sync as durable completion. See [storage guarantees and migration](../setu-storage/README.md).
 
-The initial badges use the validated 14 October local target captures and explicitly say **local target**. They link to their measured report, and record that no OS CPU quota was enforced. CI replaces them with **CI** measurements linked to the exact Actions run. The separate `publish-sustained-badges.py` remains available for validated capacity-profile reports.
+The 15 October local Windows/NTFS diagnostic used Java 26.0.2.1, eight active processors without an OS CPU quota, 128 MiB heap, 1 KiB records, 256-record batches, JFR, five-second warmup and ten-second stages. All five stages completed without request errors, but results were **unqualified**; half-load p99 exceeded the 10 ms gate.
 
-All eight latest metric badges and six historical diagnostics use committed SVG images generated from JSON snapshots, so viewing them needs no external badge service or public access to the repository. Current throughput, current diagnostics and historical diagnostics have separate README blocks. Refresh images and links with `python3 scripts/render-benchmark-badges.py`. Publishers update JSON and SVG together, and unchanged results do not rewrite files.
+| Chronicle FILE stage | Pairs | Actual produce/s | p99 ms | Consume ratio |
+| --- | ---: | ---: | ---: | ---: |
+| Unpaced ramp | 1 | 35,404.8 | 12.812 | 0.9928 |
+| Unpaced ramp | 2 | 54,604.8 | 15.884 | 0.9981 |
+| 100% of measured knee | 2 | 54,579.2 | 47.055 scheduled | 1.0005 |
 
-Each sustained comparison also saves `optimization.md`, including evidence from failed qualification stages. CI includes it in the job summary. The review points to measured consumption/backlog, CPU, heap, warmup and latency constraints and suggests follow-up experiments. Reanalyze an existing capture without rerunning the workload:
+This was substantially slower than the former custom backend on that host; it does not establish attainment of the 250K/s target. The local capture is `logs/benchmarks/sustained/FILE-84f90463-3003-4c54-ab33-beaa184afa6f/worker.log`, with JFR alongside it. Reproduce through `SustainedThroughputBenchmarkTests#file` using `setu.benchmark.cpu.cores=8`, `setu.benchmark.heap.mib=128`, `setu.benchmark.max.concurrency=2`, `setu.benchmark.stage.millis=10000`, `setu.benchmark.warmup.millis=5000` and `setu.benchmark.jfr=true`.
+
+## CI and reports
+
+[CI](../.github/workflows/ci.yml) runs production/helper tests, integration tests, bounded chaos, isolated load, sustained smoke and two full node-target shards with JFR on pushes/PRs. Automatic target shards use `--report-only`, since runner allocations can be below the reference host budget. Completed misses are unqualified results; execution failures remain errors. Optional `full_benchmark` dispatch adds eight capacity comparisons across two modes and four payloads.
+
+Default-branch publication validates source revision, resources, timing, durability and all measured JFR stages before updating JSON, SVG badges and the [main README](../README.md#performance). Missing captures are labeled incomplete. Older workflows cannot overwrite newer source measurements. `render-benchmark-badges.py` regenerates images/links from committed snapshots; historical, target and capacity blocks remain distinct.
+
+Artifacts include `comparison.json`, `comparison.txt`, raw worker captures, JFR and an `optimization.md` analysis, including failed stages. Reanalyze without rerunning load:
 
 ```bash
 python3 scripts/sustained_report.py --input logs/benchmarks/resources/<run>/comparison.json
 ```
 
-Full-profile artifacts retain reports, raw captures and worker diagnostics. Smoke artifacts exclude temporary broker data files to avoid uploading the benchmark's retained payloads.
-
-## Diagnostic and chaos profiles
-
-The legacy capacity and payload-comparison tools remain available with their existing timings:
+Smoke artifacts exclude temporary broker data. Publication and report tests run with:
 
 ```bash
-# Historical bounded fanout comparison; does not update sustained badges.
-python3 scripts/run-benchmarks.py --kind sweep --repeats 3 --max-concurrency 8
-
-# Explicit exhaustion diagnostic (never part of routine CI or sustained publication).
-python3 scripts/run-benchmarks.py --kind capacity --payload-sizes 1024
-
-# Separate broker/client JVMs, fixed 10K/s workload, one/four partitions.
-python3 scripts/run-benchmarks.py --kind steady --payload-sizes 1024
-
-# Historical large-batch file experiment.
-python3 scripts/run-benchmarks.py --kind large-batch --payload-sizes 1024
+python -m unittest discover -s scripts -p 'test_benchmark*.py'
 ```
 
-`ProgressiveCapacityChaosTests` is the historical failure-seeking diagnostic: default two-second warmup/stages, eight-stage floor, 256-record batches, ten-second CPU observation holds, and continued doubling to a runtime limit. It counts consumer fanout and uses a coarse latency histogram; its peaks must not be used as sustained target progress. Properties include `setu.benchmark.min.stages`, `setu.benchmark.max.concurrency`, `setu.benchmark.cpu.hold.millis`, and `setu.benchmark.jfr`. Its JFR recordings, allocation estimates, GC overlap, sampled hot methods and backpressure diagnostics remain under `logs/benchmarks/capacity/`. The old `update-benchmark-badges.py` updates only historical badges and saves its detailed table to `benchmark-badges/capacity-details.md`; CI no longer calls it.
-
-Bounded chaos tests cover actual TCP throughput, recovery, record-size limits, malformed frames, consumer expiry and concurrent progress. `QuickBrokerChaosBenchmarkTests` uses sixteen producers/consumers, 20,000 records and 256-record batches; `BrokerLimitsChaosTests` uses 16,000 records with five-minute workload deadlines. Functional integration requirements remain in `setu-integration-tests`.
+## Bounded chaos and exhaustion
 
 ```powershell
 .\mvnw.cmd -pl setu-benchmark -am '-Dtest=*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
-Run report/parser regressions with `python3 -m unittest discover -s scripts -p 'test_benchmark*.py'`. CPU sampling, warmup convergence, concurrency limits and sustained qualification are covered by Java benchmark helper tests. Short local checks validate mechanics, not the throughput targets.
+Bounded tests cover process-kill recovery, malformed frames, record-size limits, expiry, quotas and concurrent consumer progress. `ProgressiveCapacityChaosTests` is a separate failure-seeking diagnostic: it continues doubling load toward runtime limits, counts broadcast fanout and uses a coarse latency histogram. Run it explicitly through `--kind capacity`; its peaks do not qualify sustained throughput or update current badges.
+
+## Earlier measurements
+
+These results predate the Chronicle default and do not qualify its performance. Raw snapshots preserve failed/interrupted attempts as well as final measurements.
+
+| Historical run | Result and scope | Evidence |
+| --- | --- | --- |
+| 15 October custom backend | All 18 full target windows passed; target medians 499,993.6/s memory and 249,992.5/s file; worst p99 2.023 / 2.826 ms | [Raw snapshot](performance-analysis-2026-10-15.json) |
+| 14 October custom backend | All 18 full target windows passed; target medians 499,985/s memory and 249,993/s file; worst p99 2.041 / 8.057 ms | [Raw snapshot](optimization-2026-10-14.json) |
+| 12 October CAS/MPSC comparison | Three short fanout comparisons found no material throughput gain; peak changed medians 1,019,401/s memory and 639,125/s file | Local `logs/lock-free/` captures |
+
+The October target host was Ryzen 5 7600X / Windows NTFS / Java 26.0.2.1 with eight active processors, no OS CPU quota, 1 KiB / 256-record batches, 64 MiB memory-log budget and 256 MiB memory / 128 MiB file heaps. Short before/after JFR diagnostics remain in the JSON; they are not substitutes for sustained qualification or resource-enforced CI results.

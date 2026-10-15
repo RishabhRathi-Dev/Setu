@@ -1,444 +1,135 @@
-# Setu Server
+# setu-server
 
-`setu-server` implements Setu's first broker network path. It accepts TCP connections, applies framing and protocol validation, optionally establishes TLS/mTLS, enforces authorization and quotas, and dispatches operations to `setu-core`. `setu-core` can use either in-memory or file-backed append-only logs from `setu-storage`; `setu-client` shares the protocol codec.
-
-## Current implementation status
-
-### Implemented
-
-- A version 1 binary protocol with command IDs, correlation IDs, strict payload validation, and structured response/error codes.
-- A shared frame codec and protocol codec used by server and client.
-- Broker commands for topic creation, metadata, produce, fetch, consumer-group membership/heartbeat, and offset commits.
-- OpenHFT Chronicle Queue partition logs with startup recovery and a broker facade in `setu-core`.
-- A default-deny, exact-match in-memory ACL authorizer in `setu-security`.
-- A built-in command-to-resource/permission resolver.
-- TLS client and server setup with mTLS, DNS SAN identity authentication, and hostname verification on clients.
-- Structured authorization, quota, broker, and protocol error responses.
-- Configurable connection count, accept backlog, and socket/idle timeout limits.
-- A selector-based plaintext transport and a TLS transport using a virtual thread per connection.
-- Socket-level TLS broker integration tests and selector multiplexing tests.
-
-### Remaining limitations
-
-- Selector-based TLS transport. The selector implementation handles plaintext channels; TLS currently uses blocking socket I/O on virtual threads.
-- Durable control-plane metadata: ACL grants, committed offsets, and group membership are process-local. PostgreSQL is not wired.
-- Full consumer-group coordination and partition assignment/rebalancing.
-- File retention and payload checksums. Chronicle persists native indexes; Setu rebuilds its sparse logical-offset index at startup.
-- A protocol-level response if the TLS handshake fails before a protocol connection exists. Malformed frame lengths also close the connection because no trustworthy request ID is available yet.
-- Production policy administration, ACL persistence/reload, and distributed quotas.
-
-`InMemoryAuthorizer` denies by default until an exact principal/resource/permission grant is registered. Its grants are lost on restart. `SecureServerFactory.createBroker` wires the built-in protocol resolver and broker dispatcher; callers still provide TLS files, policy grants, and quota policies.
-
-## Package layout
-
-```text
-io.setu.server
-├── SecureServerFactory.java
-├── connection
-│   ├── ConnectionHandler.java
-│   ├── ConnectionSession.java
-│   ├── ConnectionSessionFactory.java
-│   ├── FramedConnectionHandler.java
-│   └── PlaintextConnectionSessionFactory.java
-├── dispatcher
-│   ├── BrokerRequestHandler.java
-│   ├── RequestHandler.java
-│   └── RequestProcessor.java
-├── security
-│   ├── ProtocolRequestAuthorizationMetadataResolver.java
-│   ├── RequestAuthorizationMetadata.java
-│   ├── RequestAuthorizationMetadataResolver.java
-│   ├── SecuredRequestProcessor.java
-│   └── TlsConnectionSessionFactory.java
-└── tcp
-    ├── SelectorTcpServer.java
-    ├── TcpServer.java
-    └── TcpServerOptions.java
-```
-
-Shared wire types and the protocol codec live under `io.setu.core.protocol`. Broker operations are under `io.setu.core.broker`; file-log APIs are under `io.setu.storage.log`.
-
-The main runtime flow is:
-
-```text
-TCP acceptor
-   │ SocketChannel
-   ▼
-ConnectionHandler
-   │
-   ▼
-FramedConnectionHandler
-   ├── ConnectionSessionFactory.open(channel)
-   │      ├── plaintext session, or
-   │      └── TLS handshake → client certificate → AuthenticationProvider
-   │
-   ├── FrameCodec.readFrame(...)
-   ├── RequestProcessor.process(identity, request)
-   │      ├── resolve request → resource + permission
-   │      ├── Authorizer.authorize(...)
-   │      ├── QuotaManager.check(...)
-   │      └── RequestHandler.handle(request)
-   └── FrameCodec.writeFrame(...)
-```
-
-This division keeps socket acceptance, connection setup, framing, request policy, and broker operation behind separate components. `SecureServerFactory` is the composition root for a ready-to-run secure server.
-
-Both transports pass privately owned immutable request frames to the built-in dispatcher. Produce payloads share frame slices through decoding and storage. The built-in secured processor and protocol metadata resolver preserve this ownership path. `RequestHandler`, `RequestProcessor`, and `RequestAuthorizationMetadataResolver` retain their functional byte-array APIs; their default frame overloads reserve credit and provide defensive compatibility copies. When composing plaintext broker pipelines, pass `BrokerRequestHandler` directly to the transport's handler constructor or use `RequestProcessor.plaintext(handler)` to preserve immutable dispatch. A byte-array lambda intentionally uses the compatibility path.
+`setu-server` owns TCP connections, framing, buffer admission, secure request dispatch and the standalone broker launcher. Broker operations and wire types live in [setu-core](../setu-core/README.md); [setu-storage](../setu-storage/README.md) owns persistence.
 
 ## Standalone JAR
 
-Build and launch the local-development broker from the repository root with Java 26:
+From the repository root with Java 26 on `JAVA_HOME` and `PATH`:
 
 ```powershell
 .\mvnw.cmd -pl setu-server -am package
-.\scripts\start-broker.ps1 --train-aot
 .\scripts\start-broker.ps1 --config config/server.properties
 ```
 
-Set `JAVA_HOME` to a Java 26 JDK and put its `bin` directory on `PATH` before building. On macOS/Linux, train with `bash ./scripts/start-broker.sh --train-aot`, then launch with `bash ./scripts/start-broker.sh --config config/server.properties`.
-Both launchers read the shared [jvm.options](../config/jvm.options), including ZGC and the Java 26 module/native access required by Chronicle Queue. For a direct JAR launch, use `java @config/jvm.options -jar setu-server/target/setu-server-1.0.0-SNAPSHOT.jar --config config/server.properties` (quote `'@config/jvm.options'` in PowerShell).
-The startup log lists the active garbage collectors and string-deduplication setting. JVM options must be supplied before `-jar`; application properties cannot select a collector after the JVM starts.
+On Linux/macOS, use `bash ./mvnw` and `bash ./scripts/start-broker.sh`. Defaults are plaintext `127.0.0.1:9092`, Chronicle Queue under `data/`, and rolling operational logs under `logs/`. Ctrl+C closes connections and storage. The properties launcher does not configure TLS/mTLS; use the embedded factory below.
 
-`--train-aot` trains all five production modules (`setu-server`, `setu-client`, `setu-core`, `setu-storage`, and `setu-security`) using the real `SetuClient` and broker. It runs plaintext and mTLS paths in both storage modes, with four concurrent worker clients producing 256-record batches of 1,024-byte payloads across four partitions. Each path produces, fetches, verifies, and acknowledges 16,385 records, including a single-record publication; membership, heartbeat, and metadata commands are covered too. The secure path loads the TLS key/trust managers, verifies the broker hostname and client certificate, authenticates the DNS SAN identity, and exercises ACL and quota allow/deny responses. A missing client certificate must be rejected. A separate 64 KiB retained-memory scenario verifies rejection, acknowledgement-based reclamation, and successful retry without consuming terminal capacity.
+Launchers read [config/jvm.options](../config/jvm.options), including ZGC, string deduplication and Chronicle's module/native access. A direct launch from the repository root is:
 
-Both training and application commands supply ZGC and string deduplication. HotSpot temporarily disables deduplication during AOT recording; `AOT_RUNTIME` reports the requested and actual settings separately. The cached application run must have both options active, which CI checks. Training generates short-lived fixture certificates and file logs in a temporary directory that is removed on completion. The Java 26 JVM creates `target/setu-server.aot` using `-XX:AOTCacheOutput`; both launchers automatically use it with `-XX:AOTCache` and `-XX:AOTMode=on` when present. Strict mode rejects an incompatible cache instead of silently disabling it. Without a cache, startup uses the ordinary JVM path; `--no-aot` explicitly bypasses an existing cache. CI verifies all four paths, security rejection handling, backpressure recovery, and the complete production-module coverage marker. Unit/integration tests do not require AOT caches.
-
-Regenerate the cache after packaging a new build, changing dependency JARs, or changing the JDK/platform. Train and deploy with the same JDK, JARs, architecture, and JVM settings. Caches stay under the ignored `target/` directory and are not committed. This uses HotSpot AOT class/object caching and method profiles; native machine code is still generated by the JIT. Java 26 adds full cache support for ZGC; see [Oracle's Java 26 release notes](https://www.oracle.com/java/technologies/javase/26-relnote-issues.html) and [the Java team's cache workflow](https://inside.java/2026/01/09/run-aot-cache/).
-
-Chronicle's module exports/opens disable the archived full module graph and AOT class linking on the tested JDK. The cache still provides shared application classes; CI requires strict cache loading and verifies classes from every production module, plus all four training paths. This does not claim ahead-of-time class linking with these flags.
-
-The runnable JAR requires its adjacent `target/lib/` directory, which Maven fills with runtime dependencies. Distribute the JAR, `lib/`, and `config/jvm.options` together. `--help` prints usage; running without arguments selects plaintext `127.0.0.1:9092`, file storage under `./data`, and rolling operational logs under `./logs`. Paths are relative to the launch working directory. Ctrl+C closes connections and the broker through a shutdown hook.
-
-`config/server.properties` exposes the bind address, storage mode (`FILE` or `IN_MEMORY`), data directory, queue mapping block and record size, connection cap, backlog, timeouts, and transport (`blocking` or `selector`). This launcher serves plaintext; the existing secure embedding API below provides TLS/mTLS, authentication, authorization, and quotas. The capacity workload also uses the plaintext path and bypasses quotas, so raising quota rates cannot change its throughput.
-
-For `IN_MEMORY`, `memory.log.max.bytes` bounds retained log payload/chunk accounting across all partitions (256 MiB by default; zero disables it). If a single record or complete batch would exceed the remaining budget, produce returns `QUOTA_EXCEEDED` before appending it. The connection remains usable, and fetch/acknowledgement requests can free capacity so producers can retry with backoff. Protocol buffers have separate admission limits. File indexes remain outside the memory-log budget.
-
-### Buffer admission, retention, and slow consumers
-
-`requests.max.bytes` and `responses.max.bytes` each default to 128 MiB and are shared by all connections on a server. Request admission happens after the four-byte length header and before allocating the body. It charges twice the declared body length plus 1 KiB for the frame and decoded payload allowance; connection accounting adds 17 KiB on the blocking transport and 1 KiB on the selector transport. The decoder also reserves 64 bytes per batch item before creating its item list, so empty payloads cannot bypass object admission. Failure before reading a body closes the connection because its correlation ID is not yet available; failure during decoding returns `QUOTA_EXCEEDED` when response credit permits. Reconnect with backoff and a smaller batch; retrying a request whose reply was lost can duplicate a publication because producer deduplication is not implemented.
-
-Response credit is reserved by storage before materializing each fetched page and by the protocol encoder before allocating its reply body. Reservations grow with the actual page, rather than the requested maximum, and remain held until the write completes or the connection closes. A fetch that cannot reserve its page returns `QUOTA_EXCEEDED` when there is credit for the small error reply; otherwise the connection closes. These limits bound accounted in-flight buffers, not total JVM heap. Choose them together with the retained-memory budget and heap headroom. Custom embedded request processors must call `ResponseBuffers.reserve(bytes)` before allocating response data; built-in broker and security codecs do this automatically.
-
-`write.timeout.millis` defaults to 30 seconds and bounds the total time to write one reply. Both transports disconnect a socket that does not finish its reply by this deadline and release its response credit. `socket.timeout.millis` controls reads/idle connections separately. Slow group members are evicted by background maintenance after their acknowledgement or inactivity timeout; a stale member receives `BAD_REQUEST` and must rejoin. Producer-side memory reclamation no longer scans every consumer: each partition maintains its minimum acknowledged offset.
-
-`memory.retention.millis=0` preserves acknowledgement-based reclamation. Set it to a positive value, such as `1000`, to enable lossy age-based expiry in memory storage. Background maintenance discards expired records even without traffic or an acknowledgement, normally within one 10 ms maintenance interval. Acknowledgements can reclaim records earlier. Late consumers receive `OFFSET_OUT_OF_RANGE` with the earliest retained offset in the error message and must decide whether to skip that gap. File storage does not use this memory retention setting. This option deliberately permits message loss and is intended for transient updates.
-
-The client overloads `fetch(..., maxBytes, waitMillis)` wait for data for up to 30 seconds. Empty fetches wait on a partition condition and wake on an append, timeout, eviction, interruption, or broker shutdown. Set the client socket read timeout above `waitMillis`. Legacy fetch requests retain their bytes; long-poll requests add optional fetch fields and require an upgraded server.
-
-File partitions use a bounded group-commit writer: up to 32 MiB of accounted pending payloads and 1,024 requests, including the active flush, with a 250 microsecond collection window. Queue saturation returns `QUOTA_EXCEEDED`; retry with backoff. Adjacent pending requests share a durable append. Each successful producer acknowledgement follows a JDK mapped-file and channel force for every queue file touched by its group. A persistence failure fails pending requests and stops that partition writer until restart.
-
-The packaged Logback configuration persists operational logs as `logs/setu.log`, rotates at 100 MB or daily, retains up to 14 days, and caps archives at 2 GB. Set `SETU_LOG_DIR` to change the log directory, or use `-Dlogback.configurationFile=<path>` before `-jar` to provide a different logging configuration. Operational logs and durable message queue files are separate artifacts. See [server.properties](../config/server.properties) and [logback.xml](../config/logback.xml).
-
-Operational logging defaults to `DEBUG`. Use `SETU_LOG_LEVEL=INFO` or `-Dsetu.log.level=INFO` before `-jar` to reduce request logging; the JVM property takes precedence. DEBUG records command, correlation ID, topic/partition, offsets, frame sizes, result counts, and elapsed request/append times. Connection events identify sessions and peers; security decisions identify principals and resources. Recovery validates committed Chronicle documents and logical offsets; malformed committed data fails startup. Unexpected failures retain their complete exception chain and stack trace in the logs while clients receive the existing structured errors. Record payloads, passwords, and private keys are not logged.
-
-The synchronous client and blocking server buffer socket reads/writes to amortize frame-header I/O while retaining TCP_NODELAY and a flush after every complete response/request. Protocol validation inspects payload lengths without cloning, and the encoder reads owned payloads internally and sizes batch/fetch buffers before writing. Public payload accessors continue to return defensive copies. These changes retain the wire format, record ordering, memory admission, and forced file durability.
-
-Packaging keeps Java bytecode on the JVM. It provides a launchable distribution; performance claims come from benchmarks.
-
-## Embedded TCP server lifecycle
-
-`TcpServer` takes a bind address, a `ConnectionHandler`, and optionally `TcpServerOptions`:
-
-```java
-TcpServer server = new TcpServer(
-        new InetSocketAddress("127.0.0.1", 9092),
-        connectionHandler
-);
-
-server.start();
-try {
-    System.out.println("Listening on " + server.localAddress());
-    // Keep the owning application alive while the broker is serving.
-} finally {
-    server.close();
-}
+```powershell
+java '@config/jvm.options' -jar setu-server/target/setu-server-1.0.0-SNAPSHOT.jar --config config/server.properties
 ```
 
-`start()` binds synchronously and starts the accept loop on a named platform thread. It throws `IOException` if the bind fails and `IllegalStateException` if called while already running. Binding to port `0` asks the operating system for an available port; `localAddress()` returns the actual bound address.
+Distribute the JAR with its adjacent `lib/` runtime dependencies and `config/jvm.options`. Application paths are relative to the launch working directory. `--help` prints usage. [server.properties](../config/server.properties) contains all supported settings; unknown properties fail startup.
 
-Each accepted `SocketChannel` is submitted to a virtual-thread-per-task executor. The accept loop continues to accept other connections while a connection handler blocks on network input. `close()` stops acceptance, closes the listening channel and tracked client channels, shuts down the connection executor, and waits up to five seconds for the accept thread. The server may be started again after it has closed.
+Optional AOT training:
 
-`TcpServerOptions` defaults to a maximum of 10,000 active connections, an accept backlog of 256, and no socket timeout. Set `socketTimeoutMillis` to bound blocking TLS handshake and socket-read duration. Connections over the configured limit are closed as soon as they are accepted. The TLS server path applies the same timeout to handshake and subsequent reads.
-
-For plaintext deployments, `SelectorTcpServer` multiplexes non-blocking channels on a selector and dispatches complete requests on virtual threads. It accepts one request at a time per connection, stops reading while the response is being produced/sent, and applies `socketTimeoutMillis` as an idle timeout. The selector server does not provide TLS or peer authentication. Use `TcpServer` with the secure factory for TLS/mTLS.
-
-## Frame format
-
-TCP is a byte stream, so a read is not guaranteed to return one complete request. `FrameCodec` defines the current framing rule:
-
-```text
-┌────────────────────────────┬───────────────────────────┐
-│ 4-byte signed big-endian N │ N body bytes              │
-└────────────────────────────┴───────────────────────────┘
+```powershell
+.\scripts\start-broker.ps1 --train-aot
 ```
 
-The length counts only the frame body; it does not include the four-byte header. The current default maximum body size is `16 * 1024 * 1024` bytes (16 MiB). `FramedConnectionHandler` accepts a different non-negative limit. A zero-byte body is permitted by the frame codec but rejected by the protocol decoder as an incomplete request.
+Training uses real clients through plaintext and mTLS in both storage modes, including ACL/quota denial, missing-certificate rejection and memory backpressure. The expected missing-certificate test can log `certificate_required`. Each path verifies 16,385 records across four partitions. CI checks all paths, active runtime options and cached classes from all five production modules, with JVM diagnostics separate from application markers.
 
-`readFrame` returns `null` only if the peer closes cleanly before the first byte of a new header. A partial header or partial body raises `IOException`. Negative lengths and lengths above the configured maximum also raise `IOException`. `writeFrame` validates the response length, writes the four-byte header and body, then flushes the output stream.
+The generated `target/setu-server.aot` is used automatically in strict mode. Regenerate it after changing JDK, platform, application or dependency JARs; `--no-aot` bypasses it. Tests do not require a cache. On the tested JDK, Chronicle's module options disable AOT class linking; shared application classes still load from the cache. JIT compilation remains responsible for native application code.
 
-The frame body is a versioned binary protocol message, encoded by `ProtocolCodec` in `setu-core`. See [Protocol v1](#protocol-v1) for the header and command payloads.
+## Transports and lifecycle
 
-## Protocol v1
+| Transport | Behavior |
+| --- | --- |
+| `TcpServer` / `transport=blocking` | Platform acceptor, virtual thread per connection; supports plaintext and embedded TLS/mTLS |
+| `SelectorTcpServer` / `transport=selector` | Non-blocking plaintext sockets, selector multiplexing and virtual-thread request dispatch; one active request per connection |
 
-All integers are big-endian. Each framed request body begins with this 12-byte header:
+`start()` binds synchronously; binding to port zero chooses an available port reported by `localAddress()`. `close()` stops acceptance, closes tracked connections and shuts down workers. The embedding application owns the server and broker, closing the server first.
 
-| Field | Width | Meaning |
-| --- | ---: | --- |
-| Magic | 4 bytes | `0x53455455` (`SETU`) |
-| Version | 1 byte | `1` |
-| Message kind | 1 byte | `0` request, `1` response |
-| Command ID | 2 bytes | Command number from the table below |
-| Correlation ID | 4 bytes | Non-negative client ID echoed in the response |
+`TcpServerOptions` defaults to 10,000 connections, backlog 256, no read/idle timeout, 128 MiB request credit, 128 MiB response credit and a 30-second reply-write deadline. Excess connections are closed. Blocking TLS applies the read timeout to handshake and reads; selector mode uses it as an idle timeout. TLS is not supported by the selector transport.
 
-Strings use a signed 32-bit byte length followed by UTF-8 bytes, limited to 4,096 bytes. Byte arrays use a signed 32-bit length and are bounded by the frame limit. Topic names currently accept ASCII letters, digits, `.`, `_`, and `-`, with a maximum length of 249 characters; `.` and `..` are rejected. Create-topic requests are limited to 1,024 partitions. Fetch requests may ask for up to 15 MiB of payload bytes.
+## Secure broker wiring example
 
-| Command | ID | Request body fields |
-| --- | ---: | --- |
-| `PRODUCE` | 1 | topic, partition `int32`, value bytes |
-| `FETCH` | 2 | topic, partition `int32`, offset `int64`, max bytes `int32`, optional group ID + member ID |
-| `COMMIT_OFFSET` | 3 | group ID, topic, partition `int32`, next offset `int64`, optional member ID (acknowledgement) |
-| `JOIN_GROUP` | 4 | group ID, topic, member ID |
-| `LEAVE_GROUP` | 5 | group ID, member ID |
-| `HEARTBEAT` | 6 | group ID, member ID |
-| `METADATA` | 7 | empty |
-| `CREATE_TOPIC` | 8 | topic, partition count `int32` |
-
-Responses repeat the command and correlation ID, then include a 16-bit error code and a length-prefixed UTF-8 message. Successful `PRODUCE` responses include the assigned `int64` offset. Successful `FETCH` responses include a count followed by `(offset int64, value bytes)` records. Successful `METADATA` responses include a count followed by `(topic, partition count int32)` entries. Other successful commands have an empty response body. Error responses omit the successful command body.
-
-Defined error IDs are `NONE=0`, `BAD_REQUEST=1`, `UNSUPPORTED_VERSION=2`, `UNKNOWN_COMMAND=3`, `UNKNOWN_TOPIC=4`, `UNKNOWN_PARTITION=5`, `AUTHENTICATION_FAILED=6`, `AUTHORIZATION_DENIED=7`, `QUOTA_EXCEEDED=8`, `INTERNAL_ERROR=9`, `OFFSET_OUT_OF_RANGE=10`, `UNSUPPORTED_OPERATION=11`, and `TOPIC_ALREADY_EXISTS=12`.
-
-`ProtocolCodec` validates message kind, magic, version, command, lengths, UTF-8, command-specific required fields, and trailing bytes. Group-aware fetch and member acknowledgements append optional fields to their command bodies; legacy v1 bodies without those fields remain valid. `SetuClient` verifies that the response command and correlation ID match the request. Protocol v1 is the initial wire contract; version negotiation beyond rejecting unsupported versions is not implemented.
-
-## Plaintext connection path
-
-For tests or local development, use `FramedConnectionHandler` with a `RequestHandler` and `TcpServer`, or use the selector transport:
+Generate development stores with [generate-certs.ps1](../scripts/generate-certs.ps1) or [generate-certs.sh](../scripts/generate-certs.sh). Set `SETU_CERT_PASSWORD` before generating the stores and running this example. The generated client has DNS SAN `setu-client`.
 
 ```java
-RequestHandler handler = request -> processRequest(request);
-ConnectionHandler connections = new FramedConnectionHandler(handler);
-
-TcpServer server = new TcpServer(bindAddress, connections);
-```
-
-This constructor uses `PlaintextConnectionSessionFactory` and passes `null` as the authenticated identity. It does not provide confidentiality, peer authentication, authorization, or quotas by itself. Do not expose it on an untrusted network. For an explicitly local plaintext broker, wrap a `BrokerRequestHandler` around `DefaultBroker`. For secure operation, use `SecureServerFactory.createBroker`.
-
-The lower-level `FramedConnectionHandler` constructor accepts a `ConnectionSessionFactory` and a `RequestProcessor`, which allows alternative connection establishment or request pipelines to be supplied without changing the TCP acceptor.
-
-## TLS and mTLS request flow
-
-`SecureServerFactory` assembles the supported secure path:
-
-1. `TlsConnectionSessionFactory` wraps an accepted socket in a server-mode `SSLSocket`.
-2. It applies configured enabled protocol and cipher-suite lists when those lists are non-empty.
-3. It requires client authentication and performs the TLS handshake before reading any Setu frame.
-4. It passes the established `SSLSession` to the configured `AuthenticationProvider`.
-5. With the supplied `MtlsAuthenticator`, the peer certificate is validated and converted into an `AuthenticationResult` principal.
-6. `FramedConnectionHandler` reads one frame at a time and passes the authenticated identity and body to the request processor.
-7. `SecuredRequestProcessor` resolves the body to a resource and permission, authorizes the identity, checks the principal's quota, and only then calls the broker `RequestHandler`.
-
-The secure connection factory rejects configurations where TLS is disabled or `clientAuthenticationRequired` is false. It always requests a client certificate at the socket layer. The `TlsContextFactory` loads server keys and trusted client issuers using the configured keystore and truststore providers. Trust-chain checks occur in the JSSE handshake; `MtlsAuthenticator` then applies Setu's certificate validity/EKU and identity checks.
-
-### Secure broker wiring example
-
-This example wires the built-in decoder, command permission resolver, broker dispatcher, and exact-match ACL. The ACL and quota registrations below are in memory and must be provisioned by the application at startup.
-
-```java
+import io.setu.core.broker.DefaultBroker;
+import io.setu.server.SecureServerFactory;
 import io.setu.security.authentication.MtlsAuthenticator;
 import io.setu.security.authorization.InMemoryAuthorizer;
 import io.setu.security.authorization.Permission;
 import io.setu.security.certificates.CertificateValidator;
-import io.setu.security.quota.QuotaPolicy;
 import io.setu.security.quota.QuotaManager;
+import io.setu.security.quota.QuotaPolicy;
 import io.setu.security.quota.TokenBucketRateLimiter;
-import io.setu.security.tls.SetuKeyManagerProvider;
-import io.setu.security.tls.SetuTrustManagerProvider;
-import io.setu.security.tls.TlsConfiguration;
-import io.setu.security.tls.TlsContextFactory;
-import io.setu.server.SecureServerFactory;
-import io.setu.core.broker.DefaultBroker;
-import io.setu.server.tcp.TcpServer;
-import io.setu.server.tcp.TcpServerOptions;
-
+import io.setu.security.tls.*;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
-import java.util.concurrent.CountDownLatch;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 
-TlsConfiguration tls = new TlsConfiguration(
-        true,
-        "TLS",
-        "config/broker-keystore.p12",
-        System.getenv("SETU_KEYSTORE_PASSWORD"),
-        "config/client-truststore.p12",
-        System.getenv("SETU_TRUSTSTORE_PASSWORD"),
-        null,
-        true,
-        List.of("TLSv1.3"),
-        List.of()
-);
+String password = System.getenv("SETU_CERT_PASSWORD");
+var tls = new TlsConfiguration(true, "TLS",
+        "certs/generated/broker.p12", password,
+        "certs/generated/broker-trust.p12", password,
+        null, true, List.of("TLSv1.3"), List.of());
+var contexts = new TlsContextFactory(new SetuKeyManagerProvider(), new SetuTrustManagerProvider());
+var acl = new InMemoryAuthorizer();
+acl.grant("setu-client", "broker", Permission.VIEW_METADATA);
+acl.grant("setu-client", "topic/orders", Permission.TOPIC_CREATE);
+acl.grant("setu-client", "topic/orders", Permission.PRODUCE);
+acl.grant("setu-client", "topic/orders", Permission.CONSUME);
+var limiter = new TokenBucketRateLimiter();
+limiter.registerPolicy("setu-client", new QuotaPolicy(1_000, 2_000, 10_000_000, 20_000_000));
 
-TlsContextFactory tlsContexts = new TlsContextFactory(
-        new SetuKeyManagerProvider(),
-        new SetuTrustManagerProvider()
-);
-MtlsAuthenticator authenticator = new MtlsAuthenticator(new CertificateValidator());
-
-InMemoryAuthorizer acl = new InMemoryAuthorizer();
-acl.grant("orders-service", "broker", Permission.VIEW_METADATA);
-acl.grant("orders-service", "topic/orders", Permission.TOPIC_CREATE);
-acl.grant("orders-service", "topic/orders", Permission.PRODUCE);
-
-TokenBucketRateLimiter limiter = new TokenBucketRateLimiter();
-limiter.registerPolicy("orders-service", new QuotaPolicy(
-        1_000, 2_000,       // messages per second, message burst capacity
-        10_000_000, 20_000_000 // bytes per second, byte burst capacity
-));
-QuotaManager quotas = new QuotaManager(limiter);
-
-try (DefaultBroker broker = new DefaultBroker(Path.of("data"), 15 * 1024 * 1024);
-     TcpServer server = SecureServerFactory.createBroker(
-        new InetSocketAddress("0.0.0.0", 9092),
-        16 * 1024 * 1024,
-        tls,
-        tlsContexts,
-        authenticator,
-        acl,
-        quotas,
-        broker,
-        new TcpServerOptions(1_000, 128, 30_000)
-     )) {
+try (var broker = new DefaultBroker(Path.of("data"), 1024 * 1024);
+     var server = SecureServerFactory.createBroker(new InetSocketAddress("127.0.0.1", 9093),
+             16 * 1024 * 1024, tls, contexts, new MtlsAuthenticator(new CertificateValidator()),
+             acl, new QuotaManager(limiter), broker)) {
     server.start();
-    new CountDownLatch(1).await(); // Replace with your application's shutdown signal.
+    new CountDownLatch(1).await(); // Replace with the application's shutdown signal.
 }
 ```
 
-The example intentionally does not grant `CONSUME`, so a fetch request receives `AUTHORIZATION_DENIED`. Keep passwords out of source code and version control. Supply keystore/truststore files through protected deployment configuration. `DefaultBroker` owns its file logs; the application owns and closes the broker after closing the server.
+Use the shared JVM options for the embedding application. Provision keys/passwords outside source control; the generated stores are development fixtures. [setu-security](../setu-security/README.md) documents certificate and policy contracts; [setu-client](../setu-client/README.md#tls-and-consumer-progress) documents client configuration.
 
 ## Request authorization contract
 
-`ProtocolRequestAuthorizationMetadataResolver` decodes the complete v1 request and maps it to `RequestAuthorizationMetadata(resource, permission)` before dispatch. Current mappings are:
+The secure path completes TLS and authenticates the client before protocol processing. `ProtocolRequestAuthorizationMetadataResolver` maps valid requests to these exact resources and permissions:
 
-- `PRODUCE` → `topic/<name>` + `PRODUCE`.
-- `FETCH` → `topic/<name>` + `CONSUME`.
-- `CREATE_TOPIC` → `topic/<name>` + `TOPIC_CREATE`.
-- `COMMIT_OFFSET` → `consumer-group/<group>` + `CONSUMER_GROUP_WRITE`.
-- `JOIN_GROUP` → `consumer-group/<group>` + `CONSUMER_GROUP_CREATE`.
-- `LEAVE_GROUP` and `HEARTBEAT` → `consumer-group/<group>` + `CONSUMER_GROUP_WRITE`.
-- `METADATA` → `broker` + `VIEW_METADATA`.
+| Command | Resource | Permission |
+| --- | --- | --- |
+| `CREATE_TOPIC` | `topic/<topic>` | `TOPIC_CREATE` |
+| `PRODUCE`, `PRODUCE_BATCH` | `topic/<topic>` | `PRODUCE` |
+| `FETCH` | `topic/<topic>` | `CONSUME` |
+| `JOIN_GROUP` | `consumer-group/<group>` | `CONSUMER_GROUP_CREATE` |
+| `COMMIT_OFFSET`, `LEAVE_GROUP`, `HEARTBEAT` | `consumer-group/<group>` | `CONSUMER_GROUP_WRITE` |
+| `METADATA` | `broker` | `VIEW_METADATA` |
 
-The available permissions also include `TOPIC_DELETE`, `CONSUMER_GROUP_READ`, `ACL_READ`, and `ACL_WRITE`; those are not currently exercised by a v1 command.
+After authorization, quotas charge one message per protocol request and the request-body byte count. A batch counts as one request. Denied operations do not reach the broker. Grants, quota registrations and consumer metadata remain process-local.
 
-`SecuredRequestProcessor` constructs `AuthorizationContext` using the authenticated principal, resolver-provided resource, and resolver-provided permission. It calls `Authorizer.authorize(identity, context)`. If the identity is absent, the resolver fails, or the authorizer denies or returns no decision, the broker handler is not called.
+Both transports preserve immutable frame ownership through built-in dispatch. Embedded plaintext pipelines should pass `BrokerRequestHandler` directly or use `RequestProcessor.plaintext(handler)`. Functional byte-array handlers remain supported through defensive compatibility copies. Shared framing and protocol details are in [protocol v1](../setu-core/README.md#protocol-v1).
 
-After authorization succeeds, it calls `QuotaManager.check(principal, 1, request.length)`. Each frame counts as one message, and only the frame body length counts toward bytes; the four-byte frame header and response bytes are not charged. A rejected quota also prevents broker dispatch. The current gate rejects immediately; it does not sleep or throttle the connection.
+## Admission and failure behavior
 
-## Quota behavior
+Request credit is reserved before allocating a frame body and includes decoded payload/item allowances. Response credit is reserved before fetch materialization and encoding, and held through transmission. A quota failure returns `QUOTA_EXCEEDED` when a trustworthy request ID and error-response credit exist; otherwise the connection closes. These budgets account for specific allocations, not the entire JVM heap. Custom request processors must reserve response allocations through `ResponseBuffers.reserve(bytes)`.
 
-`QuotaManager` delegates to a `RateLimiter`. The supplied `TokenBucketRateLimiter` supports per-principal message and byte buckets. Register one `QuotaPolicy` per known principal:
-
-```java
-limiter.registerPolicy("orders-service", new QuotaPolicy(
-        messagesPerSecond,
-        messageBurstCapacity,
-        bytesPerSecond,
-        byteBurstCapacity
-));
-```
-
-All values must be positive, and each burst capacity must be at least its refill rate. For each request, the limiter must have capacity in both buckets; it consumes neither bucket unless both can satisfy the request. An unknown principal has no registered policy and is denied by the token-bucket implementation. Quotas count one message and the request body bytes for every accepted request. The quota map is local to one broker process; distributed/cluster-wide quotas, per-resource quotas, connection quotas, and quota persistence are not implemented.
-
-## Broker and storage behavior
-
-`DefaultBroker` is the first single-process broker implementation. It creates topics with 1 to 1,024 partitions, appends records, fetches by offset, returns topic metadata, and tracks simple group membership and committed offsets.
-
-Each file-backed partition stores native Chronicle Queue files under:
-
-```text
-<data-directory>/<topic>/partition-<n>/<daily-cycle>.cq4
-```
-
-`StorageMode.FILE` defaults to OpenHFT Chronicle Queue 2026.6 with daily roll cycles, versioned batch documents and dense zero-based logical offsets. `queue.block.bytes` controls mapping blocks (64 MiB minimum/default). Group commit forces touched mapped files, indexes and roll metadata through the JDK before acknowledging success. Native Windows sync is deliberately disabled because it is a no-op in the resolved OpenHFT POSIX version. Old `.log` partitions require [offline migration](../setu-storage/README.md#migrating-existing-data); they are never silently ignored. See the storage README for recovery, ownership and durability boundaries.
-
-Topics and partition logs survive restart because they are represented on disk. Committed consumer offsets and group membership currently live only in memory and are lost when the broker restarts. PostgreSQL and the control-plane metadata model from the root README are not connected to `DefaultBroker` yet.
-
-## Client
-
-`setu-client` provides `SetuClient`, a synchronous protocol v1 client. It can open plaintext connections for local development or TLS connections with a client certificate. TLS connections apply the configured protocol/cipher lists and verify the broker hostname against the broker certificate. Requests on one client instance are serialized so response correlation remains unambiguous.
-
-```java
-import io.setu.client.SetuClient;
-import io.setu.core.protocol.BrokerResponse;
-import io.setu.core.protocol.ErrorCode;
-import io.setu.security.tls.TlsConfiguration;
-import io.setu.security.tls.TlsContextFactory;
-
-try (SetuClient client = SetuClient.connectTls(
-        "broker.example.internal", 9092, clientTlsConfiguration, tlsContextFactory,
-        5_000, 30_000, 16 * 1024 * 1024)) {
-    BrokerResponse created = client.createTopic("orders", 4);
-    if (created.errorCode() != ErrorCode.NONE) {
-        throw new IllegalStateException(created.errorMessage());
-    }
-
-    BrokerResponse produced = client.produce("orders", 0, "order-123".getBytes());
-    BrokerResponse fetched = client.fetch("orders", 0, produced.offset(), 1024 * 1024);
-}
-```
-
-The timeout arguments are connect timeout and socket read timeout in milliseconds. A zero read timeout means no client-side read timeout. The client currently exposes generic `BrokerRequest`/`BrokerResponse` exchange plus convenience methods for topic creation, single and batched produce, fetch, metadata, and consumer group management; it does not yet expose asynchronous producers/consumers or retries.
-
-## Failure and connection behavior
-
-Once framing has produced a body, protocol and application failures use the structured protocol response and the connection remains available for the next request. Transport and framing errors still end the connection:
-
-| Condition | Current behavior |
+| Setting | Behavior |
 | --- | --- |
-| Bind fails | `start()` throws `IOException`. |
-| TLS handshake, hostname validation, or client-certificate authentication fails | Session creation fails; the client channel is closed before request processing. TLS has no Setu protocol response because the protocol session was not established. |
-| Clean peer close between frames | The framed loop exits and closes the session. |
-| Partial frame header/body, negative frame length, or oversized frame | The frame codec cannot trust a complete request; the connection is closed. |
-| Malformed protocol body or unsupported protocol version | An error response is sent. The connection remains open. |
-| Unknown topic/partition, out-of-range offset, or duplicate topic | A broker error response is sent. |
-| Authorization denial or security quota exceedance | `AUTHORIZATION_DENIED` or `QUOTA_EXCEEDED` is sent; broker dispatch is skipped. |
-| Produce exceeds the shared retained-memory log budget | `QUOTA_EXCEEDED` is sent before any part of that append is stored; fetching and acknowledging remain available to release capacity. |
-| Broker storage failure | An `INTERNAL_ERROR` response is sent for built-in dispatch. |
-| TLS socket timeout or blocking server read timeout | The connection is closed. |
-| Acceptor fails while server is running | The server logs the accept failure and closes the server. |
-| Server closes | The accept channel and active client channels are closed; the executor is shut down. |
+| `requests.max.bytes`, `responses.max.bytes` | Shared per-server buffer budgets; 128 MiB each by default |
+| `write.timeout.millis` | Total reply-write deadline; 30 seconds by default; disconnects slow readers |
+| `socket.timeout.millis` | Read/idle timeout; zero disables it |
+| `memory.log.max.bytes` | Shared retained-memory log budget; 256 MiB default; zero disables it |
+| `memory.retention.millis` | Optional lossy memory expiry; zero preserves acknowledgement-based reclamation |
+| `ack.timeout.millis`, `consumer.timeout.millis` | Consumer acknowledgement and inactivity deadlines |
 
-Custom request handlers or processors that throw before encoding a response may still cause their connection to close. Do not rely on log text as a stable protocol contract.
+Fetch waits are capped at 30 seconds; client read timeouts must exceed the requested wait. Expired members must rejoin. Lossy memory expiry can produce `OFFSET_OUT_OF_RANGE`. [Storage](../setu-storage/README.md) documents group-commit limits, durability, recovery and legacy migration.
 
-## Security boundaries and operational notes
+Malformed frame lengths, partial frames and TLS handshake failures close the connection. Protocol/application errors use structured responses when possible; unexpected I/O/runtime failures become `INTERNAL_ERROR`. A lost produce response has an uncertain outcome because producer deduplication is not implemented.
 
-- TLS and mTLS are applied before request framing on the secure path; the broker handler does not receive an unauthenticated request through `SecureServerFactory`.
-- Certificate trust-chain validation comes from the configured JSSE truststore and handshake. `CertificateValidator` performs Setu-specific certificate checks; it is not a trust-chain builder.
-- `MtlsAuthenticator` derives identity from the certificate identity helper. Current certificate identity extraction supports DNS subject alternative names; it does not currently support URI SANs or common names.
-- `TlsConfiguration` includes `keyAlias` and `protocol`, but the current key-manager provider does not select the alias and `TlsContextFactory` initializes a generic `TLS` context. The server/client apply non-empty enabled-protocol and enabled-cipher lists to their sockets.
-- Plaintext construction is deliberately separate from `SecureServerFactory`. Do not accidentally wire a plaintext handler into an internet-facing listener.
-- `InMemoryAuthorizer` stores exact grants only in the current process. Resource strings are `topic/<topic>`, `consumer-group/<group>`, and `broker`; there are no wildcard grants.
-- `TcpServer` limits accepted active connections and can apply a blocking socket timeout. `SelectorTcpServer` applies its configured timeout as per-connection idle time. The selector transport is plaintext only.
-- Request and response bodies are materialized as byte arrays. The frame limit bounds one frame, not total process memory across all clients.
-- Group state and committed offsets are in-memory only. Partition records are forced to disk and rotated by size, but file logs have no checksum or retention.
+## Logs and tests
 
-## Testing and building
+[logback.xml](../config/logback.xml) defaults to DEBUG, persists `logs/setu.log`, rotates daily or at 100 MB, retains 14 days and caps archives at 2 GB. Use `SETU_LOG_DIR`, `SETU_LOG_LEVEL`, or `-Dsetu.log.level` to configure logging; the level property takes precedence. Record payloads, passwords and private keys are not logged. Connection/session and request diagnostics include correlation IDs and error details.
 
-Use the Java 26 JDK required by the root project and run commands from the repository root:
+From the repository root with Java 26:
 
 ```powershell
 .\mvnw.cmd -pl setu-server -am test
-.\mvnw.cmd -pl setu-server -am package
+.\mvnw.cmd -pl setu-integration-tests -am test
 ```
 
-The `-am` option also builds required reactor modules such as `setu-core`, `setu-storage`, and `setu-security`. The Maven Wrapper supplies Maven but does not install Java. The TLS integration test uses the JDK `keytool` executable to create temporary test certificates, then verifies mTLS authentication, produce/fetch dispatch, and structured authorization denial. Tests also cover protocol validation, broker/log recovery, ACL matching, selector multiplexing/limits/timeouts. Broader coverage should still exercise invalid client certificates, quota rejection, malformed protocol bodies over a live connection, and shutdown under load.
-
-## Planned server work
-
-Remaining server milestones include:
-
-1. Add protocol paging and explicit maximum-record-count controls for fetch/metadata responses.
-2. Persist authorization grants, consumer offsets, and group state in the control plane.
-3. Implement consumer-group partition assignment and rebalance.
-4. Add selector-driven TLS using `SSLEngine`, or benchmark the current TLS virtual-thread transport before investing in it.
-5. Add log checksums, retention, and configurable file durability/ack modes.
-6. Add metrics for active/rejected connections, request rates, quota denials, and append/fetch latency.
-7. Add broader integration tests for invalid client certificates, quota rejection, wire error cases, and server shutdown under load.
+Tests cover framing, dispatch, selector multiplexing, TLS/mTLS, authorization, quotas and admission. There is no selector TLS, persistent policy administration or multi-broker coordination.
