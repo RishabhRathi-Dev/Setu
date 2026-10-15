@@ -54,22 +54,25 @@ jobs:
           bash ./mvnw --batch-mode --no-transfer-progress -pl setu-server -am -DskipTests package
           bash ./scripts/start-broker.sh --train-aot
           java @config/jvm.options -XX:AOTMode=on \
-            -XX:AOTCache=setu-server/target/setu-server.aot -Xlog:aot=info,class+load=info \
+            -XX:AOTCache=setu-server/target/setu-server.aot \
+            "-Xlog:aot=info,class+load=info:file=$RUNNER_TEMP/aot-jvm.log" \
             -jar setu-server/target/setu-server-1.0.0-SNAPSHOT.jar --aot-train \
             2>&1 | tee "$RUNNER_TEMP/aot-validation.log"
           python3 - <<'PY'
           import os, pathlib
           report = (pathlib.Path(os.environ["RUNNER_TEMP"]) / "aot-validation.log").read_text()
+          # JVM logging can interrupt printf while formatting loads a class. Keep it separate.
+          vm_report = (pathlib.Path(os.environ["RUNNER_TEMP"]) / "aot-jvm.log").read_text()
           # Chronicle's module exports/opens disable the archived full module graph on some JDKs.
           # Strict AOTMode plus per-class checks still require the application cache to be used.
-          assert "Opened AOT cache" in report, "The AOT cache was not opened"
+          assert "Opened AOT cache" in vm_report, "The AOT cache was not opened"
           for name in ("io.setu.server.security.SecuredRequestProcessor", "io.setu.client.SetuClient",
                        "io.setu.core.broker.DefaultBroker", "io.setu.storage.log.InMemoryMessageLog",
                        "io.setu.storage.log.ChronicleMessageLog", "io.setu.storage.log.GroupCommitMessageLog",
                        "io.setu.security.authentication.MtlsAuthenticator", "io.setu.security.authorization.InMemoryAuthorizer",
                        "io.setu.security.quota.TokenBucketRateLimiter", "io.setu.security.tls.SetuKeyManagerProvider",
                        "io.setu.security.tls.SetuTrustManagerProvider"):
-              assert name + " source: shared objects file" in report, name + " was not loaded from the AOT cache"
+              assert name + " source: shared objects file" in vm_report, name + " was not loaded from the AOT cache"
           lines = [dict(field.split("=", 1) for field in line.split()[1:])
                    for line in report.splitlines() if line.startswith("AOT_TRAINING ")]
           for mode in ("IN_MEMORY", "FILE"):
@@ -80,8 +83,16 @@ jobs:
                       assert all(stage[key] == "allow_and_deny" for key in ("authentication", "authorization", "quotas"))
           assert "AOT_BACKPRESSURE budget_bytes=65536 rejected=true reclaimed=true retry=accepted" in report
           assert "AOT_COVERAGE modules=setu-server,setu-client,setu-core,setu-storage,setu-security gc=ZGC string_dedup_requested=true completed=true" in report
-          assert "AOT_RUNTIME gc=ZGC string_dedup_requested=true string_dedup_actual=true aot_mode=on" in report
+          assert "AOT_RUNTIME gc=ZGC string_dedup_requested=true string_dedup_actual=true aot_mode=on" in report, "Cached runtime did not report ZGC, active string deduplication and strict AOT mode"
           PY
+
+      - name: Retain AOT validation logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aot-validation-logs
+          path: '${{ runner.temp }}/aot-*.log'
+          retention-days: 14
 
   integration-tests:
     runs-on: ubuntu-latest

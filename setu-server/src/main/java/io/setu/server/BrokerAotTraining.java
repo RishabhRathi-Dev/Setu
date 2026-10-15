@@ -83,8 +83,9 @@ final class BrokerAotTraining {
             throw new IllegalStateException("AOT training requires -XX:+UseZGC -XX:+UseStringDeduplication"
                     + "; collectors=" + ManagementFactory.getGarbageCollectorMXBeans().stream()
                     .map(java.lang.management.GarbageCollectorMXBean::getName).toList() + "; string_dedup=" + deduplication);
-        System.out.printf("AOT_RUNTIME gc=ZGC string_dedup_requested=%s string_dedup_actual=%s aot_mode=%s%n",
-                requested, deduplication, aotMode.isEmpty() ? "auto" : aotMode);
+        // Format before writing: printf may load Formatter classes halfway through a marker.
+        System.out.println("AOT_RUNTIME gc=ZGC string_dedup_requested=%s string_dedup_actual=%s aot_mode=%s"
+                .formatted(requested, deduplication, aotMode.isEmpty() ? "auto" : aotMode));
     }
 
     private static void train(StorageMode mode, Path directory, TrainingTls tls) throws Exception {
@@ -158,10 +159,11 @@ final class BrokerAotTraining {
                 require(client.leaveGroup(GROUP, MEMBER), ErrorCode.NONE);
                 if (mode == StorageMode.IN_MEMORY && broker.retainedInMemoryBytes() != 0)
                     throw new IOException("Training memory backlog was not reclaimed");
-                System.out.printf("AOT_TRAINING mode=%s transport=%s records=16385 record_bytes=%d batch_records=256 partitions=4 clients=4 "
-                                + "authentication=%s authorization=%s quotas=%s completed=true%n",
-                        mode, tls == null ? "plaintext" : "mtls", RECORD_BYTES, tls == null ? "disabled" : "allow_and_deny",
-                        tls == null ? "disabled" : "allow_and_deny", tls == null ? "disabled" : "allow_and_deny");
+                System.out.println(("AOT_TRAINING mode=%s transport=%s records=16385 record_bytes=%d batch_records=256 partitions=4 clients=4 "
+                                + "authentication=%s authorization=%s quotas=%s completed=true")
+                        .formatted(mode, tls == null ? "plaintext" : "mtls", RECORD_BYTES,
+                                tls == null ? "disabled" : "allow_and_deny", tls == null ? "disabled" : "allow_and_deny",
+                                tls == null ? "disabled" : "allow_and_deny"));
             }
         }
     }
