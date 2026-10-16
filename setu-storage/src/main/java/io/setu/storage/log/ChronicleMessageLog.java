@@ -42,10 +42,19 @@ public final class ChronicleMessageLog implements MessageLog {
     private final FileChannel lockChannel;
     private final FileLock partitionLock;
     private final Map<Path, ChronicleFileSync> syncFiles = new LinkedHashMap<>();
+    @FunctionalInterface
+    interface SyncFactory { ChronicleFileSync open(Path path) throws IOException; }
+    private final SyncFactory syncFactory;
+    // Append/close own this lock across forcing; the adapter monitor protects
+    // Chronicle access, allowing committed reads during the independent JDK force.
+    private final Object writerLock = new Object();
     private long[] offsets = new long[128];
     private long[] indexes = new long[128];
     private int documents;
-    private long nextOffset;
+    private int committedDocuments;
+    // Publish only after every touched file has been forced. Offset validation and
+    // acknowledgements need this committed boundary, not the writer's I/O monitor.
+    private volatile long nextOffset;
     private boolean closed;
     private IOException failed;
     private Path activeFile;
@@ -56,7 +65,13 @@ public final class ChronicleMessageLog implements MessageLog {
 
     ChronicleMessageLog(Path directory, int maxRecordBytes, long blockBytes, RollCycle rollCycle,
                         TimeProvider timeProvider) throws IOException {
+        this(directory, maxRecordBytes, blockBytes, rollCycle, timeProvider, ChronicleFileSync::new);
+    }
+
+    ChronicleMessageLog(Path directory, int maxRecordBytes, long blockBytes, RollCycle rollCycle,
+                        TimeProvider timeProvider, SyncFactory syncFactory) throws IOException {
         Objects.requireNonNull(directory, "directory");
+        this.syncFactory = Objects.requireNonNull(syncFactory, "syncFactory");
         if (maxRecordBytes < 0 || blockBytes <= 0) throw new IllegalArgumentException("Invalid queue limits");
         this.maxRecordBytes = maxRecordBytes;
         Files.createDirectories(directory);
@@ -98,16 +113,22 @@ public final class ChronicleMessageLog implements MessageLog {
         }
     }
 
-    @Override public synchronized long append(byte[] value) throws IOException {
+    @Override public long append(byte[] value) throws IOException {
         return appendValues(List.of(MessageValue.copyOf(value)));
     }
 
-    @Override public synchronized long appendBatch(List<byte[]> values) throws IOException {
+    @Override public long appendBatch(List<byte[]> values) throws IOException {
         return appendValues(values.stream().map(MessageValue::copyOf).toList());
     }
 
-    @Override public synchronized long appendValues(List<MessageValue> values) throws IOException {
-        ensureOpen();
+    @Override public long appendValues(List<MessageValue> values) throws IOException {
+        synchronized (writerLock) {
+            return appendAndForce(values);
+        }
+    }
+
+    private long appendAndForce(List<MessageValue> values) throws IOException {
+        synchronized (this) { ensureOpen(); }
         List<MessageValue> owned = List.copyOf(values);
         if (owned.isEmpty()) throw new IllegalArgumentException("Empty batch");
         for (MessageValue value : owned)
@@ -116,57 +137,64 @@ public final class ChronicleMessageLog implements MessageLog {
         long next = Math.addExact(first, owned.size());
         try {
             var dirtyFiles = new LinkedHashSet<Path>();
-            int start = 0;
-            while (start < owned.size()) {
-                int end = start;
-                long encoded = HEADER_BYTES;
-                while (end < owned.size()) {
-                    long bytes = Integer.BYTES + (long) owned.get(end).length();
-                    if (end > start && encoded + bytes > TARGET_DOCUMENT_BYTES) break;
-                    encoded += bytes;
-                    end++;
+            synchronized (this) {
+                int start = 0;
+                while (start < owned.size()) {
+                    int end = start;
+                    long encoded = HEADER_BYTES;
+                    while (end < owned.size()) {
+                        long bytes = Integer.BYTES + (long) owned.get(end).length();
+                        if (end > start && encoded + bytes > TARGET_DOCUMENT_BYTES) break;
+                        encoded += bytes;
+                        end++;
+                    }
+                    reserveIndex();
+                    if (activeFile != null) dirtyFiles.add(activeFile);
+                    try (var document = appender.writingDocument()) {
+                        try {
+                            Bytes<?> bytes = document.wire().bytes();
+                            bytes.writeLong(FORMAT).writeLong(first + start).writeInt(end - start);
+                            var output = new DataOutputStream(bytes.outputStream());
+                            for (int i = start; i < end; i++) {
+                                MessageValue value = owned.get(i);
+                                bytes.writeInt(value.length());
+                                value.writeTo(output);
+                            }
+                        } catch (Throwable failure) { document.rollbackOnClose(); throw failure; }
+                    }
+                    offsets[documents] = first + start;
+                    indexes[documents++] = appender.lastIndexAppended();
+                    Path file = ((MappedBytes) appender.wire().bytes()).mappedFile().file().toPath();
+                    if (!syncFiles.containsKey(file)) syncFiles.put(file, syncFactory.open(file));
+                    dirtyFiles.add(file);
+                    if (!file.equals(activeFile)) {
+                        Path metadata = queue.file().toPath().resolve("metadata.cq4t");
+                        if (Files.exists(metadata) && !syncFiles.containsKey(metadata))
+                            syncFiles.put(metadata, syncFactory.open(metadata));
+                        if (Files.exists(metadata)) dirtyFiles.add(metadata);
+                    }
+                    activeFile = file;
+                    start = end;
                 }
-                reserveIndex();
-                if (activeFile != null) dirtyFiles.add(activeFile);
-                try (var document = appender.writingDocument()) {
-                    try {
-                        Bytes<?> bytes = document.wire().bytes();
-                        bytes.writeLong(FORMAT).writeLong(first + start).writeInt(end - start);
-                        var output = new DataOutputStream(bytes.outputStream());
-                        for (int i = start; i < end; i++) {
-                            MessageValue value = owned.get(i);
-                            bytes.writeInt(value.length());
-                            value.writeTo(output);
-                        }
-                    } catch (Throwable failure) { document.rollbackOnClose(); throw failure; }
-                }
-                offsets[documents] = first + start;
-                indexes[documents++] = appender.lastIndexAppended();
-                Path file = ((MappedBytes) appender.wire().bytes()).mappedFile().file().toPath();
-                if (!syncFiles.containsKey(file)) syncFiles.put(file, new ChronicleFileSync(file));
-                dirtyFiles.add(file);
-                if (!file.equals(activeFile)) {
-                    Path metadata = queue.file().toPath().resolve("metadata.cq4t");
-                    if (Files.exists(metadata) && !syncFiles.containsKey(metadata))
-                        syncFiles.put(metadata, new ChronicleFileSync(metadata));
-                    if (Files.exists(metadata)) dirtyFiles.add(metadata);
-                }
-                activeFile = file;
-                start = end;
             }
             // This also forces native index/header writes, including rollovers and mapping boundaries.
+            // Readers can use the previous committed prefix while these independent channels force.
             for (Path file : dirtyFiles) syncFiles.get(file).force();
             var files = syncFiles.entrySet().iterator();
             while (files.hasNext()) {
                 var entry = files.next();
                 if (!entry.getKey().equals(activeFile)) { entry.getValue().close(); files.remove(); }
             }
-            nextOffset = next;
+            synchronized (this) {
+                committedDocuments = documents;
+                nextOffset = next;
+            }
             return first;
         } catch (Throwable failure) {
-            failed = failure instanceof IOException io ? io : new IOException("Chronicle append failed", failure);
+            IOException ioFailure = failure instanceof IOException io ? io : new IOException("Chronicle append failed", failure);
+            synchronized (this) { failed = ioFailure; }
             if (failure instanceof Error error) throw error;
-            throw failed;
+            throw ioFailure;
         }
     }
 
@@ -180,11 +208,14 @@ public final class ChronicleMessageLog implements MessageLog {
         if (offset >= nextOffset || maxBytes == 0) return List.of();
         var records = new ArrayList<LogRecord>();
         long payloadBytes = 0;
-        int position = Arrays.binarySearch(offsets, 0, documents, offset);
+        int position = Arrays.binarySearch(offsets, 0, committedDocuments, offset);
         if (position < 0) position = -position - 2;
         try {
-            while (position < documents && records.size() < MAX_RECORDS_PER_READ) {
-                if (!tailer.moveToIndex(indexes[position])) throw new IOException("Missing Chronicle document for offset " + offset);
+            while (position < committedDocuments && records.size() < MAX_RECORDS_PER_READ) {
+                // Closing a complete document already advances the tailer to the next
+                // index. Avoid Chronicle's index lookup/linear scan on sequential fetches.
+                if (tailer.index() != indexes[position] && !tailer.moveToIndex(indexes[position]))
+                    throw new IOException("Missing Chronicle document for offset " + offset);
                 try (var document = tailer.readingDocument()) {
                     if (!document.isPresent()) throw new IOException("Missing Chronicle document");
                     Bytes<?> bytes = document.wire().bytes();
@@ -221,7 +252,7 @@ public final class ChronicleMessageLog implements MessageLog {
         } catch (RuntimeException failure) { throw new IOException("Chronicle fetch failed", failure); }
     }
 
-    @Override public synchronized long nextOffset() { return nextOffset; }
+    @Override public long nextOffset() { return nextOffset; }
 
     private void recover() throws IOException {
         tailer.toStart();
@@ -238,6 +269,7 @@ public final class ChronicleMessageLog implements MessageLog {
                 nextOffset = Math.addExact(nextOffset, count);
             }
         }
+        committedDocuments = documents;
     }
 
     private int readHeader(Bytes<?> bytes, long expectedOffset) throws IOException {
@@ -273,7 +305,11 @@ public final class ChronicleMessageLog implements MessageLog {
         if (failed != null) throw new IOException("Chronicle log failed; reopen before retrying", failed);
     }
 
-    @Override public synchronized void close() throws IOException {
+    @Override public void close() throws IOException {
+        synchronized (writerLock) { closeResources(); }
+    }
+
+    private synchronized void closeResources() throws IOException {
         if (closed) return;
         closed = true;
         IOException failure = null;

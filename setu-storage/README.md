@@ -35,6 +35,8 @@ The MPSC writer admits up to 32 MiB / 1,024 outstanding requests, including the 
 
 Acknowledgement follows JDK `MemorySegment.force()` and `FileChannel.force(true)` on every touched queue file and roll metadata, covering native index/header changes. Flush views are scoped to each force. Chronicle's own sync is disabled because the resolved OpenHFT native Windows `msync` returns success without a flush. This is a local OS force boundary, without replication or protection against faulty devices.
 
+Appends and close serialize across the complete force. The committed offset and document boundary publish together only after forcing succeeds. Reads of the previously committed prefix can proceed during JDK forcing; offset checks do not acquire the I/O monitor. Sequential reads reuse the tailer's current index, while partial reads and rewinds seek as needed.
+
 Recovery validates committed headers, counts, lengths and dense offsets, then rebuilds Setu's sparse logical index. Chronicle's native indexes are persisted. Incomplete native documents do not consume recovered offsets; malformed committed documents fail startup without silently discarding later data.
 
 Append failure poisons subsequent operations until reopen. Unacknowledged committed documents can remain after a failed append, so a failed/lost reply has an uncertain outcome. This does not provide idempotent retries or exactly-once delivery.

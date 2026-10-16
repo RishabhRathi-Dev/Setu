@@ -8,7 +8,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 /** JDK mapped-file forcing, including Windows where Chronicle's POSIX msync is a no-op. */
-final class ChronicleFileSync implements AutoCloseable {
+class ChronicleFileSync implements AutoCloseable {
     private final Path path;
     private final FileChannel channel;
 

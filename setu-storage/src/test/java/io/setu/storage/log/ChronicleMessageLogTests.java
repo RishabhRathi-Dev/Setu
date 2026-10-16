@@ -13,6 +13,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ChronicleMessageLogTests {
@@ -57,6 +61,99 @@ class ChronicleMessageLogTests {
             assertEquals(10_000, log.read(0, 1).size());
             assertEquals(10_000, log.read(10_000, 1).getFirst().offset());
             assertTrue(log.read(0, 0).isEmpty());
+        }
+    }
+
+    @Test void sequentialFetchesCanRewindResumePartialDocumentsAndFollowNewAppends() throws Exception {
+        try (var log = new ChronicleMessageLog(directory, 4, BLOCK_BYTES)) {
+            // Cross Chronicle's sparse-index boundaries, reading immediately after each append.
+            for (int batch = 0; batch < 40; batch++) {
+                int first = batch * 3;
+                log.appendBatch(List.of(integerBytes(first), integerBytes(first + 1), integerBytes(first + 2)));
+                assertIntegerRecords(log.read(first, 12), first, 3);
+                assertTrue(log.read(first + 3, 12).isEmpty());
+            }
+            assertIntegerRecords(log.read(0, 4), 0, 1);
+            assertIntegerRecords(log.read(1, 8), 1, 2);
+            assertIntegerRecords(log.read(3, 12), 3, 3);
+            assertIntegerRecords(log.read(13, 80), 13, 20);
+            assertIntegerRecords(log.read(9, 12), 9, 3);
+            assertIntegerRecords(log.read(117, 12), 117, 3);
+        }
+        try (var log = new ChronicleMessageLog(directory, 4, BLOCK_BYTES)) {
+            assertEquals(120, log.nextOffset());
+            assertIntegerRecords(log.read(0, 480), 0, 120);
+            assertEquals(120, log.append(integerBytes(120)));
+            assertIntegerRecords(log.read(120, 4), 120, 1);
+        }
+    }
+
+    private static byte[] integerBytes(int value) {
+        return java.nio.ByteBuffer.allocate(4).putInt(value).array();
+    }
+
+    private static void assertIntegerRecords(List<LogRecord> records, int first, int count) {
+        assertEquals(count, records.size());
+        for (int i = 0; i < count; i++) {
+            assertEquals(first + i, records.get(i).offset());
+            assertEquals(first + i, java.nio.ByteBuffer.wrap(records.get(i).value()).getInt());
+        }
+    }
+
+    @Test void forceDoesNotBlockCommittedReadsOrPublishUnforcedDocumentsAndCloseWaits() throws Exception {
+        var pause = new AtomicBoolean();
+        var forcing = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        try (var log = new ChronicleMessageLog(directory, 4, BLOCK_BYTES, RollCycles.FAST_DAILY,
+                System::currentTimeMillis, path -> new ChronicleFileSync(path) {
+                    @Override void force() throws IOException {
+                        if (pause.compareAndSet(true, false)) {
+                            forcing.countDown();
+                            try {
+                                if (!release.await(10, TimeUnit.SECONDS)) throw new IOException("test force timed out");
+                            } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException(e); }
+                        }
+                        super.force();
+                    }
+                }); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            log.appendBatch(List.of(integerBytes(0), integerBytes(1), integerBytes(2)));
+            pause.set(true);
+            var append = workers.submit(() -> log.appendBatch(List.of(integerBytes(3), integerBytes(4), integerBytes(5))));
+            try {
+                assertTrue(forcing.await(5, TimeUnit.SECONDS));
+                assertEquals(3L, workers.submit(log::nextOffset).get(2, TimeUnit.SECONDS));
+                assertIntegerRecords(workers.submit(() -> log.read(0, 24)).get(2, TimeUnit.SECONDS), 0, 3);
+                assertTrue(workers.submit(() -> log.read(3, 24)).get(2, TimeUnit.SECONDS).isEmpty());
+                assertFalse(append.isDone(), "an unforced append must not be acknowledged");
+                var closingStarted = new CountDownLatch(1);
+                var close = workers.submit(() -> { closingStarted.countDown(); log.close(); return null; });
+                assertTrue(closingStarted.await(2, TimeUnit.SECONDS));
+                assertFalse(close.isDone(), "close must wait for the active force");
+                release.countDown();
+                assertEquals(3L, append.get(5, TimeUnit.SECONDS));
+                close.get(5, TimeUnit.SECONDS);
+            } finally { release.countDown(); }
+        }
+        try (var reopened = new ChronicleMessageLog(directory, 4, BLOCK_BYTES)) {
+            assertIntegerRecords(reopened.read(0, 24), 0, 6);
+        }
+    }
+
+    @Test void failedForceLeavesTheCommittedBoundaryUnchangedAndRejectsFurtherAccess() throws Exception {
+        var fail = new AtomicBoolean();
+        try (var log = new ChronicleMessageLog(directory, 4, BLOCK_BYTES, RollCycles.FAST_DAILY,
+                System::currentTimeMillis, path -> new ChronicleFileSync(path) {
+                    @Override void force() throws IOException {
+                        if (fail.get()) throw new IOException("injected force failure");
+                        super.force();
+                    }
+                })) {
+            log.append(integerBytes(0));
+            fail.set(true);
+            assertThrows(IOException.class, () -> log.append(integerBytes(1)));
+            assertEquals(1, log.nextOffset());
+            assertThrows(IOException.class, () -> log.read(0, 8));
+            assertThrows(IOException.class, () -> log.append(integerBytes(2)));
         }
     }
 
