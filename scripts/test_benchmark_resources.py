@@ -190,7 +190,7 @@ class ResourceBudgetTests(unittest.TestCase):
                         self.assertFalse(list(Path(directory).rglob('comparison.json')))
                     else:
                         self.assertIn('# Node-target measurements', printed)
-                        if case != 'qualified': self.assertIn('CPU 99.0%', printed)
+                        if case != 'qualified': self.assertIn('CPU 99.0000%', printed)
                         document = json.loads(next(Path(directory).rglob('comparison.json')).read_text())
                         self.assertEqual('strict' if case == 'strict' else 'report-only', document['resources']['target_policy'])
                         if case == 'worker-exit': self.assertIn('worker failure detail', printed)

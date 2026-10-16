@@ -137,7 +137,9 @@ def qualification_failures(run, stage, warmup):
     if not 0 <= number('p99_ms') < limit:
         failures.append(f'p99 {number("p99_ms"):.3f} ms outside [0,{limit}) ms')
     if not 0 <= number('cpu_avg') <= .85:
-        failures.append(f'CPU {number("cpu_avg"):.1%} outside 0–85% of allocated budget')
+        # cpu_avg is captured to six decimal places as a fraction. Preserve that
+        # precision as a percentage so an overrun cannot display as exactly 85%.
+        failures.append(f'CPU {number("cpu_avg"):.4%} outside 0–85% of allocated budget')
     if number('heap_peak_bytes') > 1024**3:
         failures.append(f'peak heap {number("heap_peak_bytes") / 1024**2:.0f} MiB >1024 MiB')
     if number('heap_slope_mib_s') > 1:
@@ -170,18 +172,20 @@ def comparison_report(runs, modes, target_profile='reference'):
     lines = ['# CI performance baseline' if target_profile == 'ci-baseline' else '# Node-target measurements', '',
              'Three independent repetitions; 1 KiB records; 10s or longer warmup and 30s measurement at 50%, 80% and 100% of target. '
              'File acknowledgments follow force of every touched segment. Health requires 95% consumption and offered throughput, zero errors, '
-             'HDR p99 within mode/load limits, CPU <=85%, heap <=1 GiB and heap slope <=1 MiB/s.', '',
+             'HDR p99 within mode/load limits, CPU <=85% of the allocated budget, heap <=1 GiB and heap slope <=1 MiB/s. '
+             'CPU qualification is evaluated before display rounding; CPU percentages show four decimal places.', '',
              '| Mode | Target/s | Median measured/s | Worst target p99 ms | Peak heap MiB | Peak average CPU % | Qualified |',
              '| --- | ---: | ---: | ---: | ---: | ---: | --- |']
     for mode, row in totals.items():
-        lines.append(f'| {mode} | {row["target"]:,.0f} | {row["rate"]:,.0f} | {row["p99"]:.3f} | {row["heap_mib"]:.0f} | {row["cpu"]*100:.1f} | {row["qualified"]} |')
-    lines += ['', '| Mode | Repeat | Load | Measured/s | Consumed/s | p99 ms | Heap slope MiB/s | Healthy |',
-              '| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
+        lines.append(f'| {mode} | {row["target"]:,.0f} | {row["rate"]:,.0f} | {row["p99"]:.3f} | {row["heap_mib"]:.0f} | {row["cpu"]*100:.4f} | {row["qualified"]} |')
+    lines += ['', '| Mode | Repeat | Load | Measured/s | Consumed/s | p99 ms | CPU % | Heap slope MiB/s | Healthy |',
+              '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
     for run in runs:
         for stage, warmup in zip(run['stages'], run['warmups']):
             lines.append(f'| {run["config"]["mode"]} | {run["repeat"]} | {float(stage["load_fraction"]):.0%} | '
                          f'{float(stage["produce_per_s"]):,.0f} | {float(stage["consume_per_s"]):,.0f} | '
-                         f'{float(stage["p99_ms"]):.3f} | {float(stage["heap_slope_mib_s"]):.3f} | {healthy(run, stage, warmup)} |')
+                         f'{float(stage["p99_ms"]):.3f} | {float(stage["cpu_avg"])*100:.4f} | '
+                         f'{float(stage["heap_slope_mib_s"]):.3f} | {healthy(run, stage, warmup)} |')
     rejected = []
     for run in runs:
         for stage, warmup in zip(run['stages'], run['warmups']):

@@ -109,6 +109,23 @@ class NodeTargetTests(unittest.TestCase):
             runs[0]['stages'][0][key] = value
             with self.subTest(key=key): self.assertFalse(report.summaries(runs, ('IN_MEMORY',))['IN_MEMORY']['qualified'])
 
+    def test_cpu_boundary_keeps_strict_gate_and_displays_small_overruns(self):
+        for cpu, displayed, passed in (('.849999', '84.9999', True), ('.850000', '85.0000', True),
+                                       ('.850001', '85.0001', False), ('.850499', '85.0499', False)):
+            with self.subTest(cpu=cpu):
+                runs = [fixture('FILE', repeat, 'ci-baseline') for repeat in (1, 2, 3)]
+                stage = runs[0]['stages'][-1]
+                stage['cpu_avg'] = cpu
+                parsed = report.parse_capture(capture(runs), ('FILE',), target_profile='ci-baseline')
+                self.assertEqual(passed, report.summaries(parsed, ('FILE',), 'ci-baseline')['FILE']['qualified'])
+                text = report.comparison_report(parsed, ('FILE',), 'ci-baseline')
+                self.assertIn(f'| 64 | {displayed} | {passed} |', text)
+                self.assertIn(f'| 2.000 | {displayed} | 0.000 | {passed} |', text)
+                if passed:
+                    self.assertNotIn('Qualification failures', text)
+                else:
+                    self.assertIn(f'CPU {displayed}% outside 0–85% of allocated budget', text)
+
     def test_failed_target_report_explains_latency_cpu_and_offered_rate_without_claiming_a_crash(self):
         runs = [fixture('FILE', repeat) for repeat in (1, 2, 3)]
         stage = runs[0]['stages'][0]
@@ -118,7 +135,7 @@ class NodeTargetTests(unittest.TestCase):
                      produce_mib_per_s=str(185000/1024), consume_mib_per_s=str(185000/1024),
                      records_per_core='46250', p99_ms='8000')
         text = report.comparison_report(runs, ('FILE',))
-        self.assertIn('CPU 89.0%', text)
+        self.assertIn('CPU 89.0000%', text)
         self.assertIn('p99 15.000 ms outside [0,10) ms', text)
         self.assertIn('throughput 185,000/s <95% of offered 250,000/s', text)
         self.assertIn('p99 8000.000 ms outside [0,100) ms', text)
