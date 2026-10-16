@@ -7,8 +7,9 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
-/** JDK mapped-file forcing, including Windows where Chronicle's POSIX msync is a no-op. */
+/** Durable forcing of Chronicle's mapped writes, including its indexes and headers. */
 class ChronicleFileSync implements AutoCloseable {
+    private static final boolean LINUX = "Linux".equals(System.getProperty("os.name"));
     private final Path path;
     private final FileChannel channel;
 
@@ -18,6 +19,14 @@ class ChronicleFileSync implements AutoCloseable {
     }
 
     void force() throws IOException {
+        // On Linux, FileChannel.force(true) calls fsync, which flushes all dirty
+        // pages of the file, including shared mappings written through other FDs.
+        // Remapping and msync'ing the whole growing file first duplicates that I/O.
+        // See Linux mm/msync.c and OpenJDK UnixFileDispatcherImpl.force0.
+        if (LINUX) {
+            channel.force(true);
+            return;
+        }
         long size = channel.size();
         if (size > 0) {
             // Force the complete mapping: Chronicle can update indexes outside the new payload range.

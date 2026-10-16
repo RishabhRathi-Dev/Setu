@@ -7,8 +7,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.ValueLayout;
+import java.lang.management.ManagementFactory;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -208,14 +213,85 @@ class ChronicleMessageLogTests {
 
     @Test void jdkForceCoversMappedGrowthAndReleasesFilesForImmediateDeletion() throws Exception {
         Path path = directory.resolve("force.bin");
-        Files.write(path, new byte[]{1, 2, 3});
-        try (var sync = new ChronicleFileSync(path)) {
+        Files.createFile(path);
+        try (var sync = new ChronicleFileSync(path);
+             var writer = FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE);
+             var arena = Arena.ofConfined()) {
+            sync.force(); // empty files still take the durability barrier
+            var first = writer.map(FileChannel.MapMode.READ_WRITE, 0, 4096, arena);
+            first.set(ValueLayout.JAVA_BYTE, 0, (byte) 1);
+            first.set(ValueLayout.JAVA_BYTE, 4095, (byte) 2);
             sync.force();
-            Files.write(path, new byte[]{4, 5}, java.nio.file.StandardOpenOption.APPEND);
+            // Grow through a different FD while the original mapping remains live,
+            // and dirty an old index/header page as well as new payload pages.
+            var grown = writer.map(FileChannel.MapMode.READ_WRITE, 4096, 4096, arena);
+            first.set(ValueLayout.JAVA_BYTE, 0, (byte) 3);
+            grown.set(ValueLayout.JAVA_BYTE, 0, (byte) 4);
+            grown.set(ValueLayout.JAVA_BYTE, 4095, (byte) 5);
             sync.force();
         }
-        assertArrayEquals(new byte[]{1, 2, 3, 4, 5}, Files.readAllBytes(path));
+        byte[] expected = new byte[8192];
+        expected[0] = 3;
+        expected[4095] = 2;
+        expected[4096] = 4;
+        expected[8191] = 5;
+        assertArrayEquals(expected, Files.readAllBytes(path));
         Files.delete(path);
+    }
+
+    @Test void forceAfterCloseReportsTheDurabilityFailure() throws Exception {
+        Path path = Files.createFile(directory.resolve("closed-force.bin"));
+        var sync = new ChronicleFileSync(path);
+        sync.close();
+        assertThrows(IOException.class, sync::force);
+    }
+
+    @Test void acknowledgedMappedWritesRecoverAfterAbruptExitAcrossGrowthAndRoll() throws Exception {
+        String javaExecutable = Path.of(System.getProperty("java.home"), "bin",
+                System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java").toString();
+        var command = new ArrayList<String>();
+        command.add(javaExecutable);
+        command.addAll(ManagementFactory.getRuntimeMXBean().getInputArguments());
+        command.addAll(List.of("-cp", System.getProperty("surefire.test.class.path", System.getProperty("java.class.path")),
+                AbruptWriter.class.getName(), directory.toString()));
+        Path output = directory.resolve("writer.txt");
+        Process writer = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(output.toFile()).start();
+        try {
+            assertTrue(writer.waitFor(30, TimeUnit.SECONDS), "abrupt writer timed out");
+            assertEquals(0, writer.exitValue(), () -> {
+                try { return Files.readString(output); }
+                catch (IOException failure) { return failure.toString(); }
+            });
+        } finally {
+            if (writer.isAlive()) writer.destroyForcibly().waitFor(5, TimeUnit.SECONDS);
+        }
+        try (var log = new ChronicleMessageLog(directory, 1024 * 1024, BLOCK_BYTES)) {
+            assertEquals(70, log.nextOffset());
+            for (int i = 0; i < 70; i++) {
+                var record = log.read(i, 1024 * 1024).getFirst();
+                assertEquals(i, record.offset());
+                assertEquals(i, java.nio.ByteBuffer.wrap(record.value()).getInt());
+                assertEquals((byte) i, record.value()[1024 * 1024 - 1]);
+            }
+        }
+    }
+
+    public static final class AbruptWriter {
+        public static void main(String[] args) throws Exception {
+            var clock = new AtomicLong(1_800_000_000_000L);
+            var log = new ChronicleMessageLog(Path.of(args[0]), 1024 * 1024, BLOCK_BYTES,
+                    RollCycles.FAST_DAILY, clock::get);
+            byte[] value = new byte[1024 * 1024];
+            for (int i = 0; i < 70; i++) {
+                if (i == 66) clock.addAndGet(86_400_000L);
+                java.nio.ByteBuffer.wrap(value).putInt(i);
+                value[value.length - 1] = (byte) i;
+                if (log.append(value) != i) throw new AssertionError("wrong append offset");
+            }
+            // No close, unmap, shutdown hooks or background resource release may
+            // supply a durability barrier missing from an acknowledged append.
+            Runtime.getRuntime().halt(0);
+        }
     }
 
     @Test void partitionOwnershipExcludesConcurrentBrokersAndReleasesOnClose() throws Exception {
