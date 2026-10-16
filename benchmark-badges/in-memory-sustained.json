@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "label": "in-memory",
-  "message": "500.00K/s target, 261.83K/s CI, 52% unqualified",
+  "message": "500.00K/s target, 362.24K/s CI, 72% unqualified",
   "color": "orange",
   "sourceScope": "CI",
-  "sourceRevision": "75760a4c69339dd26e776ca1a2b6bd960cbf2e13",
-  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/38936442276"
+  "sourceRevision": "fdb2e11d81a80d28756cbff9d0aba9bf38c41705",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/38942016499"
 }
