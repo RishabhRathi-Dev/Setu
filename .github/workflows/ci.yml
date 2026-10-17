@@ -13,12 +13,60 @@ on:
         description: 'Share of detected available CPU, memory and free disk (0 < share <= 1)'
         default: '0.8'
         type: string
+      storage_diagnostic:
+        description: 'Run only the controlled disk/barrier comparison (does not qualify the baseline)'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
+  storage-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.storage_diagnostic
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '26'
+      - name: Compare root and temporary disks with full and data-only barriers
+        shell: bash
+        run: |
+          set -o pipefail
+          sudo install -d -o "$(id -u)" -g "$(id -g)" "/mnt/setu-force-${{ github.run_id }}"
+          mkdir -p "$RUNNER_TEMP/storage-probe/classes" "$RUNNER_TEMP/storage-probe/data"
+          {
+            findmnt -T "$RUNNER_TEMP" -o SOURCE,FSTYPE,OPTIONS
+            findmnt -T "/mnt/setu-force-${{ github.run_id }}" -o SOURCE,FSTYPE,OPTIONS
+            lsblk -o NAME,SIZE,ROTA,TYPE,MOUNTPOINTS
+          } | tee "$RUNNER_TEMP/storage-probe/storage.txt"
+          javac -d "$RUNNER_TEMP/storage-probe/classes" scripts/diagnostics/StorageForceProbe.java
+          sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
+            --unit="setu-storage-probe-${{ github.run_id }}" --uid="$(id -u)" --gid="$(id -g)" \
+            --working-directory="$GITHUB_WORKSPACE" \
+            -p CPUQuota=160% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
+            "$JAVA_HOME/bin/java" @config/jvm.options -Xms64m -Xmx128m -XX:ActiveProcessorCount=2 \
+            -cp "$RUNNER_TEMP/storage-probe/classes" io.setu.storage.log.StorageForceProbe \
+            "$RUNNER_TEMP/storage-probe/data" "/mnt/setu-force-${{ github.run_id }}" \
+            | tee "$RUNNER_TEMP/storage-probe/probe.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: storage-force-comparison
+          path: '${{ runner.temp }}/storage-probe/*.log'
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: storage-device-details
+          path: '${{ runner.temp }}/storage-probe/storage.txt'
+          retention-days: 14
+
   unit-tests:
+    if: ${{ !inputs.storage_diagnostic }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
