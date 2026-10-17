@@ -13,12 +13,71 @@ on:
         description: 'Share of detected available CPU, memory and free disk (0 < share <= 1)'
         default: '0.8'
         type: string
+      trace_file_waits:
+        description: 'Run only the unchanged FILE baseline with diagnostic kernel/resource sampling'
+        default: false
+        type: boolean
+      trace_storage_only:
+        description: 'With trace_file_waits, trace only the short broker-free storage probe'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
+  trace-file-waits:
+    if: github.event_name == 'workflow_dispatch' && inputs.trace_file_waits
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '26'
+          cache: maven
+      - name: Observe kernel waits during the original FILE baseline
+        env:
+          TRACE_STORAGE_ONLY: ${{ inputs.trace_storage_only }}
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/force-trace"
+          findmnt -T "$RUNNER_TEMP" -o SOURCE,FSTYPE,OPTIONS > "$RUNNER_TEMP/force-trace/storage.txt"
+          sudo python3 scripts/diagnostics/trace-force-waits.py \
+            --output "$RUNNER_TEMP/force-trace" --stop-file "$RUNNER_TEMP/force-trace.stop" \
+            > "$RUNNER_TEMP/force-trace/observer.log" 2>&1 &
+          observer=$!
+          trap 'touch "$RUNNER_TEMP/force-trace.stop"; wait "$observer" || true' EXIT
+          if [[ "$TRACE_STORAGE_ONLY" == true ]]; then
+            mkdir -p "$RUNNER_TEMP/force-trace/classes" "$RUNNER_TEMP/storage-probe"
+            javac -d "$RUNNER_TEMP/force-trace/classes" scripts/diagnostics/StorageForceProbe.java
+            sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
+              --unit="setu-force-probe-${{ github.run_id }}" --uid="$(id -u)" --gid="$(id -g)" \
+              --working-directory="$GITHUB_WORKSPACE" \
+              -p CPUQuota=160% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
+              "$JAVA_HOME/bin/java" @config/jvm.options -Xms64m -Xmx128m -XX:ActiveProcessorCount=2 \
+              "-XX:StartFlightRecording=filename=$RUNNER_TEMP/force-trace/storage.jfr,settings=profile,dumponexit=true" \
+              -cp "$RUNNER_TEMP/force-trace/classes" io.setu.storage.log.StorageForceProbe \
+              "$RUNNER_TEMP/storage-probe" | tee "$RUNNER_TEMP/force-trace/storage-probe.log"
+          else
+            python3 scripts/run-benchmarks.py --kind baseline --measurement full \
+              --storage-mode FILE --payload-sizes 1024 --data-directory "$RUNNER_TEMP"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: file-force-kernel-trace
+          path: |
+            ${{ runner.temp }}/force-trace/
+            logs/benchmarks/resources/
+            logs/benchmarks/ci-baseline/
+            **/target/surefire-reports/
+          retention-days: 14
+
   unit-tests:
+    if: ${{ !inputs.trace_file_waits }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -38,6 +97,28 @@ jobs:
 
       - name: Test benchmark launchers, reports and badge publication
         run: python3 -m unittest discover -s scripts -p 'test_benchmark*.py'
+
+      - name: Verify mapped-file durability barriers and delayed-force accounting
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/file-force-probe/classes"
+          javac -d "$RUNNER_TEMP/file-force-probe/classes" \
+            setu-storage/src/main/java/io/setu/storage/log/ChronicleFileSync.java \
+            scripts/diagnostics/FileForceProbe.java
+          java --enable-native-access=ALL-UNNAMED -cp "$RUNNER_TEMP/file-force-probe/classes" \
+            io.setu.storage.log.FileForceProbe "$RUNNER_TEMP/file-force-probe" \
+            | tee "$RUNNER_TEMP/file-force-probe/probe.log"
+
+      - name: Retain file-force diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: file-force-probe
+          path: |
+            ${{ runner.temp }}/file-force-probe/*.jfr
+            ${{ runner.temp }}/file-force-probe/*.log
+          retention-days: 14
 
       - name: Retain unit and benchmark-helper test results
         if: always()

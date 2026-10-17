@@ -12,6 +12,7 @@ class ChronicleFileSync implements AutoCloseable {
     private static final boolean LINUX = "Linux".equals(System.getProperty("os.name"));
     private final Path path;
     private final FileChannel channel;
+    private long forcedSize = -1;
 
     ChronicleFileSync(Path path) throws IOException {
         this.path = path;
@@ -19,12 +20,17 @@ class ChronicleFileSync implements AutoCloseable {
     }
 
     void force() throws IOException {
-        // On Linux, FileChannel.force(true) calls fsync, which flushes all dirty
-        // pages of the file, including shared mappings written through other FDs.
-        // Remapping and msync'ing the whole growing file first duplicates that I/O.
-        // See Linux mm/msync.c and OpenJDK UnixFileDispatcherImpl.force0.
+        // Linux fsync/fdatasync cover shared mappings written through other FDs.
+        // Keep a full metadata barrier for the first force and file growth. For
+        // an already-sized file, fdatasync persists payload, indexes and headers
+        // without waiting for timestamp-only inode journal transactions. Such
+        // transactions can also contain unrelated files' ordered writes on ext4.
+        // File size/block allocation needed to retrieve data is still durable
+        // with fdatasync; this does not make acknowledgement asynchronous.
         if (LINUX) {
-            channel.force(true);
+            long size = channel.size();
+            channel.force(size != forcedSize);
+            forcedSize = size; // Advance only after a successful durability barrier.
             return;
         }
         long size = channel.size();

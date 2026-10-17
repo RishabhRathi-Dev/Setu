@@ -33,7 +33,7 @@ A partition contains daily rolled `.cq4` files, `metadata.cq4t` and an exclusive
 
 The MPSC writer admits up to 32 MiB / 1,024 outstanding requests, including the active flush. Adjacent requests share an append. Groups linger up to 250 microseconds; 256 KiB of accounted bytes triggers an immediate flush. Close drains accepted requests. Interrupted callers still receive their accepted write's durability result.
 
-Acknowledgement follows JDK `FileChannel.force(true)` on every touched queue file and roll metadata, covering native index/header changes. On Linux this calls `fsync`, which flushes dirty shared mappings as well as file metadata, so each group needs one file force without remapping the growing queue. See the [OpenJDK force implementation](https://github.com/openjdk/jdk/blob/master/src/java.base/unix/native/libnio/ch/UnixFileDispatcherImpl.c) and [Linux mapped-page synchronization](https://github.com/torvalds/linux/blob/master/mm/msync.c). Other platforms first call `MemorySegment.force()` through a view scoped to each force. Chronicle's own sync is disabled because the resolved OpenHFT native Windows `msync` returns success without a flush. This is a local OS force boundary, without replication or protection against faulty devices.
+Acknowledgement follows a JDK file force on every touched queue file and roll metadata, covering native index/header changes. Linux uses `FileChannel.force(true)` (`fsync`) for the first force and changes in file size, then `force(false)` (`fdatasync`) for writes within the same size. Both flush dirty shared mappings; `fdatasync` also persists allocation/size metadata needed to retrieve the data, while avoiding timestamp-only journal commits that can wait for unrelated ordered writes on ext4. Chronicle indexes, headers and `metadata.cq4t` are file contents and remain covered. See the [Linux fsync/fdatasync contract](https://man7.org/linux/man-pages/man2/fsync.2.html), [ext4 journal synchronization](https://github.com/torvalds/linux/blob/master/fs/ext4/fsync.c) and [OpenJDK force implementation](https://github.com/openjdk/jdk/blob/master/src/java.base/unix/native/libnio/ch/UnixFileDispatcherImpl.c). Other platforms call `MemorySegment.force()` through a view scoped to each force, followed by `FileChannel.force(true)`. Chronicle's own sync is disabled because the resolved OpenHFT native Windows `msync` returns success without a flush. This is a local OS force boundary, without replication or protection against faulty devices.
 
 Appends and close serialize across the complete force. The committed offset and document boundary publish together only after forcing succeeds. Reads of the previously committed prefix can proceed during JDK forcing; offset checks do not acquire the I/O monitor. Sequential reads reuse the tailer's current index, while partial reads and rewinds seek as needed.
 
@@ -70,3 +70,17 @@ From the repository root with Java 26:
 ```
 
 Tests cover offsets, admission, immutable snapshots, daily rolls, mapped growth, incomplete/corrupt documents, exclusive ownership, migration, group-commit failure/shutdown and cleanup.
+
+CI also runs a standalone Linux force diagnostic without changing the throughput gates. To run it from the repository root:
+
+```bash
+probe_root=$(mktemp -d)
+mkdir -p "$probe_root/classes"
+javac -d "$probe_root/classes" \
+  setu-storage/src/main/java/io/setu/storage/log/ChronicleFileSync.java \
+  scripts/diagnostics/FileForceProbe.java
+java --enable-native-access=ALL-UNNAMED -cp "$probe_root/classes" \
+  io.setu.storage.log.FileForceProbe "$probe_root"
+```
+
+It retains a JFR recording, checks metadata barrier selection and mapped growth/header rewrites through a separate descriptor, and models the scheduling backlog from one 383 ms force delay. The delayed sample and recovery samples remain in the percentiles; this diagnostic is independent of the strict FILE baseline.
