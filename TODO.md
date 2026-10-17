@@ -148,11 +148,45 @@
     without broker work, but the original physical-I/O versus host-scheduling
     contribution remains unproven. The repository currently has **zero**
     dedicated runners, and the user requires the implementation to work across
-    environments, without a dedicated-runner workaround. Further implementation
-    investigation needs kernel I/O/throttling telemetry on the failing host.
+    environments, without a dedicated-runner workaround. The additional traces
+    below demonstrate storage-path blocking in a reproduction; a general
+    implementation fix for the original hosted failure remains unproven.
     With two synchronous producers and 256-record batches, 80K/s requires an
     average batch service time no greater than **6.4 ms per partition**. Force
     waits of hundreds of milliseconds are an external lower bound on a durable
     acknowledgement; no universal 10 ms guarantee can preserve force-before-ack
     on storage with unbounded stalls. Do not mark this item complete from local
     results or the short probe.
+  - [Original-runner full trace 39012198818](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39012198818)
+    qualified all nine FILE windows with unchanged workload/gates: half-load p99
+    **7.340, 7.287, 7.406 ms**, worst full-load p99 **7.868 ms**, median full-load
+    throughput **79,991/s**, peak worker CPU **82.3514%** of budget. This host
+    was EPYC 7763 with `/dev/sda1`, whereas the recent failed runs used EPYC 9V74
+    with `/dev/nvme0n1p1`. The observer consumed **61.640 CPU seconds** over
+    **391.979 seconds**, because an unfiltered kernel futex wait name caused
+    excessive stack sampling. No workload memory `high`, `max` or OOM events
+    occurred; memory peaked at **4,290 MiB** of the 5 GiB limit. Kernel stacks
+    showed ext4 journal and file writeback waits. This is a passing control, not
+    proof the intermittent issue is fixed; the observer and host differ from
+    failed captures. Non-FILE jobs were intentionally skipped in trace mode.
+    [Comparison, JFR and kernel trace](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39012198818/artifacts/12093770791)
+    are downloaded under `logs/pipeline-check-6d83c21/`.
+  - [Lower-overhead storage-only trace 39012781206](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39012781206)
+    reproduces long barriers **without broker work** on `/dev/nvme0n1p1`, under
+    the same 1.6-core / 5 GiB / 128 MiB limits. Full-force p99 **181.707 ms**,
+    max **361.423 ms**; data-only p99 **10.363 ms**, max **252.253 ms**. Kernel
+    stacks during captured long intervals include `folio_wait_bit_common` under
+    `ext4_sync_file`, `jbd2_log_wait_commit`, and block writeback throttling
+    (`rq_qos_wait` / `wbt_wait`). During the captured **252.244 ms** data-only
+    force, both writer threads wait on data writeback and CPU-throttle counters
+    remain unchanged; all memory-limit event counters are zero. The Java probe
+    used about **0.140 CPU cores** on average and peaked below **830 MiB** total
+    cgroup memory. The observer used **1.083 CPU seconds** over **21.609 seconds**.
+    Thus this reproduction is storage-path blocking rather than worker CPU or
+    memory-budget exhaustion. It does not retroactively prove the exact kernel
+    cause of the original untraced 383 ms event. The short sequential strategies
+    also include warmup/order effects and are not a qualified throughput claim.
+    Only the diagnostic job ran; other jobs were intentionally skipped. All
+    [JFR and kernel trace](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39012781206/artifacts/12093636320)
+    are retained under `logs/pipeline-check-c0b3bd7/`, with correlated interval
+    summaries under `logs/todo-force/`.

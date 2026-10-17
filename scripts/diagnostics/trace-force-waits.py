@@ -20,6 +20,11 @@ def worker_pids():
     for entry in Path('/proc').iterdir():
         if not entry.name.isdigit():
             continue
+        try:
+            if Path(os.readlink(entry / 'exe')).name != 'java':
+                continue
+        except OSError:
+            continue
         command = read(entry / 'cmdline')
         if command and ('io.setu.benchmark.chaos.NodeTargetThroughputWorker\x00FILE\x00' in command
                         or 'io.setu.storage.log.StorageForceProbe\x00' in command):

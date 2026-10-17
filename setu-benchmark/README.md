@@ -108,6 +108,8 @@ An experimental private disk-backed journal improved a [short probe](https://git
 
 The optional `trace_file_waits` workflow dispatch runs only the original FILE baseline while sampling worker kernel stacks, per-thread scheduler counters, cgroup CPU/memory/I/O counters and disk statistics. The observer's CPU use is recorded. This is an instrumented investigation run, not evidence that an implementation fix has qualified; the other workflow jobs are intentionally skipped.
 
+Combine it with `trace_storage_only` to trace the short broker-free storage probe instead. Both modes retain their JFR/kernel counters and preserve the normal baseline configuration. The investigation includes an original-runner nine-window passing control and a separate reproduction of 252–361 ms barriers inside kernel writeback/journal waits; those results do not establish a general hosted fix.
+
 Default-branch publication validates source revision, resources, timing, durability and all measured JFR stages before updating JSON, SVG badges and the [main README](../README.md#performance). Missing captures are labeled incomplete. Older workflows cannot overwrite newer source measurements. `render-benchmark-badges.py` regenerates images/links from committed snapshots; historical, target and capacity blocks remain distinct.
 
 Artifacts include `comparison.json`, `comparison.txt`, raw worker captures, JFR and an `optimization.md` analysis, including failed stages. Reanalyze without rerunning load:
