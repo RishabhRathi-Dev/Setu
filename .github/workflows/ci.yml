@@ -32,15 +32,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '26'
+      - name: Prepare a private disk-backed ext4 journal
+        run: bash scripts/prepare-benchmark-volume.sh | tee "$RUNNER_TEMP/volume-setup.log"
       - name: Compare root and temporary disks with full and data-only barriers
         shell: bash
         run: |
           set -o pipefail
-          sudo install -d -o "$(id -u)" -g "$(id -g)" "/mnt/setu-force-${{ github.run_id }}"
           mkdir -p "$RUNNER_TEMP/storage-probe/classes" "$RUNNER_TEMP/storage-probe/data"
           {
             findmnt -T "$RUNNER_TEMP" -o SOURCE,FSTYPE,OPTIONS
-            findmnt -T "/mnt/setu-force-${{ github.run_id }}" -o SOURCE,FSTYPE,OPTIONS
+            findmnt -T "$SETU_BENCHMARK_VOLUME" -o SOURCE,FSTYPE,OPTIONS
             lsblk -o NAME,SIZE,ROTA,TYPE,MOUNTPOINTS
           } | tee "$RUNNER_TEMP/storage-probe/storage.txt"
           javac -d "$RUNNER_TEMP/storage-probe/classes" scripts/diagnostics/StorageForceProbe.java
@@ -50,8 +51,13 @@ jobs:
             -p CPUQuota=160% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
             "$JAVA_HOME/bin/java" @config/jvm.options -Xms64m -Xmx128m -XX:ActiveProcessorCount=2 \
             -cp "$RUNNER_TEMP/storage-probe/classes" io.setu.storage.log.StorageForceProbe \
-            "$RUNNER_TEMP/storage-probe/data" "/mnt/setu-force-${{ github.run_id }}" \
+            "$RUNNER_TEMP/storage-probe/data" "$SETU_BENCHMARK_VOLUME" \
             | tee "$RUNNER_TEMP/storage-probe/probe.log"
+      - name: Release the private benchmark volume
+        if: always() && env.SETU_BENCHMARK_LOOP != ''
+        run: |
+          sudo umount "$SETU_BENCHMARK_VOLUME"
+          sudo losetup --detach "$SETU_BENCHMARK_LOOP"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -62,7 +68,9 @@ jobs:
         if: always()
         with:
           name: storage-device-details
-          path: '${{ runner.temp }}/storage-probe/storage.txt'
+          path: |
+            ${{ runner.temp }}/storage-probe/storage.txt
+            ${{ runner.temp }}/volume-setup.log
           retention-days: 14
 
   unit-tests:
