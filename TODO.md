@@ -52,7 +52,7 @@
   - [ ] Link the passing CI run and retained comparison/JFR evidence here before
     marking this item complete. Record any intentionally skipped workflow jobs.
 
-  **Implementation and evidence (2026-10-17, verification in progress):**
+  **Investigation and candidate (2026-10-17, hosted issue still unresolved):**
 
   - The original FILE and IN_MEMORY artifacts are retained under
     `logs/pipeline-check-123a1d5/`. In FILE repetition 1, both partition forces
@@ -95,7 +95,8 @@
     node-target measurement jobs completed (report-only, not a qualification).
     `sustained-full` was intentionally skipped on push; badge publication was
     skipped because this is a feature branch. All artifacts are downloaded under
-    `logs/pipeline-check-b8f6a6a/`.
+    `logs/pipeline-check-b8f6a6a/`;
+    [FILE comparison/JFR artifact](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39009943580/artifacts/12092448405).
   - [Controlled disk comparison 39010687998](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39010687998)
     uses two mapped writers at 80K offered records/s under the same 1.6-core,
     5 GiB, 128 MiB heap budget, without broker work. The root path and `/mnt`
@@ -119,9 +120,39 @@
     disabled barriers. Evidence: `logs/pipeline-check-6a91743/`. Only this
     diagnostic ran; qualification jobs were intentionally skipped. This short
     experiment motivates the environment change but does not qualify it.
-  - The FILE CI baseline now prepares this explicit storage environment, checks
-    the unchanged durability/recovery tests on it, then runs the complete
-    unchanged nine-window baseline. Volume preparation is also limited to
-    1.6 cores and 5 GiB. IN_MEMORY continues using the runner temp directory.
-    Keep this item open until that full hosted baseline qualifies; do not treat
-    the data-only optimization alone as the fix.
+  - [Complete private-volume validation 39011113017](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39011113017),
+    revision `71d0a1a`, also **failed**: only two of nine FILE windows qualified.
+    Half-load p99 was **75.825, 717.750 and 58.458 ms**; full-load median was
+    **68,762/s**, with worst p99 **6,585.057 ms**. Measured file-force intervals
+    reached **320.650 ms**, while GC pauses remained below **0.097 ms**. Volume
+    setup completed under 1.6 cores / 5 GiB and direct loop I/O was confirmed.
+    All existing storage tests, including abrupt-exit recovery across growth
+    and rollover, passed on that volume. Unit/integration, AOT, chaos, IN_MEMORY
+    baseline and reference measurement jobs passed. The optional storage
+    diagnostic, `sustained-full` and feature-branch badge publication were
+    intentionally skipped. Artifacts and all three JFR captures are retained
+    under `logs/pipeline-check-71d0a1a/`;
+    [FILE comparison/JFR artifact](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39011113017/artifacts/12092834175).
+    Combined comparison and force summaries are under `logs/todo-force/`.
+  - **The experimental environment change is removed.** The normal FILE
+    baseline retains `$RUNNER_TEMP`, 80K records/s, all original resource limits,
+    warmup/measurement periods and qualification gates. The environment-specific
+    workflow input/job and volume setup helper were removed too. The portable
+    standalone storage probe remains for reproducible investigation; experimental
+    setup source is retained at `logs/todo-force/prepare-benchmark-volume-experiment.sh`
+    and in commit history. No failed samples/windows were dropped and no
+    failed job was rerun without an implementation or controlled environment
+    change.
+  - **Still open:** neither the timestamp-force optimization nor journal
+    isolation has demonstrated a hosted fix. Storage-path waits reproduce
+    without broker work, but the original physical-I/O versus host-scheduling
+    contribution remains unproven. The repository currently has **zero**
+    dedicated runners, and the user requires the implementation to work across
+    environments, without a dedicated-runner workaround. Further implementation
+    investigation needs kernel I/O/throttling telemetry on the failing host.
+    With two synchronous producers and 256-record batches, 80K/s requires an
+    average batch service time no greater than **6.4 ms per partition**. Force
+    waits of hundreds of milliseconds are an external lower bound on a durable
+    acknowledgement; no universal 10 ms guarantee can preserve force-before-ack
+    on storage with unbounded stalls. Do not mark this item complete from local
+    results or the short probe.

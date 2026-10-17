@@ -13,8 +13,8 @@ on:
         description: 'Share of detected available CPU, memory and free disk (0 < share <= 1)'
         default: '0.8'
         type: string
-      storage_diagnostic:
-        description: 'Run only the controlled disk/barrier comparison (does not qualify the baseline)'
+      trace_file_waits:
+        description: 'Run only the unchanged FILE baseline with diagnostic kernel/resource sampling'
         default: false
         type: boolean
 
@@ -22,67 +22,43 @@ permissions:
   contents: read
 
 jobs:
-  storage-diagnostic:
-    if: github.event_name == 'workflow_dispatch' && inputs.storage_diagnostic
+  trace-file-waits:
+    if: github.event_name == 'workflow_dispatch' && inputs.trace_file_waits
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '26'
-      - name: Prepare a private disk-backed ext4 journal
+          cache: maven
+      - name: Observe kernel waits during the original FILE baseline
         shell: bash
         run: |
           set -o pipefail
-          sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
-            --unit="setu-volume-setup-${{ github.run_id }}" --uid="$(id -u)" --gid="$(id -g)" \
-            --working-directory="$GITHUB_WORKSPACE" \
-            --setenv="RUNNER_TEMP=$RUNNER_TEMP" --setenv="GITHUB_ENV=$GITHUB_ENV" \
-            -p CPUQuota=160% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
-            bash scripts/prepare-benchmark-volume.sh | tee "$RUNNER_TEMP/volume-setup.log"
-      - name: Compare root and temporary disks with full and data-only barriers
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p "$RUNNER_TEMP/storage-probe/classes" "$RUNNER_TEMP/storage-probe/data"
-          {
-            findmnt -T "$RUNNER_TEMP" -o SOURCE,FSTYPE,OPTIONS
-            findmnt -T "$SETU_BENCHMARK_VOLUME" -o SOURCE,FSTYPE,OPTIONS
-            lsblk -o NAME,SIZE,ROTA,TYPE,MOUNTPOINTS
-          } | tee "$RUNNER_TEMP/storage-probe/storage.txt"
-          javac -d "$RUNNER_TEMP/storage-probe/classes" scripts/diagnostics/StorageForceProbe.java
-          sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
-            --unit="setu-storage-probe-${{ github.run_id }}" --uid="$(id -u)" --gid="$(id -g)" \
-            --working-directory="$GITHUB_WORKSPACE" \
-            -p CPUQuota=160% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
-            "$JAVA_HOME/bin/java" @config/jvm.options -Xms64m -Xmx128m -XX:ActiveProcessorCount=2 \
-            -cp "$RUNNER_TEMP/storage-probe/classes" io.setu.storage.log.StorageForceProbe \
-            "$RUNNER_TEMP/storage-probe/data" "$SETU_BENCHMARK_VOLUME" \
-            | tee "$RUNNER_TEMP/storage-probe/probe.log"
-      - name: Release the private benchmark volume
-        if: always() && env.SETU_BENCHMARK_LOOP != ''
-        run: |
-          sudo umount "$SETU_BENCHMARK_VOLUME"
-          sudo losetup --detach "$SETU_BENCHMARK_LOOP"
+          mkdir -p "$RUNNER_TEMP/force-trace"
+          findmnt -T "$RUNNER_TEMP" -o SOURCE,FSTYPE,OPTIONS > "$RUNNER_TEMP/force-trace/storage.txt"
+          sudo python3 scripts/diagnostics/trace-force-waits.py \
+            --output "$RUNNER_TEMP/force-trace" --stop-file "$RUNNER_TEMP/force-trace.stop" \
+            > "$RUNNER_TEMP/force-trace/observer.log" 2>&1 &
+          observer=$!
+          trap 'touch "$RUNNER_TEMP/force-trace.stop"; wait "$observer" || true' EXIT
+          python3 scripts/run-benchmarks.py --kind baseline --measurement full \
+            --storage-mode FILE --payload-sizes 1024 --data-directory "$RUNNER_TEMP"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: storage-force-comparison
-          path: '${{ runner.temp }}/storage-probe/*.log'
-          retention-days: 14
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: storage-device-details
+          name: file-force-kernel-trace
           path: |
-            ${{ runner.temp }}/storage-probe/storage.txt
-            ${{ runner.temp }}/volume-setup.log
+            ${{ runner.temp }}/force-trace/
+            logs/benchmarks/resources/
+            logs/benchmarks/ci-baseline/
+            **/target/surefire-reports/
           retention-days: 14
 
   unit-tests:
-    if: ${{ !inputs.storage_diagnostic }}
+    if: ${{ !inputs.trace_file_waits }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -325,37 +301,13 @@ jobs:
           distribution: temurin
           java-version: '26'
           cache: maven
-      - name: Prepare the measured FILE storage environment
-        if: matrix.mode == 'FILE'
-        shell: bash
-        run: |
-          set -o pipefail
-          sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
-            --unit="setu-volume-setup-${{ github.run_id }}" --uid="$(id -u)" --gid="$(id -g)" \
-            --working-directory="$GITHUB_WORKSPACE" \
-            --setenv="RUNNER_TEMP=$RUNNER_TEMP" --setenv="GITHUB_ENV=$GITHUB_ENV" \
-            -p CPUQuota=160% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
-            bash scripts/prepare-benchmark-volume.sh | tee "$RUNNER_TEMP/volume-setup.log"
-      - name: Verify durability and abrupt-exit recovery on the FILE volume
-        if: matrix.mode == 'FILE'
-        run: >-
-          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-storage -am
-          "-DargLine=-Xmx128m -Djava.io.tmpdir=$SETU_BENCHMARK_VOLUME" test
       - name: Enforce sustained CI baseline under a fixed resource budget
         env:
           BENCHMARK_MODE: ${{ matrix.mode }}
-        shell: bash
-        run: |
-          data_directory="$RUNNER_TEMP"
-          if [[ "$BENCHMARK_MODE" == FILE ]]; then data_directory="$SETU_BENCHMARK_VOLUME"; fi
-          python3 scripts/run-benchmarks.py --kind baseline --measurement full \
-            --storage-mode "$BENCHMARK_MODE" --payload-sizes 1024 \
-            --data-directory "$data_directory"
-      - name: Release the FILE volume
-        if: always() && matrix.mode == 'FILE' && env.SETU_BENCHMARK_LOOP != ''
-        run: |
-          sudo umount "$SETU_BENCHMARK_VOLUME"
-          sudo losetup --detach "$SETU_BENCHMARK_LOOP"
+        run: >-
+          python3 scripts/run-benchmarks.py --kind baseline --measurement full
+          --storage-mode "$BENCHMARK_MODE" --payload-sizes 1024
+          --data-directory "$RUNNER_TEMP"
       - name: Summarize baseline qualification, including failures
         if: always()
         run: |
@@ -371,7 +323,6 @@ jobs:
             logs/benchmarks/resources/
             logs/benchmarks/ci-baseline/
             **/target/surefire-reports/
-            ${{ runner.temp }}/volume-setup.log
           retention-days: 14
 
   node-target-benchmark:
