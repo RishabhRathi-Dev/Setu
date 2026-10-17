@@ -39,6 +39,28 @@ jobs:
       - name: Test benchmark launchers, reports and badge publication
         run: python3 -m unittest discover -s scripts -p 'test_benchmark*.py'
 
+      - name: Verify mapped-file durability barriers and delayed-force accounting
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/file-force-probe/classes"
+          javac -d "$RUNNER_TEMP/file-force-probe/classes" \
+            setu-storage/src/main/java/io/setu/storage/log/ChronicleFileSync.java \
+            scripts/diagnostics/FileForceProbe.java
+          java --enable-native-access=ALL-UNNAMED -cp "$RUNNER_TEMP/file-force-probe/classes" \
+            io.setu.storage.log.FileForceProbe "$RUNNER_TEMP/file-force-probe" \
+            | tee "$RUNNER_TEMP/file-force-probe/probe.log"
+
+      - name: Retain file-force diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: file-force-probe
+          path: |
+            ${{ runner.temp }}/file-force-probe/*.jfr
+            ${{ runner.temp }}/file-force-probe/*.log
+          retention-days: 14
+
       - name: Retain unit and benchmark-helper test results
         if: always()
         uses: actions/upload-artifact@v7
