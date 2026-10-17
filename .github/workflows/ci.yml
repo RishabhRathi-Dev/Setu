@@ -33,7 +33,15 @@ jobs:
           distribution: temurin
           java-version: '26'
       - name: Prepare a private disk-backed ext4 journal
-        run: bash scripts/prepare-benchmark-volume.sh | tee "$RUNNER_TEMP/volume-setup.log"
+        shell: bash
+        run: |
+          set -o pipefail
+          sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
+            --unit="setu-volume-setup-${{ github.run_id }}" --uid="$(id -u)" --gid="$(id -g)" \
+            --working-directory="$GITHUB_WORKSPACE" \
+            --setenv="RUNNER_TEMP=$RUNNER_TEMP" --setenv="GITHUB_ENV=$GITHUB_ENV" \
+            -p CPUQuota=160% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
+            bash scripts/prepare-benchmark-volume.sh | tee "$RUNNER_TEMP/volume-setup.log"
       - name: Compare root and temporary disks with full and data-only barriers
         shell: bash
         run: |
@@ -317,13 +325,37 @@ jobs:
           distribution: temurin
           java-version: '26'
           cache: maven
+      - name: Prepare the measured FILE storage environment
+        if: matrix.mode == 'FILE'
+        shell: bash
+        run: |
+          set -o pipefail
+          sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
+            --unit="setu-volume-setup-${{ github.run_id }}" --uid="$(id -u)" --gid="$(id -g)" \
+            --working-directory="$GITHUB_WORKSPACE" \
+            --setenv="RUNNER_TEMP=$RUNNER_TEMP" --setenv="GITHUB_ENV=$GITHUB_ENV" \
+            -p CPUQuota=160% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
+            bash scripts/prepare-benchmark-volume.sh | tee "$RUNNER_TEMP/volume-setup.log"
+      - name: Verify durability and abrupt-exit recovery on the FILE volume
+        if: matrix.mode == 'FILE'
+        run: >-
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-storage -am
+          "-DargLine=-Xmx128m -Djava.io.tmpdir=$SETU_BENCHMARK_VOLUME" test
       - name: Enforce sustained CI baseline under a fixed resource budget
         env:
           BENCHMARK_MODE: ${{ matrix.mode }}
-        run: >-
-          python3 scripts/run-benchmarks.py --kind baseline --measurement full
-          --storage-mode "$BENCHMARK_MODE" --payload-sizes 1024
-          --data-directory "$RUNNER_TEMP"
+        shell: bash
+        run: |
+          data_directory="$RUNNER_TEMP"
+          if [[ "$BENCHMARK_MODE" == FILE ]]; then data_directory="$SETU_BENCHMARK_VOLUME"; fi
+          python3 scripts/run-benchmarks.py --kind baseline --measurement full \
+            --storage-mode "$BENCHMARK_MODE" --payload-sizes 1024 \
+            --data-directory "$data_directory"
+      - name: Release the FILE volume
+        if: always() && matrix.mode == 'FILE' && env.SETU_BENCHMARK_LOOP != ''
+        run: |
+          sudo umount "$SETU_BENCHMARK_VOLUME"
+          sudo losetup --detach "$SETU_BENCHMARK_LOOP"
       - name: Summarize baseline qualification, including failures
         if: always()
         run: |
@@ -339,6 +371,7 @@ jobs:
             logs/benchmarks/resources/
             logs/benchmarks/ci-baseline/
             **/target/surefire-reports/
+            ${{ runner.temp }}/volume-setup.log
           retention-days: 14
 
   node-target-benchmark:

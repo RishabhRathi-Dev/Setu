@@ -70,3 +70,17 @@ From the repository root with Java 26:
 ```
 
 Tests cover offsets, admission, immutable snapshots, daily rolls, mapped growth, incomplete/corrupt documents, exclusive ownership, migration, group-commit failure/shutdown and cleanup.
+
+CI also runs a standalone Linux force diagnostic without changing the throughput gates. To run it from the repository root:
+
+```bash
+probe_root=$(mktemp -d)
+mkdir -p "$probe_root/classes"
+javac -d "$probe_root/classes" \
+  setu-storage/src/main/java/io/setu/storage/log/ChronicleFileSync.java \
+  scripts/diagnostics/FileForceProbe.java
+java --enable-native-access=ALL-UNNAMED -cp "$probe_root/classes" \
+  io.setu.storage.log.FileForceProbe "$probe_root"
+```
+
+It retains a JFR recording, checks metadata barrier selection and mapped growth/header rewrites through a separate descriptor, and models the scheduling backlog from one 383 ms force delay. The delayed sample and recovery samples remain in the percentiles; this diagnostic is independent of the strict FILE baseline.

@@ -30,7 +30,7 @@
     compilation, warmup transition and available host/resource data. Establish
     whether this is a storage stall, scheduler delay, incomplete warmup, or a
     combination; retain measurements from successful and failed repetitions.
-  - [ ] Build a repeatable reproduction or a controlled delayed-force experiment
+  - [x] Build a repeatable reproduction or a controlled delayed-force experiment
     that explains the scheduling backlog and recovery. Start with
     `ChronicleFileSync`, `SustainedThroughputWorker` and `SustainedCriteria`.
   - [ ] Implement and test a fix for the demonstrated cause. Preserve forcing of
@@ -79,6 +79,49 @@
     **1.012 ms**. All 500 samples are retained in percentile calculations;
     pacing is never reset after the delay. This explains backlog/recovery,
     rather than asserting an artificial delay is the original storage cause.
-  - Windows unit/integration tests and all 41 Python benchmark-helper tests pass.
-    Linux before/after full baseline and hosted CI results are pending. Keep this
-    item open until the hosted acceptance criteria and comparison are recorded.
+  - Windows and Linux unit/integration tests and all 41 Python benchmark-helper
+    tests pass. Both local full FILE baselines qualify all nine windows: worst
+    half-load p99 **7.492 -> 6.701 ms**, worst full-load p99 **7.479 -> 6.820 ms**,
+    median full-load throughput **79,991 -> 79,991 records/s**. Reports and all JFR
+    captures are retained under `logs/todo-force/`. These local results still do
+    not reproduce the hosted failure.
+  - [Candidate CI run 39009943580](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39009943580),
+    revision `b8f6a6a`, failed all nine FILE baseline windows. Full-load median
+    was **47,403 records/s**, with half-load scheduled p99 **1,030–2,405 ms**.
+    Hundreds of recorded data-only forces per window exceed the JFR threshold;
+    the longest measured force is **423.110 ms**, with measured GC pauses below
+    **0.108 ms**. Thus narrowing timestamp forcing alone is insufficient.
+    Unit tests, integration, AOT, chaos and IN_MEMORY baseline passed. Reference
+    node-target measurement jobs completed (report-only, not a qualification).
+    `sustained-full` was intentionally skipped on push; badge publication was
+    skipped because this is a feature branch. All artifacts are downloaded under
+    `logs/pipeline-check-b8f6a6a/`.
+  - [Controlled disk comparison 39010687998](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39010687998)
+    uses two mapped writers at 80K offered records/s under the same 1.6-core,
+    5 GiB, 128 MiB heap budget, without broker work. The root path and `/mnt`
+    are both the **same** `/dev/nvme0n1p1` ext4 filesystem, mounted with
+    `journal_async_commit,nobarrier,commit=30,data=writeback`. Moving paths is not
+    a second-disk comparison. Sequential samples achieved **36,197–76,572/s**;
+    both full and data-only barriers missed the offered schedule. The ordering
+    of these short samples prevents attributing their differences to barrier
+    selection. Evidence is retained under `logs/pipeline-check-26ba1f1/`.
+    Only the diagnostic job ran; qualification jobs were intentionally skipped.
+  - [Private-journal comparison 39010874823](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39010874823)
+    tests a fully written 8 GiB disk image with
+    a private ext4 journal (`data=ordered,barrier=1,max_batch_time=0`) and direct
+    loop I/O. It tests isolating backing-file allocation and shared journal work,
+    uses real disk storage, and leaves CPU/memory and offered-load limits intact.
+    On the same runner, root full/data-only forces achieved **76,781/78,317/s**
+    with scheduled p99 **458.655/219.908 ms**. The private volume achieved
+    **79,982/80,028/s** with scheduled p99 **26.698/7.464 ms**; data-only force
+    p99 was **5.879 ms**, max **11.228 ms**. `losetup` confirms direct I/O is
+    active and `findmnt` confirms disk-backed ext4 with ordered data and no
+    disabled barriers. Evidence: `logs/pipeline-check-6a91743/`. Only this
+    diagnostic ran; qualification jobs were intentionally skipped. This short
+    experiment motivates the environment change but does not qualify it.
+  - The FILE CI baseline now prepares this explicit storage environment, checks
+    the unchanged durability/recovery tests on it, then runs the complete
+    unchanged nine-window baseline. Volume preparation is also limited to
+    1.6 cores and 5 GiB. IN_MEMORY continues using the runner temp directory.
+    Keep this item open until that full hosted baseline qualifies; do not treat
+    the data-only optimization alone as the fix.
