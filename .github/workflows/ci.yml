@@ -17,6 +17,10 @@ on:
         description: 'Run only the unchanged FILE baseline with diagnostic kernel/resource sampling'
         default: false
         type: boolean
+      trace_storage_only:
+        description: 'With trace_file_waits, trace only the short broker-free storage probe'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -34,6 +38,8 @@ jobs:
           java-version: '26'
           cache: maven
       - name: Observe kernel waits during the original FILE baseline
+        env:
+          TRACE_STORAGE_ONLY: ${{ inputs.trace_storage_only }}
         shell: bash
         run: |
           set -o pipefail
@@ -44,8 +50,21 @@ jobs:
             > "$RUNNER_TEMP/force-trace/observer.log" 2>&1 &
           observer=$!
           trap 'touch "$RUNNER_TEMP/force-trace.stop"; wait "$observer" || true' EXIT
-          python3 scripts/run-benchmarks.py --kind baseline --measurement full \
-            --storage-mode FILE --payload-sizes 1024 --data-directory "$RUNNER_TEMP"
+          if [[ "$TRACE_STORAGE_ONLY" == true ]]; then
+            mkdir -p "$RUNNER_TEMP/force-trace/classes" "$RUNNER_TEMP/storage-probe"
+            javac -d "$RUNNER_TEMP/force-trace/classes" scripts/diagnostics/StorageForceProbe.java
+            sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
+              --unit="setu-force-probe-${{ github.run_id }}" --uid="$(id -u)" --gid="$(id -g)" \
+              --working-directory="$GITHUB_WORKSPACE" \
+              -p CPUQuota=160% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
+              "$JAVA_HOME/bin/java" @config/jvm.options -Xms64m -Xmx128m -XX:ActiveProcessorCount=2 \
+              "-XX:StartFlightRecording=filename=$RUNNER_TEMP/force-trace/storage.jfr,settings=profile,dumponexit=true" \
+              -cp "$RUNNER_TEMP/force-trace/classes" io.setu.storage.log.StorageForceProbe \
+              "$RUNNER_TEMP/storage-probe" | tee "$RUNNER_TEMP/force-trace/storage-probe.log"
+          else
+            python3 scripts/run-benchmarks.py --kind baseline --measurement full \
+              --storage-mode FILE --payload-sizes 1024 --data-directory "$RUNNER_TEMP"
+          fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:

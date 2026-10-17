@@ -21,7 +21,8 @@ def worker_pids():
         if not entry.name.isdigit():
             continue
         command = read(entry / 'cmdline')
-        if command and 'io.setu.benchmark.chaos.NodeTargetThroughputWorker\x00FILE\x00' in command:
+        if command and ('io.setu.benchmark.chaos.NodeTargetThroughputWorker\x00FILE\x00' in command
+                        or 'io.setu.storage.log.StorageForceProbe\x00' in command):
             yield entry
 
 
@@ -57,9 +58,8 @@ def main():
                                 wait=wait, schedstat=read(task / 'schedstat'))
                     # Capture I/O/reclaim/scheduler waits; routine socket/futex sleepers
                     # have no storage stack to explain and would dominate the recording.
-                    if wait and wait not in ('0', 'futex_wait_queue', 'futex_wait',
-                                             'ep_poll', 'do_epoll_wait', 'inet_csk_accept',
-                                             'hrtimer_nanosleep'):
+                    if wait and 'futex' not in wait and wait not in (
+                            '0', 'ep_poll', 'do_epoll_wait', 'inet_csk_accept', 'hrtimer_nanosleep'):
                         item['stack'] = read(task / 'stack')
                     threads.append(item)
                 names = ('cpu.max', 'cpu.stat', 'cpu.pressure', 'memory.current',
