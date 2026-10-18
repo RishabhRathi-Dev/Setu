@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "label": "file JFR",
-  "message": "0.40 GiB/s alloc, 4.6 ms GC (CI)",
+  "message": "0.56 GiB/s alloc, 13.1 ms GC (CI)",
   "color": "orange",
   "sourceScope": "CI",
-  "sourceRevision": "19a935e7a1afa544d1bbf4ec28b412a050e95270",
-  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/39122203620"
+  "sourceRevision": "819508d71f6fb133de86a634be7a151d5073b11d",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/39154084918"
 }
