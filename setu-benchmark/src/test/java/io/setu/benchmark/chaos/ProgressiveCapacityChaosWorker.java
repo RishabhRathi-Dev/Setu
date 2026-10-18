@@ -345,6 +345,8 @@ final class ProgressiveCapacityChaosWorker {
             }
         }
 
+        jfrStage.produced = measuredProduced;
+        jfrStage.consumed = measuredConsumed;
         jfrStage.commit();
         System.out.printf("CAPACITY_BACKPRESSURE mode=%s stage=%d waits=%d retained_log_bytes=%d%n",
                 mode, stage, backpressure.sum(), broker.retainedInMemoryBytes());

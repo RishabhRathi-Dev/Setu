@@ -58,6 +58,8 @@ Calls on one instance are serialized. `produceBatch` requires a nonempty batch w
 
 Batch encoding copies caller bytes into the final wire frame. Fetched records share immutable slices of their response frame; `value()` returns a defensive copy. Keeping one slice can keep the complete frame alive. Copy values when retaining only a small subset for a long time.
 
+Control replies reuse a private receive buffer capped at 64 KiB per client, released on close. Their decoded strings and metadata remain independent of later replies. Fetch replies retain privately owned frames so records remain valid across subsequent requests and client closure.
+
 ## TLS and consumer progress
 
 `connectTls` accepts either an `SSLContext` plus protocol/cipher lists, or a `TlsConfiguration` and `TlsContextFactory`. It performs the handshake and verifies the broker hostname. For the [secure server example](../setu-server/README.md#secure-broker-wiring-example), connect to `localhost:9093` using `client.p12` and `client-trust.p12` from the development certificate scripts. The server trusts the client issuer and the client trusts the broker issuer.

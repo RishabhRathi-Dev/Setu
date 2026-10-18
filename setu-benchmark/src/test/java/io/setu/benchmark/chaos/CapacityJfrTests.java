@@ -23,6 +23,8 @@ class CapacityJfrTests {
                 var event = new CapacityJfr.Stage();
                 event.mode = "IN_MEMORY";
                 event.stage = stage;
+                event.produced = stage * 100L;
+                event.consumed = stage * 90L;
                 event.begin();
                 Thread.sleep(2);
                 event.end();
@@ -32,6 +34,18 @@ class CapacityJfrTests {
             byte[] checkpoint = Files.readAllBytes(capture);
             assertTrue(checkpoint.length > 0);
             assertEquals(Set.of(1, 8), CapacityJfr.report(capture));
+            var output = new java.io.ByteArrayOutputStream();
+            var original = System.out;
+            try (var printer = new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8)) {
+                System.setOut(printer);
+                CapacityJfr.report(capture);
+            } finally { System.setOut(original); }
+            String report = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(report.contains("produced=100 consumed=90 allocation_bytes_per_produced="));
+            assertTrue(report.contains("produced=800 consumed=720 allocation_bytes_per_produced="));
+            assertTrue(report.contains("allocation_bytes_per_consumed="));
+            assertTrue(report.contains("gc_cycle_ms="));
+            assertFalse(report.contains("NaN"));
             Files.createDirectory(temporary); // Make the next dump fail before replacement.
             assertThrows(IOException.class, CapacityJfr::checkpoint);
             assertArrayEquals(checkpoint, Files.readAllBytes(capture));

@@ -91,7 +91,6 @@ final class SustainedThroughputWorker {
             }
             long stopped = System.nanoTime();
             event.end();
-            event.commit();
             heaps.add(ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed());
             sampleTimes.add(stopped);
             long cpuEnd = OS.getProcessCpuTime();
@@ -102,6 +101,9 @@ final class SustainedThroughputWorker {
             double seconds = (window.end - window.start) / 1e9;
             double cpu = (cpuEnd - cpuStart) / ((stopped - window.start) * BenchmarkSettings.cpuCores());
             long produced = window.produced.sum(), consumed = window.consumed.sum();
+            event.produced = produced;
+            event.consumed = consumed;
+            event.commit();
             long errors = load.errors.get(); // include warmup and cleanup errors; never hide a rejection
             long missed = window.missed.sum();
             double p50 = window.percentile(50), p99 = window.percentile(99), p999 = window.percentile(99.9);

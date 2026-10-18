@@ -63,6 +63,8 @@ final class CapacityJfr {
     static final class Stage extends Event {
         public String mode;
         public int stage;
+        public long produced;
+        public long consumed;
     }
 
     private static final class Summary {
@@ -72,6 +74,9 @@ final class CapacityJfr {
         final Instant end;
         long allocationBytes;
         double gcPauseMillis;
+        double gcCycleMillis;
+        final long produced;
+        final long consumed;
         long samples;
         final Map<String, Long> methods = new HashMap<>();
 
@@ -80,6 +85,8 @@ final class CapacityJfr {
             stage = event.getInt("stage");
             start = event.getStartTime();
             end = event.getEndTime();
+            produced = event.hasField("produced") ? event.getLong("produced") : 0;
+            consumed = event.hasField("consumed") ? event.getLong("consumed") : 0;
         }
 
         boolean contains(Instant instant) { return !instant.isBefore(start) && instant.isBefore(end); }
@@ -100,12 +107,16 @@ final class CapacityJfr {
                 RecordedEvent event = file.readEvent();
                 String type = event.getEventType().getName();
                 if (!type.equals("jdk.ObjectAllocationSample") && !type.equals("jdk.ExecutionSample")
-                        && !type.equals("jdk.GCPhasePause")) continue;
+                        && !type.equals("jdk.GCPhasePause") && !type.equals("jdk.GarbageCollection")) continue;
                 for (Summary stage : stages) {
-                    if (type.equals("jdk.GCPhasePause")) {
+                    if (type.equals("jdk.GCPhasePause") || type.equals("jdk.GarbageCollection")) {
                         Instant start = event.getStartTime().isAfter(stage.start) ? event.getStartTime() : stage.start;
                         Instant end = event.getEndTime().isBefore(stage.end) ? event.getEndTime() : stage.end;
-                        if (end.isAfter(start)) stage.gcPauseMillis += java.time.Duration.between(start, end).toNanos() / 1_000_000.0;
+                        if (end.isAfter(start)) {
+                            double millis = java.time.Duration.between(start, end).toNanos() / 1_000_000.0;
+                            if (type.equals("jdk.GCPhasePause")) stage.gcPauseMillis += millis;
+                            else stage.gcCycleMillis += millis;
+                        }
                     } else if (stage.contains(event.getStartTime())) {
                         if (type.equals("jdk.ObjectAllocationSample")) stage.allocationBytes += event.getLong("weight");
                         else {
@@ -127,9 +138,15 @@ final class CapacityJfr {
         for (Summary stage : stages) {
             String hot = stage.methods.entrySet().stream().max(Map.Entry.comparingByValue())
                     .map(Map.Entry::getKey).orElse("unavailable");
-            System.out.printf(Locale.ROOT, "CAPACITY_JFR mode=%s stage=%d duration_s=%.3f allocation_mb=%.3f gc_pause_ms=%.3f cpu_samples=%d hot_method=%s%n",
+            // Both ratios normalize the entire broker+client JVM estimate. They do not
+            // attribute allocation exclusively to producers or exclusively to consumers.
+            System.out.printf(Locale.ROOT, "CAPACITY_JFR mode=%s stage=%d duration_s=%.3f allocation_mb=%.3f gc_pause_ms=%.3f cpu_samples=%d hot_method=%s produced=%d consumed=%d allocation_bytes_per_produced=%.3f allocation_bytes_per_consumed=%.3f gc_cycle_ms=%.3f%n",
                     stage.mode, stage.stage, java.time.Duration.between(stage.start, stage.end).toNanos() / 1_000_000_000.0,
-                    stage.allocationBytes / (1024.0 * 1024), stage.gcPauseMillis, stage.samples, hot);
+                    stage.allocationBytes / (1024.0 * 1024), stage.gcPauseMillis, stage.samples, hot,
+                    stage.produced, stage.consumed,
+                    stage.produced == 0 ? 0 : (double) stage.allocationBytes / stage.produced,
+                    stage.consumed == 0 ? 0 : (double) stage.allocationBytes / stage.consumed,
+                    stage.gcCycleMillis);
         }
         if (stages.isEmpty()) throw new java.io.IOException("JFR capture contains no completed measured stage: " + path);
         return stages.stream().map(stage -> stage.stage).collect(java.util.stream.Collectors.toSet());

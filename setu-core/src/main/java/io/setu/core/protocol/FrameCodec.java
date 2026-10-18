@@ -25,7 +25,7 @@ public final class FrameCodec {
         return length < 0 ? null : MessageValue.Frame.readFrom(input, length);
     }
 
-    private static int readLength(DataInputStream input, int maxFrameSize) throws IOException {
+    static int readLength(DataInputStream input, int maxFrameSize) throws IOException {
         Objects.requireNonNull(input, "input");
         validate(maxFrameSize);
         int first = input.read();

@@ -7,7 +7,6 @@ import io.setu.core.protocol.FrameCodec;
 import io.setu.core.protocol.ProtocolCodec;
 import io.setu.security.tls.TlsConfiguration;
 import io.setu.security.tls.TlsContextFactory;
-import io.setu.storage.log.MessageValue;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
@@ -35,6 +34,7 @@ public final class SetuClient implements AutoCloseable {
     private final int maxFrameSize;
     private final AtomicInteger correlationIds = new AtomicInteger();
     private final ProtocolCodec.ProduceBatchEncoder batchEncoder = new ProtocolCodec.ProduceBatchEncoder();
+    private final ProtocolCodec.ResponseReader responseReader = new ProtocolCodec.ResponseReader();
 
     private SetuClient(Socket socket, int maxFrameSize) throws IOException {
         if (maxFrameSize < 0) throw new IllegalArgumentException("maxFrameSize must be non-negative");
@@ -122,16 +122,15 @@ public final class SetuClient implements AutoCloseable {
             if (LOG.isDebugEnabled()) LOG.debug("Sending command={} correlation={} peer={} topic={} partition={} offset={} frame_bytes={}",
                     command, correlation, socket.getRemoteSocketAddress(), topic, partition, offset, requestBytes.length);
             FrameCodec.writeFrame(output, requestBytes, maxFrameSize);
-            MessageValue.Frame responseBytes = FrameCodec.readOwnedFrame(input, maxFrameSize);
-            if (responseBytes == null) throw new EOFException("Broker closed the connection before replying");
-            BrokerResponse response = ProtocolCodec.decodeResponse(responseBytes);
+            BrokerResponse response = responseReader.readFrom(input, maxFrameSize, command);
+            if (response == null) throw new EOFException("Broker closed the connection before replying");
             if (response.correlationId() != correlation)
                 throw new IOException("Response correlation id does not match request");
             if (response.command() != command)
                 throw new IOException("Response command does not match request");
             if (LOG.isDebugEnabled()) LOG.debug("Received command={} correlation={} error={} offset={} records={} frame_bytes={} elapsed_us={}",
                     response.command(), response.correlationId(), response.errorCode(), response.offset(),
-                    response.records().size(), responseBytes.length(), (System.nanoTime() - started) / 1000);
+                    response.records().size(), responseReader.frameLength(), (System.nanoTime() - started) / 1000);
             if (response.errorCode() != io.setu.core.protocol.ErrorCode.NONE)
                 LOG.warn("Broker rejected command={} correlation={} peer={} topic={} partition={} error={} reason={}",
                         command, correlation, socket.getRemoteSocketAddress(),
@@ -220,6 +219,7 @@ public final class SetuClient implements AutoCloseable {
     @Override
     public synchronized void close() throws IOException {
         batchEncoder.clear();
+        responseReader.clear();
         if (LOG.isDebugEnabled()) LOG.debug("Client closing peer={}", socket.getRemoteSocketAddress());
         socket.close();
     }

@@ -2,6 +2,8 @@
 
 This module measures the broker through real TCP traffic and exercises crashes, limits and concurrent progress. Functional requirements belong to [setu-integration-tests](../setu-integration-tests/README.md). Short smoke runs validate mechanics; throughput claims require qualified full measurements.
 
+`CAPACITY_JFR` summaries include measured-stage produced/consumed counts and estimated allocation bytes per produced/consumed record, alongside allocation MiB, GC pause time and GC cycle time. Both allocation ratios use the entire broker-and-client JVM estimate; they do not attribute bytes to individual roles. A zero count reports a zero ratio, and older recordings without counts report zero counts. GC cycle time sums each cycle's overlap with the stage, including concurrent work; overlapping cycles can exceed the stage duration. It is elapsed cycle duration rather than GC CPU time; pause time remains separate. Compare these with the matching stage's latency percentiles, excluding warmup and cleanup.
+
 ## Run profiles
 
 Use Java 26 and Python 3. The resource-enforced launcher requires Linux/WSL, systemd and cgroup v2. Run commands from the repository root:
