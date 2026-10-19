@@ -18,7 +18,7 @@ class ResourceBudgetTests(unittest.TestCase):
         return dict(available_cpu_cores=cores, memory_available_bytes=available,
                     filesystem_free_bytes=100 * resources.GIB, affinity=list(range(int(cores))))
 
-    def test_baseline_has_fixed_envelope_and_cannot_be_report_only_or_unbounded(self):
+    def test_baseline_has_fixed_envelope_and_reports_expectations_by_default(self):
         old_handler = signal.getsignal(signal.SIGTERM)
         self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
         argv = ['run-benchmarks', '--kind', 'baseline', '--measurement', 'full', '--storage-mode', 'FILE',
@@ -31,19 +31,19 @@ class ResourceBudgetTests(unittest.TestCase):
         self.assertEqual(5 * resources.GIB, snapshot['budget']['memory_bytes'])
         self.assertEqual([0, 1], snapshot['budget']['allowed_cpus'])
         self.assertEqual('ci-baseline', snapshot['target_profile'])
-        self.assertEqual('strict', snapshot['target_policy'])
+        self.assertEqual('report-only', snapshot['target_policy'])
         with patch.object(resources, 'detect_host', return_value=self.host(available=7 * resources.GIB)), \
              patch.object(sys, 'argv', argv), patch('builtins.print') as output:
             resources.main()
         self.assertEqual(5 * resources.GIB, json.loads(output.call_args.args[0].split(' ', 1)[1])['budget']['memory_bytes'])
-        for flags in (['--report-only'], ['--profile', 'host'], ['--fraction', '1']):
+        for flags in (['--profile', 'host'], ['--fraction', '1']):
             with patch.object(sys, 'argv', argv + flags), patch('sys.stderr'), self.assertRaises(SystemExit):
                 resources.main()
         with patch.object(resources, 'detect_host', return_value=self.host(cores=1)), \
              patch.object(sys, 'argv', argv), self.assertRaisesRegex(ValueError, 'fixed 1.6 CPU/5 GiB'):
             resources.main()
 
-    def test_baseline_saves_failed_measurements_and_enforces_every_window(self):
+    def test_baseline_saves_failed_expectations_and_emits_a_warning(self):
         from test_benchmark_node_targets import fixture, capture
         old_handler = signal.getsignal(signal.SIGTERM)
         self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
@@ -57,11 +57,13 @@ class ResourceBudgetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
              patch.object(resources, 'detect_host', return_value=self.host()), \
              patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
-             patch.object(resources.subprocess, 'run', side_effect=workload), patch('builtins.print'), \
+             patch.object(resources.subprocess, 'run', side_effect=workload), patch('builtins.print') as output, \
+             patch.dict(resources.os.environ, {'GITHUB_ACTIONS': 'true'}), \
              patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'baseline', '--measurement', 'full',
                  '--storage-mode', 'IN_MEMORY', '--payload-sizes', '1024', '--data-directory', directory, '--output', directory]):
-            with self.assertRaisesRegex(RuntimeError, 'CI baseline not qualified'):
-                resources.main()
+            resources.main()
+            self.assertTrue(any(str(call.args[0]).startswith('::warning::CI baseline not qualified')
+                                for call in output.call_args_list))
             document = json.loads(next(Path(directory).rglob('comparison.json')).read_text())
             self.assertEqual('ci-baseline', document['kind'])
             self.assertEqual(3, len(document['runs']))
@@ -156,24 +158,26 @@ class ResourceBudgetTests(unittest.TestCase):
             self.assertEqual(1, len(documents))
             self.assertEqual(3, len(json.loads(documents[0].read_text())['runs']))
 
-    def test_target_policy_reports_completed_misses_but_keeps_strict_gates_and_execution_failures(self):
+    def test_target_and_baseline_warn_by_default_but_fail_execution_and_explicit_strict_gates(self):
         from test_benchmark_node_targets import fixture, capture
         old_handler = signal.getsignal(signal.SIGTERM)
         self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
-        for mode in ('IN_MEMORY', 'FILE'):
-            for case in ('report', 'strict', 'worker-exit', 'partial', 'request-error', 'qualified'):
-                with self.subTest(mode=mode, case=case), tempfile.TemporaryDirectory() as directory:
-                    runs = [fixture(mode, repeat) for repeat in (1, 2, 3)]
+        for kind, mode in (('target', 'IN_MEMORY'), ('target', 'FILE'), ('baseline', 'IN_MEMORY'), ('baseline', 'FILE')):
+            for case in ('report', 'strict', 'worker-exit', 'partial', 'request-error', 'qualified', 'no-consumption'):
+                with self.subTest(kind=kind, mode=mode, case=case), tempfile.TemporaryDirectory() as directory:
+                    runs = [fixture(mode, repeat, 'ci-baseline' if kind == 'baseline' else 'reference') for repeat in (1, 2, 3)]
                     if case != 'qualified': runs[0]['stages'][0]['cpu_avg'] = '.99'
                     if case == 'request-error': runs[0]['stages'][0]['errors'] = '1'
+                    if case == 'no-consumption':
+                        runs[0]['stages'][0].update(consumed='0', consume_per_s='0', consume_mib_per_s='0')
                     captured = capture(runs[:1] if case == 'partial' else runs)
                     if case in ('worker-exit', 'partial'): captured += '\nworker failure detail\n'
                     def workload(command, **kwargs):
                         kwargs['stdout'].write(captured)
                         return type('Result', (), {'returncode': 137 if case in ('worker-exit', 'partial') else 0})()
-                    argv = ['run-benchmarks', '--kind', 'target', '--measurement', 'full', '--storage-mode', mode,
+                    argv = ['run-benchmarks', '--kind', kind, '--measurement', 'full', '--storage-mode', mode,
                             '--payload-sizes', '1024', '--data-directory', directory, '--output', directory]
-                    if case != 'strict': argv.append('--report-only')
+                    if case == 'strict': argv.append('--strict')
                     with patch.object(resources, 'detect_host', return_value=self.host(cores=5)), \
                          patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
                          patch.object(resources.subprocess, 'run', side_effect=workload), \
@@ -181,15 +185,16 @@ class ResourceBudgetTests(unittest.TestCase):
                         if case in ('report', 'qualified'):
                             resources.main()
                         else:
-                            expected = {'strict': 'Node target not qualified', 'worker-exit': 'execution failed.*137',
-                                        'partial': 'incomplete or invalid.*137', 'request-error': 'request errors'}[case]
+                            expected = {'strict': 'not qualified', 'worker-exit': 'execution failed.*137',
+                                        'partial': 'incomplete or invalid.*137', 'request-error': 'request errors',
+                                        'no-consumption': 'no completed records'}[case]
                             with self.assertRaisesRegex(RuntimeError, expected): resources.main()
                     printed = '\n'.join(str(call.args[0]) for call in output.call_args_list)
                     if case == 'partial':
                         self.assertIn('worker failure detail', printed)
                         self.assertFalse(list(Path(directory).rglob('comparison.json')))
                     else:
-                        self.assertIn('# Node-target measurements', printed)
+                        self.assertIn('# CI performance baseline' if kind == 'baseline' else '# Node-target measurements', printed)
                         if case != 'qualified': self.assertIn('CPU 99.0000%', printed)
                         document = json.loads(next(Path(directory).rglob('comparison.json')).read_text())
                         self.assertEqual('strict' if case == 'strict' else 'report-only', document['resources']['target_policy'])
@@ -198,8 +203,42 @@ class ResourceBudgetTests(unittest.TestCase):
     def test_report_only_does_not_disable_capacity_or_other_profile_gates(self):
         old_handler = signal.getsignal(signal.SIGTERM)
         self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
-        with patch.object(sys, 'argv', ['run-benchmarks', '--report-only']), patch('sys.stderr'), self.assertRaises(SystemExit):
+        with patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'capacity', '--report-only']), patch('sys.stderr'), self.assertRaises(SystemExit):
             resources.main()
+
+    def test_sustained_misses_warn_but_execution_invalid_capture_and_request_errors_fail(self):
+        from test_benchmark_sustained import run_fixture, capture
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        for case in ('report', 'strict', 'worker-exit', 'partial', 'request-error', 'qualified'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                calls = []
+                def workload(command, **kwargs):
+                    calls.append(command)
+                    run = run_fixture('FILE', len(calls))
+                    if case != 'qualified': run['stages'][-1]['p99_ms'] = '200'
+                    if case == 'request-error': run['stages'][0]['errors'] = '1'
+                    text = capture(run)
+                    if case == 'partial': text = text.split('SUSTAINED_END')[0]
+                    kwargs['stdout'].write(text)
+                    return type('Result', (), {'returncode': 137 if case == 'worker-exit' else 0})()
+                argv = ['run-benchmarks', '--kind', 'sustained', '--measurement', 'full', '--storage-mode', 'FILE',
+                        '--payload-sizes', '1024', '--data-directory', directory, '--output', directory]
+                if case == 'strict': argv.append('--strict')
+                with patch.object(resources, 'detect_host', return_value=self.host()), \
+                     patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
+                     patch.object(resources.subprocess, 'run', side_effect=workload), \
+                     patch('builtins.print') as output, patch.object(sys, 'argv', argv):
+                    if case in ('report', 'qualified'):
+                        resources.main()
+                    else:
+                        with self.assertRaises((ValueError, RuntimeError)): resources.main()
+                printed = '\n'.join(str(call.args[0]) for call in output.call_args_list)
+                if case in ('report', 'strict', 'qualified'):
+                    self.assertEqual(3, len(calls))
+                    self.assertTrue(list(Path(directory).rglob('comparison.json')))
+                if case == 'report': self.assertIn('WARNING: Sustained expectations unmet', printed)
+                if case == 'qualified': self.assertNotIn('WARNING:', printed)
 
     def test_detection_respects_ancestor_quotas_and_remaining_cgroup_memory(self):
         with tempfile.TemporaryDirectory() as directory:

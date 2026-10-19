@@ -67,6 +67,10 @@ HDR histograms retain produce, fetch, acknowledgement and scheduled-completion l
 
 `FILE` forces every group commit before acknowledgement; memory mode is volatile. Filesystem/media details are recorded rather than assuming SSD durability/performance. Reports reject incomplete captures, duplicate runs, non-finite metrics, mixed payloads and invalid offered rates. Evidence is saved before evaluating qualification failures.
 
+Baseline, target and sustained measurements report unmet performance expectations as warnings by default, while retaining the measured values, failed limits and unqualified status. CI passes these completed measurements and includes the reports in its job summary and artifacts. Crashes, nonzero worker exits, timeouts, request errors, zero producer/consumer progress and incomplete or invalid captures still fail. `--report-only` selects this policy explicitly; `--strict` opts into failing on unmet performance expectations.
+
+Measured JFR stages now include `file_force_count`, `file_force_total_ms`, `file_force_p99_ms` and `file_force_max_ms`. New recordings enable every `jdk.FileForce` event with a zero threshold. Each call's elapsed wait is clipped to the measured interval, excluding warmup and cleanup; concurrent calls are summed separately, so total wait can exceed the stage duration. These are elapsed durability-barrier times, including any scheduling delay during the call. Older recordings can omit fast events, and older summaries without these metrics display `unavailable`. Reports retain the latency components separately so force waits can be compared with produce and scheduled-completion p99. Wait metrics are diagnostic and have no additional qualification threshold.
+
 ## Direct node-target verification
 
 This profile offers 500K/s in memory with one pair and 250K/s with file storage with two pairs. Three fresh JVMs per mode measure 50%, 80% and 100% of the reference target. All nine windows per mode must qualify.
@@ -78,13 +82,13 @@ python3 scripts/run-benchmarks.py --kind target --measurement full \
   --storage-mode FILE --payload-sizes 1024
 ```
 
-Add `--report-only` to retain completed target misses without failing the target gate; crashes, request errors and incomplete runs remain errors. The Java test owns the three fresh-JVM repetitions. Direct Maven execution is also available:
+Completed target misses warn by default; add `--strict` to enforce the target gate. Crashes, request errors and incomplete runs remain errors. The Java test owns the three fresh-JVM repetitions. Direct Maven execution is also available:
 
 ```powershell
 .\mvnw.cmd -pl setu-benchmark -am '-Dtest=NodeTargetThroughputBenchmarkTests' '-Dsurefire.failIfNoSpecifiedTests=false' '-Dsetu.benchmark.node.targets=true' '-Dsetu.benchmark.cpu.cores=8' '-Dsetu.benchmark.memory.log.bytes=67108864' test
 ```
 
-Direct Maven runs do not impose an OS CPU quota. Target defaults are 256 MiB memory / 128 MiB file heaps; JFR is enabled by default and saved beside captures under `logs/benchmarks/node-target/`. These long runs are opt-in.
+Direct Maven runs do not impose an OS CPU quota. Target defaults are 256 MiB memory / 128 MiB file heaps; JFR is enabled by default and saved beside captures under `logs/benchmarks/node-target/`. These long runs are opt-in. Their unmet expectations warn by default; `-Dsetu.benchmark.node.targets.enforce=true` enables strict enforcement for direct Maven runs.
 
 ## Default OpenHFT storage
 
@@ -102,11 +106,11 @@ This was substantially slower than the former custom backend on that host; it do
 
 ## CI and reports
 
-[CI](../.github/workflows/ci.yml) runs production/helper tests, integration tests, bounded chaos, isolated load, sustained smoke and two full node-target shards with JFR on pushes/PRs. Automatic target shards use `--report-only`, since runner allocations can be below the reference host budget. Completed misses are unqualified results; execution failures remain errors. Optional `full_benchmark` dispatch adds eight capacity comparisons across two modes and four payloads.
+[CI](../.github/workflows/ci.yml) runs production/helper tests, integration tests, bounded chaos, isolated load, sustained smoke, two full fixed-budget baseline shards and two full node-target shards with JFR on pushes/PRs. Baseline, target and optional full sustained shards use `--report-only`: completed misses warn and remain unqualified in reports, while execution failures fail the job. Optional `full_benchmark` dispatch adds eight capacity comparisons across two modes and four payloads.
 
 `scripts/diagnostics/StorageForceProbe.java` measures two mapped writers with full and data-only barriers at any supplied disk path, independently of broker work. Compile it with Java 26 and run `io.setu.storage.log.StorageForceProbe <directory>` with `@config/jvm.options -Xms64m -Xmx128m -XX:ActiveProcessorCount=2`; use the same OS resource limits when comparing it with a baseline. The probe preserves offered-load backlog and rejects RAM filesystems. It diagnoses a storage path; it does not qualify or replace the full benchmark.
 
-An experimental private disk-backed journal improved a [short probe](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39010874823), but **failed the [complete FILE baseline](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39011113017)**. That environment change was removed. The strict baseline retains the original runner, temp directory, resource limits and gates. See [FILE baseline latency](../README.md#file-baseline-latency) for passing and failing measurements, comparison/JFR evidence and remaining limitations.
+An experimental private disk-backed journal improved a [short probe](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39010874823), but **failed the [complete FILE baseline](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39011113017)**. That environment change was removed. The baseline retains the original runner, temp directory, resource limits and qualification criteria; unmet performance expectations now produce warnings and reports.
 
 The optional `trace_file_waits` workflow dispatch runs only the original FILE baseline while sampling worker kernel stacks, per-thread scheduler counters, cgroup CPU/memory/I/O counters and disk statistics. The observer's CPU use is recorded. This is an instrumented investigation run, not evidence that an implementation fix has qualified; the other workflow jobs are intentionally skipped.
 

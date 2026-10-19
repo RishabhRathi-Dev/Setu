@@ -39,6 +39,20 @@ def capture(run):
 
 
 class SustainedReportTests(unittest.TestCase):
+    def test_jfr_force_metrics_are_preserved_and_require_all_measured_stages(self):
+        run = run_fixture('FILE')
+        run['config']['jfr'] = 'true'
+        profiles = [dict(mode='FILE', stage=str(stage), duration_s='30', file_force_count='10',
+                         file_force_total_ms='500', file_force_p99_ms='100', file_force_max_ms='100')
+                    for stage in range(1, 5)]
+        def jfr_line(row): return 'CAPACITY_JFR ' + ' '.join(f'{k}={v}' for k, v in row.items())
+        text = capture(run) + '\n' + '\n'.join(jfr_line(row) for row in profiles)
+        parsed = report.parse_capture(text, 1024, ('FILE',))
+        self.assertEqual(4, len(parsed[0]['jfr']))
+        self.assertIn('500.000000', report.force_wait_report(parsed))
+        with self.assertRaisesRegex(ValueError, 'measured JFR stages'):
+            report.parse_capture(text.rsplit('\n', 1)[0], 1024, ('FILE',))
+
     def test_post_run_review_reports_measured_bottlenecks_including_scheduled_latency(self):
         run = run_fixture('FILE')
         stage = run['stages'][1]

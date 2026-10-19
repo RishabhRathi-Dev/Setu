@@ -59,6 +59,27 @@ def documents():
 
 
 class NodeTargetTests(unittest.TestCase):
+    def test_reports_force_waits_and_latency_components_and_rejects_corrupt_wait_metrics(self):
+        runs = [fixture('FILE', repeat, 'ci-baseline') for repeat in (1, 2, 3)]
+        waits = dict(file_force_count='200', file_force_total_ms='3500.123456',
+                     file_force_p99_ms='110.428159', file_force_max_ms='578.026')
+        runs[0]['jfr'][0].update(waits)
+        parsed = report.parse_capture(capture(runs), ('FILE',), target_profile='ci-baseline')
+        text = report.comparison_report(parsed, ('FILE',), 'ci-baseline')
+        self.assertIn('| FILE | 1 | 1 | 200 | 3500.123456 | 110.428159 | 578.026000 |', text)
+        self.assertIn('Scheduled p99 ms', text)
+        self.assertIn('unavailable', text)  # Older summaries are never shown as zero waits.
+        for key, value in (('file_force_count', '-1'), ('file_force_count', '1.5'),
+                           ('file_force_max_ms', 'nan'), ('file_force_p99_ms', '600'),
+                           ('file_force_total_ms', '10')):
+            broken = copy.deepcopy(parsed)
+            broken[0]['jfr'][0][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                report.validate_runs(broken, ('FILE',), target_profile='ci-baseline')
+        del parsed[0]['jfr'][0]['file_force_count']
+        with self.assertRaisesRegex(ValueError, 'incomplete file-force'):
+            report.validate_runs(parsed, ('FILE',), target_profile='ci-baseline')
+
     def test_baseline_qualifies_separately_and_cannot_publish_as_reference_target(self):
         runs = [fixture(mode, repeat, 'ci-baseline') for mode in report.TARGETS for repeat in (1, 2, 3)]
         parsed = report.parse_capture(capture(runs), report.TARGETS, target_profile='ci-baseline')

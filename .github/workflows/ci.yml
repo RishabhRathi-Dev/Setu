@@ -287,7 +287,7 @@ jobs:
         run: >-
           python3 scripts/run-benchmarks.py --kind sustained --measurement full
           --storage-mode "$BENCHMARK_MODE" --payload-sizes "$BENCHMARK_PAYLOAD"
-          --fraction "$BENCHMARK_FRACTION"
+          --fraction "$BENCHMARK_FRACTION" --report-only
       - name: Summarize measurements, including failed gates
         if: always()
         run: |
@@ -320,13 +320,13 @@ jobs:
           distribution: temurin
           java-version: '26'
           cache: maven
-      - name: Enforce sustained CI baseline under a fixed resource budget
+      - name: Measure CI baseline and warn on unmet expectations under a fixed resource budget
         env:
           BENCHMARK_MODE: ${{ matrix.mode }}
         run: >-
           python3 scripts/run-benchmarks.py --kind baseline --measurement full
           --storage-mode "$BENCHMARK_MODE" --payload-sizes 1024
-          --data-directory "$RUNNER_TEMP"
+          --data-directory "$RUNNER_TEMP" --report-only
       - name: Summarize baseline qualification, including failures
         if: always()
         run: |

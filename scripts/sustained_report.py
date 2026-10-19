@@ -5,6 +5,40 @@ import statistics
 
 TARGETS = {'IN_MEMORY': 500_000, 'FILE': 250_000}
 GATES = {'IN_MEMORY': 200_000, 'FILE': 150_000}
+FORCE_METRICS = ('file_force_count', 'file_force_total_ms', 'file_force_p99_ms', 'file_force_max_ms')
+
+
+def validate_force_metrics(row):
+    if not any(key in row for key in FORCE_METRICS):
+        return  # Historical captures predate force-wait reporting.
+    if not all(key in row for key in FORCE_METRICS):
+        raise ValueError('incomplete file-force metrics')
+    for key in FORCE_METRICS:
+        if number(row, key) < 0:
+            raise ValueError(f'negative {key}')
+    count = number(row, 'file_force_count')
+    total, p99, maximum = (number(row, key) for key in FORCE_METRICS[1:])
+    if count != int(count) or p99 > maximum or maximum > total or (count == 0 and total != 0):
+        raise ValueError('inconsistent file-force metrics')
+
+
+def force_wait_report(runs):
+    lines = ['', 'File-force waits from measured JFR stages:', '',
+             '| Mode | Repeat | Stage | Calls | Total wait ms | p99 wait ms | Max wait ms |',
+             '| --- | ---: | ---: | ---: | ---: | ---: | ---: |']
+    for run in runs:
+        for row in run.get('jfr', []):
+            validate_force_metrics(row)
+            values = [f'{number(row, key):.6f}' if key != 'file_force_count' else f'{number(row, key):.0f}'
+                      for key in FORCE_METRICS] if 'file_force_count' in row else ['unavailable'] * 4
+            lines.append(f'| {run["config"]["mode"]} | {run.get("repeat", "?")} | {row["stage"]} | ' + ' | '.join(values) + ' |')
+    if len(lines) == 5:
+        return ''
+    lines += ['', 'Waits are elapsed time inside jdk.FileForce, clipped to each measured stage. '
+              'Concurrent calls are summed separately, so total wait can exceed stage duration. '
+              'New recordings capture every force; older recordings may omit fast calls. '
+              'Unavailable metrics indicate an older summary, rather than zero waits.']
+    return '\n'.join(lines) + '\n'
 
 
 def fields(line):
@@ -43,7 +77,13 @@ def parse_capture(text, payload, modes):
             mode = config['mode']
             if mode in runs or mode not in modes or int(config['record_bytes']) != payload:
                 raise ValueError('duplicate, unexpected mode or mixed payload configuration')
-            runs[mode] = dict(config=config, stages=[])
+            runs[mode] = dict(config=config, stages=[], jfr=[])
+        elif line.startswith('CAPACITY_JFR '):
+            row = fields(line)
+            if row['mode'] not in runs:
+                raise ValueError('JFR measurement without configuration')
+            validate_force_metrics(row)
+            runs[row['mode']]['jfr'].append(row)
         elif line.startswith(('SUSTAINED_STAGE ', 'SUSTAINED_END ')):
             row = fields(line)
             if row['mode'] not in runs:
@@ -134,6 +174,14 @@ def validate_run(run):
         raise ValueError('end marker knee does not match measurements')
     if int(run['end']['concurrency']) != (int(knee['concurrency']) if knee else 0):
         raise ValueError('end marker concurrency does not match knee')
+    if config.get('jfr') == 'true':
+        profiles = run.get('jfr', [])
+        if sorted(int(row['stage']) for row in profiles) != list(range(1, len(stages) + 1)):
+            raise ValueError('missing or duplicate measured JFR stages')
+        for row in profiles:
+            if row['mode'] != config['mode'] or abs(number(row, 'duration_s') - int(config['stage_ms']) / 1000) > .1:
+                raise ValueError('JFR stage does not match measured window')
+            validate_force_metrics(row)
 
 
 def qualified_rate(run):
@@ -159,12 +207,16 @@ def sustained_rates(runs, modes, payload=1024):
     return rates
 
 
-def check_gates(runs, modes):
+def gate_failures(runs, modes):
     rates = sustained_rates(runs, modes)
-    failed = [f'{mode}: {rates[mode]:,.0f}/s < {GATES[mode]:,}/s' for mode in modes if rates[mode] < GATES[mode]]
+    return [f'{mode}: {rates[mode]:,.0f}/s < {GATES[mode]:,}/s' for mode in modes if rates[mode] < GATES[mode]]
+
+
+def check_gates(runs, modes):
+    failed = gate_failures(runs, modes)
     if failed:
         raise ValueError('sustained throughput gate failed: ' + '; '.join(failed))
-    return rates
+    return sustained_rates(runs, modes)
 
 
 def comparison_report(runs, snapshot):
@@ -197,7 +249,7 @@ def comparison_report(runs, snapshot):
             cells.append(f'{statistics.median(values):,.3f} [{min(values):,.3f}, {max(values):,.3f}]')
         text.append(f'| {mode} | {payload} | {concurrency} | {kind}/{fraction} | {len(rows)} | '
                     + ' | '.join(cells) + f' | {sum(r["qualified"] == "true" for r in rows)}/{len(rows)} |')
-    return '\n'.join(text) + '\n'
+    return '\n'.join(text) + '\n' + force_wait_report(runs)
 
 
 def save(output, runs, snapshot):

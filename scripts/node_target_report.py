@@ -110,6 +110,7 @@ def validate_runs(runs, modes, require_jfr=True, target_profile='reference'):
                         raise ValueError('JFR stage does not match target window')
                     for key in ('allocation_mb', 'gc_pause_ms', 'cpu_samples'):
                         if number(row, key) < 0: raise ValueError('invalid JFR metric')
+                    sustained.validate_force_metrics(row)
 
 
 def healthy(run, stage, warmup):
@@ -196,7 +197,16 @@ def comparison_report(runs, modes, target_profile='reference'):
     if rejected:
         lines += ['', 'Qualification failures (completed measurements are retained):', '',
                   '| Mode | Repeat | Load | Measured limit failures |', '| --- | ---: | ---: | --- |', *rejected]
-    return '\n'.join(lines) + '\n'
+    lines += ['', 'Latency components (scheduled completion includes offered-load scheduling delay):', '',
+              '| Mode | Repeat | Load | Produce p99 ms | Fetch p99 ms | Ack p99 ms | Scheduled p99 ms |',
+              '| --- | ---: | ---: | ---: | ---: | ---: | ---: |']
+    for run in runs:
+        for stage in run['stages']:
+            values = [f'{sustained.number(stage, key):.3f}' if key in stage else 'unavailable'
+                      for key in ('produce_p99_ms', 'fetch_p99_ms', 'ack_p99_ms', 'scheduled_p99_ms')]
+            lines.append(f'| {run["config"]["mode"]} | {run["repeat"]} | {float(stage["load_fraction"]):.0%} | '
+                         + ' | '.join(values) + ' |')
+    return '\n'.join(lines) + '\n' + sustained.force_wait_report(runs)
 
 
 def save(output, runs, snapshot, modes, target_profile='reference'):

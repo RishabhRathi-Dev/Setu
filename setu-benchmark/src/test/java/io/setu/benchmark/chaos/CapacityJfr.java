@@ -8,6 +8,7 @@ import jdk.jfr.Recording;
 import jdk.jfr.consumer.RecordedEvent;
 import jdk.jfr.consumer.RecordedFrame;
 import jdk.jfr.consumer.RecordingFile;
+import org.HdrHistogram.Histogram;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -28,6 +29,7 @@ final class CapacityJfr {
         recording.setMaxSize(128L * 1024 * 1024);
         recording.setDumpOnExit(false);
         recording.enable(Stage.class).withThreshold(java.time.Duration.ZERO);
+        recording.enable("jdk.FileForce").withThreshold(java.time.Duration.ZERO);
         recording.start();
     }
 
@@ -78,6 +80,7 @@ final class CapacityJfr {
         final long produced;
         final long consumed;
         long samples;
+        final ForceWaits forceWaits = new ForceWaits();
         final Map<String, Long> methods = new HashMap<>();
 
         Summary(RecordedEvent event) {
@@ -90,6 +93,26 @@ final class CapacityJfr {
         }
 
         boolean contains(Instant instant) { return !instant.isBefore(start) && instant.isBefore(end); }
+    }
+
+    /** Sum concurrent calls separately; clip each wait to the measured interval. */
+    static final class ForceWaits {
+        final Histogram durations = new Histogram(3);
+        long totalNanos;
+        long maxNanos;
+
+        void add(Instant callStart, Instant callEnd, Instant stageStart, Instant stageEnd) {
+            Instant start = callStart.isAfter(stageStart) ? callStart : stageStart;
+            Instant end = callEnd.isBefore(stageEnd) ? callEnd : stageEnd;
+            if (!end.isAfter(start)) return;
+            long nanos = java.time.Duration.between(start, end).toNanos();
+            durations.recordValue(nanos);
+            totalNanos += nanos;
+            maxNanos = Math.max(maxNanos, nanos);
+        }
+
+        long count() { return durations.getTotalCount(); }
+        double p99Millis() { return Math.min(maxNanos, durations.getValueAtPercentile(99)) / 1e6; }
     }
 
     static java.util.Set<Integer> report(Path path) throws java.io.IOException {
@@ -107,9 +130,12 @@ final class CapacityJfr {
                 RecordedEvent event = file.readEvent();
                 String type = event.getEventType().getName();
                 if (!type.equals("jdk.ObjectAllocationSample") && !type.equals("jdk.ExecutionSample")
-                        && !type.equals("jdk.GCPhasePause") && !type.equals("jdk.GarbageCollection")) continue;
+                        && !type.equals("jdk.GCPhasePause") && !type.equals("jdk.GarbageCollection")
+                        && !type.equals("jdk.FileForce")) continue;
                 for (Summary stage : stages) {
-                    if (type.equals("jdk.GCPhasePause") || type.equals("jdk.GarbageCollection")) {
+                    if (type.equals("jdk.FileForce")) {
+                        stage.forceWaits.add(event.getStartTime(), event.getEndTime(), stage.start, stage.end);
+                    } else if (type.equals("jdk.GCPhasePause") || type.equals("jdk.GarbageCollection")) {
                         Instant start = event.getStartTime().isAfter(stage.start) ? event.getStartTime() : stage.start;
                         Instant end = event.getEndTime().isBefore(stage.end) ? event.getEndTime() : stage.end;
                         if (end.isAfter(start)) {
@@ -140,13 +166,14 @@ final class CapacityJfr {
                     .map(Map.Entry::getKey).orElse("unavailable");
             // Both ratios normalize the entire broker+client JVM estimate. They do not
             // attribute allocation exclusively to producers or exclusively to consumers.
-            System.out.printf(Locale.ROOT, "CAPACITY_JFR mode=%s stage=%d duration_s=%.3f allocation_mb=%.3f gc_pause_ms=%.3f cpu_samples=%d hot_method=%s produced=%d consumed=%d allocation_bytes_per_produced=%.3f allocation_bytes_per_consumed=%.3f gc_cycle_ms=%.3f%n",
+            System.out.printf(Locale.ROOT, "CAPACITY_JFR mode=%s stage=%d duration_s=%.3f allocation_mb=%.3f gc_pause_ms=%.3f cpu_samples=%d hot_method=%s produced=%d consumed=%d allocation_bytes_per_produced=%.3f allocation_bytes_per_consumed=%.3f gc_cycle_ms=%.3f file_force_count=%d file_force_total_ms=%.6f file_force_p99_ms=%.6f file_force_max_ms=%.6f%n",
                     stage.mode, stage.stage, java.time.Duration.between(stage.start, stage.end).toNanos() / 1_000_000_000.0,
                     stage.allocationBytes / (1024.0 * 1024), stage.gcPauseMillis, stage.samples, hot,
                     stage.produced, stage.consumed,
                     stage.produced == 0 ? 0 : (double) stage.allocationBytes / stage.produced,
                     stage.consumed == 0 ? 0 : (double) stage.allocationBytes / stage.consumed,
-                    stage.gcCycleMillis);
+                    stage.gcCycleMillis, stage.forceWaits.count(), stage.forceWaits.totalNanos / 1e6,
+                    stage.forceWaits.p99Millis(), stage.forceWaits.maxNanos / 1e6);
         }
         if (stages.isEmpty()) throw new java.io.IOException("JFR capture contains no completed measured stage: " + path);
         return stages.stream().map(stage -> stage.stage).collect(java.util.stream.Collectors.toSet());

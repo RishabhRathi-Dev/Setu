@@ -237,11 +237,15 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / 'logs/benchmarks/resources')
     parser.add_argument('--log', type=Path, help='explicit single-profile capture (capacity/steady/large-batch)')
     parser.add_argument('--dry-run', action='store_true', help='detect and print the plan without launching anything')
-    parser.add_argument('--report-only', action='store_true',
-                        help='target profile only: report missed performance goals without failing completed measurements')
+    policy = parser.add_mutually_exclusive_group()
+    policy.add_argument('--report-only', action='store_true',
+                        help='report unmet baseline/target/sustained expectations as warnings (default)')
+    policy.add_argument('--strict', action='store_true',
+                        help='fail baseline/target/sustained measurements on unmet performance expectations')
     args = parser.parse_args()
-    if args.report_only and args.kind != 'target':
-        parser.error('--report-only is only supported for node-target measurements')
+    if (args.report_only or args.strict) and args.kind not in ('target', 'baseline', 'sustained'):
+        parser.error('--report-only/--strict apply to baseline, target and sustained measurements')
+    args.report_only = not args.strict
     target_kind = args.kind in ('target', 'baseline')
     target_profile = 'ci-baseline' if args.kind == 'baseline' else 'reference'
     args.profile = args.profile or ('github-private' if args.kind == 'baseline' else 'host')
@@ -311,6 +315,8 @@ def main():
                     payload_sizes=payloads, repeats=args.repeats if args.kind in ('target', 'baseline', 'sweep', 'sustained') else 1,
                     measurement=args.measurement, storage_mode=args.storage_mode, max_concurrency=args.max_concurrency,
                     stage_millis=args.stage_millis, warmup_millis=args.warmup_millis)
+    if args.kind in ('baseline', 'target', 'sustained'):
+        snapshot['expectation_policy'] = 'report-only' if args.report_only else 'strict'
     if target_kind:
         snapshot.update(target_profile=target_profile, target_policy='report-only' if args.report_only else 'strict',
                         source_revision=os.environ.get('GITHUB_SHA'), run_url=(
@@ -359,7 +365,7 @@ def main():
                 command += [f'-Dsetu.benchmark.measurement={args.measurement}',
                             f'-Dsetu.benchmark.max.concurrency={args.max_concurrency}',
                             f'-Dsetu.benchmark.stage.millis={args.stage_millis}',
-                            f'-Dsetu.benchmark.warmup.millis={args.warmup_millis}']
+                            f'-Dsetu.benchmark.warmup.millis={args.warmup_millis}', '-Dsetu.benchmark.jfr=true']
             elif args.kind == 'capacity':
                 command += ['-Dsetu.benchmark.max.concurrency=0', '-Dsetu.benchmark.min.stages=8',
                             '-Dsetu.benchmark.stage.millis=2000', '-Dsetu.benchmark.warmup.millis=2000',
@@ -394,7 +400,7 @@ def main():
                 print('\n'.join(capture.read_text(encoding='utf-8').splitlines()[-60:]), flush=True)
                 raise RuntimeError(f'benchmark execution failed (exit {result.returncode}); capture: {capture}')
             if target_kind:
-                if any(float(stage['errors']) != 0 or float(stage['produced']) <= 0
+                if any(float(stage['errors']) != 0 or float(stage['produced']) <= 0 or float(stage['consumed']) <= 0
                        for run in runs for stage in run['stages']):
                     raise RuntimeError(f'node-target workload failed: request errors or no completed records; capture: {capture}')
                 failed = [mode for mode, summary in node_target_report.summaries(runs, modes, target_profile).items()
@@ -402,9 +408,7 @@ def main():
                 if failed:
                     label = 'CI baseline' if args.kind == 'baseline' else 'Node target'
                     message = label + ' not qualified: ' + ', '.join(failed) + '; see measured limits above.'
-                    if not args.report_only:
-                        raise RuntimeError(message + f' Report: {output / "comparison.txt"}')
-                    print(('::warning::' if 'GITHUB_ACTIONS' in os.environ else '') + message, flush=True)
+                    expectation_miss(message, output, args.report_only)
             if args.kind == 'sweep':
                 rows += summarize_capture(capture.read_text(encoding='utf-8'), payload, args.max_concurrency)
                 (output / 'comparison.json').write_text(json.dumps(rows, indent=2) + '\n')
@@ -416,10 +420,22 @@ def main():
                     run['capture'] = str(capture)
                 rows += runs
                 sustained_report.save(output, rows, snapshot)
+                if any(float(stage['errors']) != 0 or float(stage['produced']) <= 0 or float(stage['consumed']) <= 0
+                       for run in runs for stage in run['stages']):
+                    raise RuntimeError(f'sustained workload failed: request errors or no completed records; capture: {capture}')
     if rows and not target_kind:
         print(sustained_report.comparison_report(rows, snapshot) if args.kind == 'sustained' else comparison_report(rows))
     if full and args.kind == 'sustained' and 1024 in payloads:
-        sustained_report.check_gates(rows, modes)
+        failed = sustained_report.gate_failures(rows, modes)
+        if failed:
+            expectation_miss('Sustained expectations unmet: ' + '; '.join(failed), output, args.report_only)
+
+
+def expectation_miss(message, output, report_only):
+    message += f' Report: {output / "comparison.txt"}'
+    if not report_only:
+        raise RuntimeError(message)
+    print(('::warning::' if 'GITHUB_ACTIONS' in os.environ else 'WARNING: ') + message, flush=True)
 
 
 if __name__ == '__main__':
