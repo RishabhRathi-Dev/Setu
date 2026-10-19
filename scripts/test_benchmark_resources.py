@@ -1,4 +1,5 @@
 import importlib.util
+from itertools import product
 from pathlib import Path
 import sys
 import signal
@@ -210,8 +211,9 @@ class ResourceBudgetTests(unittest.TestCase):
         from test_benchmark_sustained import run_fixture, capture
         old_handler = signal.getsignal(signal.SIGTERM)
         self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
-        for case in ('report', 'strict', 'worker-exit', 'partial', 'request-error', 'qualified'):
-            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+        cases = ('report', 'strict', 'worker-exit', 'partial', 'request-error', 'qualified')
+        for case, github_actions in product(cases, (False, True)):
+            with self.subTest(case=case, github_actions=github_actions), tempfile.TemporaryDirectory() as directory:
                 calls = []
                 def workload(command, **kwargs):
                     calls.append(command)
@@ -228,7 +230,12 @@ class ResourceBudgetTests(unittest.TestCase):
                 with patch.object(resources, 'detect_host', return_value=self.host()), \
                      patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
                      patch.object(resources.subprocess, 'run', side_effect=workload), \
+                     patch.dict(resources.os.environ) as environment, \
                      patch('builtins.print') as output, patch.object(sys, 'argv', argv):
+                    if github_actions:
+                        environment['GITHUB_ACTIONS'] = 'true'
+                    else:
+                        environment.pop('GITHUB_ACTIONS', None)
                     if case in ('report', 'qualified'):
                         resources.main()
                     else:
@@ -237,8 +244,12 @@ class ResourceBudgetTests(unittest.TestCase):
                 if case in ('report', 'strict', 'qualified'):
                     self.assertEqual(3, len(calls))
                     self.assertTrue(list(Path(directory).rglob('comparison.json')))
-                if case == 'report': self.assertIn('WARNING: Sustained expectations unmet', printed)
-                if case == 'qualified': self.assertNotIn('WARNING:', printed)
+                if case == 'report':
+                    prefix = '::warning::' if github_actions else 'WARNING: '
+                    self.assertIn(prefix + 'Sustained expectations unmet', printed)
+                if case == 'qualified':
+                    self.assertNotIn('WARNING:', printed)
+                    self.assertNotIn('::warning::', printed)
 
     def test_detection_respects_ancestor_quotas_and_remaining_cgroup_memory(self):
         with tempfile.TemporaryDirectory() as directory:
