@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "label": "file resources",
-  "message": "86% CPU, 126 MiB heap (CI)",
+  "message": "98% CPU, 124 MiB heap (CI)",
   "color": "orange",
   "sourceScope": "CI",
-  "sourceRevision": "819508d71f6fb133de86a634be7a151d5073b11d",
-  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/39154084918"
+  "sourceRevision": "c88bb3b4ceaa4d2dbb8a6a7f20818f9baca652b0",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/39317780845"
 }
