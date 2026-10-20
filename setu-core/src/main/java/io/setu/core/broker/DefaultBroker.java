@@ -194,9 +194,7 @@ public final class DefaultBroker implements Broker {
         if (topics.size() >= MAX_TOPICS)
             throw new BrokerException(ErrorCode.BAD_REQUEST, "Broker topic limit reached");
         List<MessageLog> partitions = new ArrayList<>(request.partitionCount());
-        Path topicPath = storageMode == StorageMode.FILE ? dataDirectory.resolve(request.topic()).normalize() : null;
-        if (topicPath != null && (!topicPath.startsWith(dataDirectory) || !dataDirectory.equals(topicPath.getParent())))
-            throw new BrokerException(ErrorCode.BAD_REQUEST, "Topic path must remain inside the data directory");
+        Path topicPath = storageMode == StorageMode.FILE ? topicDirectory(request.topic()) : null;
         try {
             if (storageMode == StorageMode.FILE) {
                 Files.createDirectories(topicPath);
@@ -222,6 +220,15 @@ public final class DefaultBroker implements Broker {
             throw failure;
         }
         return BrokerResponse.ok(request.correlationId(), request.command());
+    }
+
+    private Path topicDirectory(String topic) {
+        Path candidate = dataDirectory.resolve(topic).normalize();
+        if (!candidate.startsWith(dataDirectory))
+            throw new BrokerException(ErrorCode.BAD_REQUEST, "Topic path must remain inside the data directory");
+        if (!dataDirectory.equals(candidate.getParent()))
+            throw new BrokerException(ErrorCode.BAD_REQUEST, "Topic path must be a direct child of the data directory");
+        return candidate;
     }
 
     private BrokerResponse produce(BrokerRequest request) throws IOException {

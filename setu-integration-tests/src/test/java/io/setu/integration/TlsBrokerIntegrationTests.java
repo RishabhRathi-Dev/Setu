@@ -76,6 +76,24 @@ class TlsBrokerIntegrationTests {
                              10, 10, 0, 1024 * 1024, 1024 * 1024, 3000, 1000, 250))) {
             server.start();
             int port = server.localAddress().getPort();
+            // The server-side CodeQL annotation must not weaken either mTLS or client hostname checks.
+            var noClientCertificate = javax.net.ssl.SSLContext.getInstance("TLS");
+            noClientCertificate.init(new javax.net.ssl.KeyManager[0],
+                    new SetuTrustManagerProvider().create(clientTls), null);
+            IOException missingCertificate = org.junit.jupiter.api.Assertions.assertThrows(IOException.class, () -> {
+                try (var client = io.setu.client.SetuClient.connectTls("localhost", port,
+                        noClientCertificate, List.of("TLSv1.3"), List.of(), 3000, 3000, 1024 * 1024)) {
+                    client.metadata();
+                }
+            });
+            org.junit.jupiter.api.Assertions.assertFalse(missingCertificate instanceof SocketTimeoutException,
+                    "Missing client certificates must be rejected, not merely time out");
+            org.junit.jupiter.api.Assertions.assertThrows(javax.net.ssl.SSLHandshakeException.class, () -> {
+                try (var client = io.setu.client.SetuClient.connectTls("127.0.0.1", port,
+                        clientTls, tlsContexts, 3000, 3000, 1024 * 1024)) {
+                    client.metadata();
+                }
+            });
             // No TLS bytes: the handshake deadline must apply even with the idle timeout disabled.
             try (var stalled = new java.net.Socket("localhost", port)) {
                 stalled.setSoTimeout(3000);

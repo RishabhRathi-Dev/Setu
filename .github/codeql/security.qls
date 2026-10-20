@@ -1,0 +1,5 @@
+- description: Extended Java security checks with reviewed source-annotation metadata
+- import: codeql-suites/java-security-extended.qls
+  from: codeql/java-queries
+- query: AlertSuppression.ql
+  from: codeql/java-queries

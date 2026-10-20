@@ -33,4 +33,4 @@ Tests bind loopback sockets on ephemeral ports. TLS fixtures are short-lived PKC
 
 Surefire reports are written under `setu-integration-tests/target/surefire-reports/`. [CI](../.github/workflows/ci.yml) runs integration tests after production unit checks and retains their reports.
 
-Client failure coverage uses real sockets to check blocked read/write cancellation, timeout/partial/malformed/mismatched replies invalidating the connection, and reuse after structured broker errors. TLS coverage checks stalled handshakes and frames, plus both topic and group permission for member-aware fetches.
+Client failure coverage uses real sockets to check blocked read/write cancellation, timeout/partial/malformed/mismatched replies invalidating the connection, and reuse after structured broker errors. TLS coverage checks missing-client-certificate rejection, client hostname verification, stalled handshakes and frames, plus both topic and group permission for member-aware fetches.

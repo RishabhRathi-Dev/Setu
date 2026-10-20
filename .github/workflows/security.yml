@@ -31,7 +31,7 @@ jobs:
         with:
           languages: java-kotlin
           build-mode: manual
-          queries: security-extended
+          queries: ./.github/codeql/security.qls
       - name: Build production sources for analysis
         run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-server -am -Dmaven.test.skip=true clean package
       - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
