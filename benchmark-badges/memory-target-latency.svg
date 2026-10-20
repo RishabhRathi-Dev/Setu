@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="312" height="24" viewBox="0 0 312 24" role="img" aria-label="memory p99: 3848.27 ms at target (CI)">
-  <title>memory p99: 3848.27 ms at target (CI)</title>
-  <rect width="312" height="24" rx="3" fill="#b55200"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="24" viewBox="0 0 320 24" role="img" aria-label="memory p99: 12750.68 ms at target (CI)">
+  <title>memory p99: 12750.68 ms at target (CI)</title>
+  <rect width="320" height="24" rx="3" fill="#b55200"/>
   <path d="M3 0H96V24H3Q0 24 0 21V3Q0 0 3 0" fill="#555"/>
   <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="12">
     <text x="48" y="16">memory p99</text>
-    <text x="204" y="16">3848.27 ms at target (CI)</text>
+    <text x="208" y="16">12750.68 ms at target (CI)</text>
   </g>
 </svg>
