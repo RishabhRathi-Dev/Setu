@@ -1,5 +1,6 @@
 package io.setu.core.broker;
 
+import io.setu.core.logging.LogText;
 import io.setu.core.protocol.BrokerRequest;
 import io.setu.core.protocol.BrokerResponse;
 import io.setu.core.protocol.ErrorCode;
@@ -193,20 +194,29 @@ public final class DefaultBroker implements Broker {
         if (topics.size() >= MAX_TOPICS)
             throw new BrokerException(ErrorCode.BAD_REQUEST, "Broker topic limit reached");
         List<MessageLog> partitions = new ArrayList<>(request.partitionCount());
-        Path topicPath = storageMode == StorageMode.FILE ? dataDirectory.resolve(request.topic()) : null;
+        Path topicPath = storageMode == StorageMode.FILE ? dataDirectory.resolve(request.topic()).normalize() : null;
+        if (topicPath != null && (!topicPath.startsWith(dataDirectory) || !dataDirectory.equals(topicPath.getParent())))
+            throw new BrokerException(ErrorCode.BAD_REQUEST, "Topic path must remain inside the data directory");
         try {
-            if (storageMode == StorageMode.FILE) Files.createDirectories(topicPath);
+            if (storageMode == StorageMode.FILE) {
+                Files.createDirectories(topicPath);
+                if (!topicPath.toRealPath().startsWith(dataDirectory.toRealPath()))
+                    throw new BrokerException(ErrorCode.BAD_REQUEST, "Topic directory escapes the data directory");
+            }
             for (int i = 0; i < request.partitionCount(); i++) {
                 Path file = null;
                 if (storageMode == StorageMode.FILE) {
                     Path partitionDir = topicPath.resolve("partition-" + i);
+                    if (Files.exists(partitionDir, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                            && !partitionDir.toRealPath().startsWith(topicPath.toRealPath()))
+                        throw new BrokerException(ErrorCode.BAD_REQUEST, "Partition directory escapes the topic directory");
                     Files.createDirectories(partitionDir);
                     file = partitionDir;
                 }
                 partitions.add(MessageLogs.open(storageMode, file, maxRecordBytes, queueBlockBytes, memoryBudget, memoryRetentionNanos > 0));
             }
             topics.put(request.topic(), new TopicState(List.copyOf(partitions)));
-            LOG.info("Topic created topic={} partitions={} storage={}", request.topic(), partitions.size(), storageMode);
+            LOG.info("Topic created topic={} partitions={} storage={}", LogText.escape(request.topic()), partitions.size(), storageMode);
         } catch (IOException | RuntimeException failure) {
             closeLogs(partitions);
             throw failure;
@@ -290,11 +300,13 @@ public final class DefaultBroker implements Broker {
         // File indexes/I/O still serialize: keep their existing fetch scheduling
         // boundary so group writers cannot gain throughput by starving consumers.
         List<ProtocolRecord> records;
-        if (storageMode == StorageMode.FILE) progress.lock.lock();
-        try {
-            records = log.read(startOffset, request.maxBytes(), io.setu.core.protocol.ResponseBuffers::reserve).stream()
-                .map(record -> new ProtocolRecord(record.offset(), record.payload())).toList();
-        } finally { if (storageMode == StorageMode.FILE) progress.lock.unlock(); }
+        if (storageMode == StorageMode.FILE) {
+            progress.lock.lock();
+            try { records = readRecords(log, startOffset, request.maxBytes()); }
+            finally { progress.lock.unlock(); }
+        } else {
+            records = readRecords(log, startOffset, request.maxBytes());
+        }
         if (storageMode == StorageMode.FILE || memoryRetentionNanos > 0) {
             // Expiry may win between the boundary check and snapshot capture.
             // Preserve a snapshot that starts at the requested offset, but report
@@ -309,6 +321,11 @@ public final class DefaultBroker implements Broker {
                     System.nanoTime());
         else if (consumer != null) consumer.touch(System.nanoTime());
         return new BrokerResponse(request.correlationId(), request.command(), ErrorCode.NONE, "", -1, records, Map.of());
+    }
+
+    private static List<ProtocolRecord> readRecords(MessageLog log, long offset, int maxBytes) throws IOException {
+        return log.read(offset, maxBytes, io.setu.core.protocol.ResponseBuffers::reserve).stream()
+                .map(record -> new ProtocolRecord(record.offset(), record.payload())).toList();
     }
 
     private BrokerResponse metadata(BrokerRequest request) {
@@ -371,7 +388,7 @@ public final class DefaultBroker implements Broker {
             consumers.get(key).touch(System.nanoTime());
             for (int i = 0; i < topic.partitions.size(); i++) updateProgress(request.topic(), i, key, offsets.get(i));
             if (LOG.isDebugEnabled()) LOG.debug("Consumer joined group={} member={} topic={} initial_offsets={}",
-                    request.groupId(), request.memberId(), request.topic(), offsets);
+                    LogText.escape(request.groupId()), LogText.escape(request.memberId()), LogText.escape(request.topic()), offsets);
             reclaimTopic(request.topic());
         } else {
             ConsumerState consumer = consumers.get(key);
@@ -388,7 +405,7 @@ public final class DefaultBroker implements Broker {
             synchronized (removed) { removeProgress(new ConsumerKey(request.groupId(), request.memberId()), removed); }
         }
         if (topic != null) reclaimTopic(topic);
-        if (LOG.isDebugEnabled()) LOG.debug("Consumer left group={} member={} topic={}", request.groupId(), request.memberId(), topic);
+        if (LOG.isDebugEnabled()) LOG.debug("Consumer left group={} member={} topic={}", LogText.escape(request.groupId()), LogText.escape(request.memberId()), LogText.escape(topic));
         return BrokerResponse.ok(request.correlationId(), request.command());
     }
 
@@ -413,7 +430,7 @@ public final class DefaultBroker implements Broker {
                     consumerPartitionMemberships -= consumer.nextOffsets.size();
                     removeProgress(entry.getKey(), consumer);
                     LOG.warn("Consumer expired group={} member={} topic={} inactive_ms={} pending_ack_partitions={} acknowledged_offsets={} fetched_offsets={}",
-                            entry.getKey().groupId, entry.getKey().memberId, consumer.topic,
+                            LogText.escape(entry.getKey().groupId), LogText.escape(entry.getKey().memberId), LogText.escape(consumer.topic),
                             TimeUnit.NANOSECONDS.toMillis(now - consumer.lastActivityNanos), consumer.pendingAckSince.keySet(),
                             consumer.nextOffsets, consumer.fetchedOffsets);
                 }

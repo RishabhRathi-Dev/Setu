@@ -111,6 +111,21 @@ class CodeqlGateTests(unittest.TestCase):
                 "index": 0, "toolComponent": {"index": 0}}, "message": {"text": "finding"}}])
             self.assertEqual([], gate.check(directory))
 
+    def test_only_accepted_source_annotations_suppress_reviewed_findings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tool = {"driver": {"rules": [{"id": "java/test", "properties": {"security-severity": "9"}}]}}
+            result = {"ruleId": "java/test", "message": {"text": "finding"}}
+            for suppression, expected in [
+                ({"kind": "inSource"}, []),
+                ({"kind": "inSource", "status": "accepted"}, []),
+                ({"kind": "inSource", "status": "underReview"}, ["java/test: finding"]),
+                ({"kind": "inSource", "status": "rejected"}, ["java/test: finding"]),
+                ({"kind": "external", "status": "accepted"}, ["java/test: finding"]),
+            ]:
+                with self.subTest(suppression=suppression):
+                    self.write_run(directory, tool, [{**result, "suppressions": [suppression]}])
+                    self.assertEqual(expected, gate.check(directory))
+
     def test_driver_rule_index_resolves_and_reports_source_location(self):
         with tempfile.TemporaryDirectory() as directory:
             tool = {"driver": {"rules": [{"id": "java/test", "properties": {"security-severity": "7"}}]}}

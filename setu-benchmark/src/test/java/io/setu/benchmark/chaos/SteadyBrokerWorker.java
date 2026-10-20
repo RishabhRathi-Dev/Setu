@@ -24,7 +24,10 @@ public final class SteadyBrokerWorker {
              var server = new TcpServer(new java.net.InetSocketAddress("127.0.0.1", 0),
                      new FramedConnectionHandler(new BrokerRequestHandler(broker)))) {
             server.start();
-            Files.writeString(control.resolve("ready"), Integer.toString(server.localAddress().getPort()));
+            // Publish the complete port atomically: exists(ready) must never expose an empty file.
+            Path pendingReady = control.resolve("ready.tmp");
+            Files.writeString(pendingReady, Integer.toString(server.localAddress().getPort()));
+            Files.move(pendingReady, control.resolve("ready"), StandardCopyOption.ATOMIC_MOVE);
             var os = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
             long started = 0, cpuStarted = 0, peakHeap = 0;
             while (!Files.exists(control.resolve("shutdown"))) {

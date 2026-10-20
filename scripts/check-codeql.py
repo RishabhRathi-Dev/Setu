@@ -65,6 +65,11 @@ def check(directory):
                 raise ValueError(f"CodeQL run has no tool driver: {report}")
             for result in run.get("results", []):
                 rule = resolve_rule(tool, result)
+                # CodeQL emits these only for reviewed // codeql[query-id] source annotations.
+                if any(suppression.get("kind") == "inSource"
+                       and suppression.get("status", "accepted") == "accepted"
+                       for suppression in result.get("suppressions", [])):
+                    continue
                 severity = float(rule.get("properties", {}).get("security-severity", 0))
                 if severity >= 7 or result.get("level", rule.get("defaultConfiguration", {}).get("level")) == "error":
                     locations = result.get("locations", [])

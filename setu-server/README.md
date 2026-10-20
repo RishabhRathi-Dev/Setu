@@ -126,7 +126,7 @@ Malformed frame lengths, partial frames and TLS handshake failures close the con
 
 ## Logs and tests
 
-[logback.xml](../config/logback.xml) defaults to DEBUG, persists `logs/setu.log`, rotates daily or at 100 MB, retains 14 days and caps archives at 2 GB. Use `SETU_LOG_DIR`, `SETU_LOG_LEVEL`, or `-Dsetu.log.level` to configure logging; the level property takes precedence. Record payloads, passwords and private keys are not logged. Connection/session and request diagnostics include correlation IDs and error details.
+[logback.xml](../config/logback.xml) defaults to DEBUG, persists `logs/setu.log`, rotates daily or at 100 MB, retains 14 days and caps archives at 2 GB. Use `SETU_LOG_DIR`, `SETU_LOG_LEVEL`, or `-Dsetu.log.level` to configure logging; the level property takes precedence. Record payloads, passwords and private keys are not logged. Untrusted diagnostic fields escape line separators and backslashes so request identities and error text cannot create forged log lines; protocol values remain unchanged. Connection/session and request diagnostics include correlation IDs and error details.
 
 From the repository root with Java 26:
 

@@ -13,6 +13,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -169,6 +170,35 @@ class DefaultBrokerTests {
             BrokerException failure = assertThrows(BrokerException.class,
                     () -> acknowledge(broker, "g", "member", 1));
             assertTrue(failure.getMessage().contains("not fetched"));
+        }
+    }
+
+    @Test
+    void fileTopicsCannotTraverseOutsideTheDataDirectory() throws Exception {
+        try (var broker = new DefaultBroker(tempDir.resolve("broker"), 1024)) {
+            for (String topic : java.util.List.of("../escaped", "..\\escaped", "/escaped", ".", "..", "a/b")) {
+                var failure = assertThrows(BrokerException.class, () -> broker.execute(new BrokerRequest(
+                        1, Command.CREATE_TOPIC, topic, -1, -1, -1, null, 1, null, null)));
+                assertEquals(io.setu.core.protocol.ErrorCode.BAD_REQUEST, failure.errorCode());
+            }
+            assertFalse(Files.exists(tempDir.resolve("escaped")));
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.LINUX)
+    void fileTopicsAndPartitionsCannotFollowSymlinksOutsideTheirParent() throws Exception {
+        Path root = Files.createDirectories(tempDir.resolve("broker"));
+        Path external = Files.createDirectories(tempDir.resolve("outside"));
+        try (var broker = new DefaultBroker(root, 1024)) {
+            Files.createSymbolicLink(root.resolve("topic-link"), external);
+            assertThrows(BrokerException.class, () -> broker.execute(new BrokerRequest(
+                    1, Command.CREATE_TOPIC, "topic-link", -1, -1, -1, null, 1, null, null)));
+            Path topic = Files.createDirectories(root.resolve("partition-link"));
+            Files.createSymbolicLink(topic.resolve("partition-0"), external);
+            assertThrows(BrokerException.class, () -> broker.execute(new BrokerRequest(
+                    1, Command.CREATE_TOPIC, "partition-link", -1, -1, -1, null, 1, null, null)));
+            try (var children = Files.list(external)) { assertEquals(0, children.count()); }
         }
     }
 

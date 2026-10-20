@@ -1,5 +1,6 @@
 package io.setu.server.security;
 
+import io.setu.core.logging.LogText;
 import io.setu.security.authentication.AuthenticationResult;
 import io.setu.security.authorization.AuthorizationContext;
 import io.setu.security.authorization.Authorizer;
@@ -59,10 +60,10 @@ public final class SecuredRequestProcessor implements RequestProcessor {
         } catch (io.setu.core.protocol.BufferBudget.Exhausted failure) {
             return error(request, frame, ErrorCode.QUOTA_EXCEEDED, failure.getMessage());
         } catch (ProtocolException failure) {
-            LOG.warn("Security metadata rejected principal={} frame_bytes={} reason={}", identity.principal(), length, failure.getMessage());
+            LOG.warn("Security metadata rejected principal={} frame_bytes={} reason={}", LogText.escape(identity.principal()), length, LogText.escape(failure.getMessage()));
             return error(request, frame, failure.errorCode(), failure.getMessage());
         } catch (IOException failure) {
-            LOG.warn("Security metadata resolution failed principal={} frame_bytes={}", identity.principal(), length, failure);
+            LOG.warn("Security metadata resolution failed principal={} frame_bytes={}", LogText.escape(identity.principal()), length, failure);
             return error(request, frame, ErrorCode.BAD_REQUEST, failure.getMessage());
         }
 
@@ -74,7 +75,7 @@ public final class SecuredRequestProcessor implements RequestProcessor {
                 if (authorization == null || !authorization.allowed()) {
                     String reason = authorization == null ? "authorizer returned no decision" : authorization.reason();
                     LOG.warn("Authorization denied principal={} resource={} permission={} reason={}",
-                            identity.principal(), requirement.resource(), requirement.permission(), reason);
+                            LogText.escape(identity.principal()), LogText.escape(requirement.resource()), requirement.permission(), LogText.escape(reason));
                     return error(request, frame, ErrorCode.AUTHORIZATION_DENIED, reason);
                 }
             }
@@ -82,21 +83,21 @@ public final class SecuredRequestProcessor implements RequestProcessor {
             var quota = quotaManager.check(identity.principal(), 1, length);
             if (!quota.allowed()) {
                 LOG.warn("Quota rejected principal={} resource={} frame_bytes={} reason={}",
-                        identity.principal(), metadata.resource(), length, quota.reason());
+                        LogText.escape(identity.principal()), LogText.escape(metadata.resource()), length, LogText.escape(quota.reason()));
                 return error(request, frame, ErrorCode.QUOTA_EXCEEDED, quota.reason());
             }
             if (LOG.isDebugEnabled()) LOG.debug("Security accepted principal={} resource={} permission={} frame_bytes={}",
-                    identity.principal(), metadata.resource(), metadata.permission(), length);
+                    LogText.escape(identity.principal()), LogText.escape(metadata.resource()), metadata.permission(), length);
             return frame == null ? requestHandler.handle(request) : requestHandler.handle(frame);
         } catch (io.setu.core.protocol.BufferBudget.Exhausted failure) {
             return error(request, frame, ErrorCode.QUOTA_EXCEEDED, failure.getMessage());
         } catch (IOException failure) {
             LOG.error("Secured broker request failed principal={} resource={} permission={}",
-                    identity.principal(), metadata.resource(), metadata.permission(), failure);
+                    LogText.escape(identity.principal()), LogText.escape(metadata.resource()), metadata.permission(), failure);
             return error(request, frame, ErrorCode.INTERNAL_ERROR, "Broker request failed");
         } catch (RuntimeException failure) {
             LOG.error("Security evaluation failed principal={} resource={} permission={}",
-                    identity.principal(), metadata.resource(), metadata.permission(), failure);
+                    LogText.escape(identity.principal()), LogText.escape(metadata.resource()), metadata.permission(), failure);
             return error(request, frame, ErrorCode.INTERNAL_ERROR, "Request security failure");
         }
     }

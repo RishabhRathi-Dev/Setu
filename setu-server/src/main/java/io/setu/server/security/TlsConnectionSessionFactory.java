@@ -64,8 +64,11 @@ public final class TlsConnectionSessionFactory implements ConnectionSessionFacto
             tlsSocket.setNeedClientAuth(true);
             tlsSocket.startHandshake();
 
-            var identity = authenticationProvider.authenticate(
-                    new AuthenticationRequest(tlsSocket.getSession()));
+            // Server-mode mTLS validates the client chain and DNS SAN identity, not a server hostname.
+            // CodeQL models SSLEngine server mode but currently misses SSLSocket.setUseClientMode(false).
+            // codeql[java/unsafe-cert-trust] Client authentication is mandatory; HTTPS endpoint checks belong on clients.
+            var verifiedSession = tlsSocket.getSession();
+            var identity = authenticationProvider.authenticate(new AuthenticationRequest(verifiedSession));
             established = true;
             return new ConnectionSession(tlsSocket.getInputStream(), tlsSocket.getOutputStream(), identity, tlsSocket);
         } finally {

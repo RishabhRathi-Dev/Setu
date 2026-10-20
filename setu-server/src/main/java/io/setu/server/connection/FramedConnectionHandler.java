@@ -1,5 +1,7 @@
 package io.setu.server.connection;
 
+import io.setu.core.logging.LogText;
+
 import io.setu.core.protocol.FrameCodec;
 import io.setu.server.dispatcher.RequestHandler;
 import io.setu.server.dispatcher.RequestProcessor;
@@ -100,7 +102,7 @@ public final class FramedConnectionHandler implements ConnectionHandler {
              var connectionCredit = requestBudget.reserve(17L * 1024);
              ConnectionSession session = openSession(channel);
              var principalContext = MDC.putCloseable("principal", session.identity() == null
-                     ? "anonymous" : session.identity().principal().toString())) {
+                     ? "anonymous" : LogText.escape(session.identity().principal()))) {
             if (LOG.isDebugEnabled()) LOG.debug("Session opened peer={} max_frame_bytes={} tcp_nodelay={}", peer, maxFrameSize,
                     channel.socket().getTcpNoDelay());
             DataInputStream input = new DataInputStream(new BufferedInputStream(session.input()));

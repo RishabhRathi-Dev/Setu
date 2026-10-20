@@ -15,6 +15,31 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class RequestLoggingTests {
     @Test
+    void groupAndMemberLineBreaksCannotForgeLogEntries() throws Exception {
+        Logger logger = (Logger) LoggerFactory.getLogger(BrokerRequestHandler.class);
+        Level previous = logger.getLevel();
+        var capture = new ListAppender<ILoggingEvent>();
+        capture.start(); logger.addAppender(capture); logger.setLevel(Level.DEBUG);
+        try (var broker = new io.setu.core.broker.DefaultBroker(1024)) {
+            var handler = new BrokerRequestHandler(broker);
+            broker.execute(new BrokerRequest(1, Command.CREATE_TOPIC, "orders", -1, -1, -1, null, 1, null, null));
+            String group = "group\r\nFORGED", member = "member\nFORGED";
+            var response = ProtocolCodec.decodeResponse(handler.handle(ProtocolCodec.encodeRequest(new BrokerRequest(
+                    2, Command.JOIN_GROUP, "orders", -1, -1, -1, null, 0, group, member))));
+            assertEquals(ErrorCode.NONE, response.errorCode());
+            String logged = capture.list.stream().filter(e -> e.getFormattedMessage().contains("Request command="))
+                    .findFirst().orElseThrow().getFormattedMessage();
+            assertTrue(logged.contains("group=group\\r\\nFORGED member=member\\nFORGED"));
+            assertFalse(logged.contains("\n")); assertFalse(logged.contains("\r"));
+            // Escaping is confined to diagnostics; the original identity still addresses the membership.
+            assertEquals(ErrorCode.NONE, broker.execute(new BrokerRequest(3, Command.HEARTBEAT, null,
+                    -1, -1, -1, null, 0, group, member)).errorCode());
+        } finally {
+            logger.detachAppender(capture); logger.setLevel(previous); capture.stop();
+        }
+    }
+
+    @Test
     void preservesFailureCauseAndRequestContextWithoutLoggingPayloadOrLeakingMdc() throws Exception {
         Logger logger = (Logger) LoggerFactory.getLogger(BrokerRequestHandler.class);
         Level previousLevel = logger.getLevel();

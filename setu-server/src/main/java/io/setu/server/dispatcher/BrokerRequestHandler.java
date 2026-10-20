@@ -1,5 +1,6 @@
 package io.setu.server.dispatcher;
 
+import io.setu.core.logging.LogText;
 import io.setu.core.broker.Broker;
 import io.setu.core.broker.BrokerException;
 import io.setu.core.protocol.BrokerRequest;
@@ -43,8 +44,8 @@ public final class BrokerRequestHandler implements RequestHandler {
             request = frame == null ? ProtocolCodec.decodeRequest(payload) : ProtocolCodec.decodeRequest(frame);
             if (LOG.isDebugEnabled()) MDC.put("correlationId", Integer.toString(request.correlationId()));
             if (LOG.isDebugEnabled()) LOG.debug("Request command={} correlation={} topic={} partition={} offset={} group={} member={} frame_bytes={}",
-                    request.command(), request.correlationId(), request.topic(), request.partition(), request.offset(),
-                    request.groupId(), request.memberId(), length);
+                    request.command(), request.correlationId(), LogText.escape(request.topic()), request.partition(), request.offset(),
+                    LogText.escape(request.groupId()), LogText.escape(request.memberId()), length);
             BrokerResponse response = broker.execute(request);
             byte[] encoded = ProtocolCodec.encodeResponse(response);
             if (LOG.isDebugEnabled()) LOG.debug("Reply command={} correlation={} error={} offset={} records={} frame_bytes={} elapsed_us={}",
@@ -52,13 +53,13 @@ public final class BrokerRequestHandler implements RequestHandler {
                     response.records().size(), encoded.length, (System.nanoTime() - started) / 1000);
             return encoded;
         } catch (ProtocolException failure) {
-            LOG.warn("Malformed request frame_bytes={} reason={}", length, failure.getMessage());
+            LOG.warn("Malformed request frame_bytes={} reason={}", length, LogText.escape(failure.getMessage()));
             return error(payload, frame, failure.errorCode(), failure.getMessage());
         } catch (BrokerException failure) {
             LOG.warn("Request rejected command={} correlation={} topic={} partition={} error={} reason={}",
                     request == null ? null : request.command(), request == null ? null : request.correlationId(),
-                    request == null ? null : request.topic(), request == null ? null : request.partition(),
-                    failure.errorCode(), failure.getMessage());
+                    request == null ? null : LogText.escape(request.topic()), request == null ? null : request.partition(),
+                    failure.errorCode(), LogText.escape(failure.getMessage()));
             return error(payload, frame, failure.errorCode(), failure.getMessage());
         } catch (io.setu.core.protocol.BufferBudget.Exhausted failure) {
             return error(payload, frame, ErrorCode.QUOTA_EXCEEDED, failure.getMessage());
@@ -85,7 +86,7 @@ public final class BrokerRequestHandler implements RequestHandler {
     private static void logFailure(BrokerRequest request, int bytes, Exception failure) {
         LOG.error("Broker request failed command={} correlation={} topic={} partition={} offset={} frame_bytes={}",
                 request == null ? null : request.command(), request == null ? null : request.correlationId(),
-                request == null ? null : request.topic(), request == null ? null : request.partition(),
+                request == null ? null : LogText.escape(request.topic()), request == null ? null : request.partition(),
                 request == null ? null : request.offset(), bytes, failure);
     }
 }

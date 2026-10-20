@@ -94,7 +94,7 @@ Measured JFR stages now include `file_force_count`, `file_force_total_ms`, `file
 
 ## Isolated steady throughput
 
-`--kind steady` runs separate broker and client JVMs for both storage modes, with one and four partitions. The workload offers 10,000 records/s for three seconds after warmup. Each completed capture includes accepted/delivered records, measured rates, missed scheduled records, request errors, drain time, and request/scheduled-completion latency. `missed_records` counts records whose scheduled send slots were skipped before the deadline; it is not a count of lost accepted records.
+The broker publishes its readiness port atomically before the load JVM starts, so readiness cannot expose an empty port file. `--kind steady` runs separate broker and client JVMs for both storage modes, with one and four partitions. The workload offers 10,000 records/s for three seconds after warmup. Each completed capture includes accepted/delivered records, measured rates, missed scheduled records, request errors, drain time, and request/scheduled-completion latency. `missed_records` counts records whose scheduled send slots were skipped before the deadline; it is not a count of lost accepted records.
 
 ```bash
 python3 scripts/run-benchmarks.py --kind steady --payload-sizes 1024 --report-only

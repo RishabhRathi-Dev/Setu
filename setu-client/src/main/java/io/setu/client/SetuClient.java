@@ -1,5 +1,6 @@
 package io.setu.client;
 
+import io.setu.core.logging.LogText;
 import io.setu.core.protocol.BrokerRequest;
 import io.setu.core.protocol.BrokerResponse;
 import io.setu.core.protocol.Command;
@@ -122,7 +123,7 @@ public final class SetuClient implements AutoCloseable {
         long started = LOG.isDebugEnabled() ? System.nanoTime() : 0;
         try {
             if (LOG.isDebugEnabled()) LOG.debug("Sending command={} correlation={} peer={} topic={} partition={} offset={} frame_bytes={}",
-                    command, correlation, socket.getRemoteSocketAddress(), topic, partition, offset, requestBytes.length);
+                    command, correlation, socket.getRemoteSocketAddress(), LogText.escape(topic), partition, offset, requestBytes.length);
             FrameCodec.writeFrame(output, requestBytes, maxFrameSize);
             BrokerResponse response = responseReader.readFrom(input, maxFrameSize, command);
             if (response == null) throw new EOFException("Broker closed the connection before replying");
@@ -136,14 +137,14 @@ public final class SetuClient implements AutoCloseable {
             if (response.errorCode() != io.setu.core.protocol.ErrorCode.NONE)
                 LOG.warn("Broker rejected command={} correlation={} peer={} topic={} partition={} error={} reason={}",
                         command, correlation, socket.getRemoteSocketAddress(),
-                        topic, partition, response.errorCode(), response.errorMessage());
+                        LogText.escape(topic), partition, response.errorCode(), LogText.escape(response.errorMessage()));
             return response;
         } catch (IOException | RuntimeException failure) {
             closed = true;
             try { socket.close(); } catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
             LOG.error("Client request failed command={} correlation={} peer={} topic={} partition={} offset={}",
                     command, correlation, socket.getRemoteSocketAddress(),
-                    topic, partition, offset, failure);
+                    LogText.escape(topic), partition, offset, failure);
             throw failure;
         } finally {
             if (closed) {
