@@ -2,9 +2,29 @@
 
 `SetuClient` is the synchronous Java client for Setu protocol v1. It supports plaintext and TLS/mTLS, shares codecs with [setu-core](../setu-core/README.md#protocol-v1), and uses [setu-security](../setu-security/README.md) for TLS configuration.
 
+## Add to a Maven application
+
+With JDK 26, install the client and its reactor dependencies into your local Maven repository:
+
+```powershell
+.\mvnw.cmd -pl setu-client -am install
+```
+
+On Linux/macOS, use `bash ./mvnw -pl setu-client -am install`. In your application's `pom.xml`, add:
+
+```xml
+<dependency>
+    <groupId>org.rishabh</groupId>
+    <artifactId>setu-client</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
+```
+
+These coordinates refer to the snapshot installed by the command above. Compile and run your application on JDK 26. A remote client does not open Chronicle partition logs; applications embedding a file-backed broker must also use the [shared JVM options](../config/jvm.options).
+
 ## Example
 
-Start the [local broker](../README.md#quick-start), then run this in an application with the client module on its classpath. The example creates a new `orders` topic, appends a batch and fetches it by the returned offset.
+Start the [local broker](../README.md#quick-start), then run this in an application with the client module on its classpath. The example creates or reuses `orders`, joins before producing, appends a batch, and acknowledges the fetched records. It works with both storage modes and can be rerun. For a source-launchable version, use [SetuQuickstart.java](../examples/SetuQuickstart.java).
 
 ```java
 import io.setu.client.SetuClient;
@@ -13,19 +33,33 @@ import io.setu.core.protocol.ErrorCode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.UUID;
 
 public class ClientExample {
     public static void main(String[] args) throws Exception {
+        String group = "orders-example";
+        String member = UUID.randomUUID().toString();
         try (var client = SetuClient.connectPlain("127.0.0.1", 9092,
-                5_000, 30_000, 16 * 1024 * 1024)) {
-            checked(client.createTopic("orders", 1));
-            var appended = checked(client.produceBatch("orders", 0, List.of(
-                    "order-1".getBytes(StandardCharsets.UTF_8),
-                    "order-2".getBytes(StandardCharsets.UTF_8))));
-            var page = checked(client.fetch("orders", 0, appended.offset(), 1024));
-            for (var record : page.records()) {
-                System.out.println(record.offset() + ": "
-                        + new String(record.value(), StandardCharsets.UTF_8));
+                5_000, 35_000, 16 * 1024 * 1024)) {
+            var created = client.createTopic("orders", 1);
+            if (created.errorCode() != ErrorCode.TOPIC_ALREADY_EXISTS) checked(created);
+            // Memory members start at the end: join before producing needed records.
+            checked(client.joinGroup(group, "orders", member));
+            try {
+                var appended = checked(client.produceBatch("orders", 0, List.of(
+                        "order-1".getBytes(StandardCharsets.UTF_8),
+                        "order-2".getBytes(StandardCharsets.UTF_8))));
+                var page = checked(client.fetch(group, member, "orders", 0,
+                        appended.offset(), 1024));
+                if (page.records().size() != 2) throw new IOException("Expected two records");
+                for (var record : page.records()) {
+                    System.out.println(record.offset() + ": "
+                            + new String(record.value(), StandardCharsets.UTF_8));
+                }
+                checked(client.acknowledge(group, member, "orders", 0,
+                        page.records().getLast().offset() + 1));
+            } finally {
+                checked(client.leaveGroup(group, member));
             }
         }
     }

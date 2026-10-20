@@ -1,12 +1,24 @@
 # Setu
 
-**A single-node Java message broker with partitioned logs, durable acknowledgements, and a binary TCP protocol.**
+**A single-node Java message broker with partitioned logs and durable acknowledgements.**
 
-[CI](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml) · [Architecture](docs/architecture.md) · [Configuration](docs/configuration.md) · [Operations](docs/operations.md) · [Contributing](CONTRIBUTING.md)
+[![CI](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml/badge.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml)
+[![Java 26](https://img.shields.io/badge/Java-26-2563eb)](pom.xml)
+[![Maven Wrapper](https://img.shields.io/badge/build-Maven_Wrapper-2563eb)](.mvn/wrapper/maven-wrapper.properties)
+
+[Quick start](#quick-start) · [Documentation](docs/README.md) · [Examples](examples/README.md) · [Contributing](CONTRIBUTING.md) · [Get help](SUPPORT.md)
 
 Setu stores ordered records in topic partitions and exposes explicit produce, fetch, and consumer-progress operations. The default `FILE` engine uses OpenHFT Chronicle Queue; `IN_MEMORY` provides bounded, volatile storage. The implementation includes blocking and selector TCP transports, a synchronous Java client, and an embedded mTLS security pipeline.
 
 Setu is under active development. It runs as one broker process, with no replication or failover. Consumer state and security policies are process-local. See [implementation boundaries](#implementation-boundaries) before choosing a deployment model.
+
+## At a glance
+
+- **Partitioned messaging:** explicit partition selection, ordered offsets, batch produce, and long-poll fetch.
+- **Two storage modes:** durable daily Chronicle logs with group commit and optional file retention, or bounded memory with consumer-driven reclamation.
+- **Java integration:** a synchronous TCP client, runnable examples, and a broker that can be embedded directly.
+- **Embedded security:** mTLS identities, default-deny exact ACLs, and per-principal request/byte quotas.
+- **Measured behavior:** functional TCP/mTLS tests, recovery and chaos checks, and benchmark reports that retain qualification failures.
 
 ## Contents
 
@@ -19,6 +31,7 @@ Setu is under active development. It runs as one broker process, with no replica
 - [Repository guide](#repository-guide)
 - [Implementation boundaries](#implementation-boundaries)
 - [Performance](#performance)
+- [Help and contributions](#help-and-contributions)
 
 ## Quick start
 
@@ -61,7 +74,7 @@ On a fresh topic, it prints:
 
 The example creates a topic, joins a consumer group, appends a batch, fetches it, acknowledges the next offset, and leaves the group. It can be rerun; offsets increase in durable mode. Optional arguments select a host and port. Use a dedicated local broker while running it.
 
-For an application, build with `-pl setu-client -am install` and depend on `org.rishabh:setu-client:1.0.0-SNAPSHOT`. The [client guide](setu-client/README.md) documents error handling, TLS, timeouts, and ownership.
+To use Setu in an application, [install the client modules locally and add the Maven dependency](setu-client/README.md#add-to-a-maven-application). The client guide also documents error handling, TLS, timeouts, and ownership.
 
 ## Architecture
 
@@ -151,6 +164,7 @@ Benchmark-helper tests, bounded chaos, load checks, baseline/target measurements
 | [setu-integration-tests/](setu-integration-tests/README.md) | Functional verification over real sockets |
 | [setu-benchmark/](setu-benchmark/README.md) | Throughput, latency, JFR, crash recovery, and chaos |
 | [docs/](docs/README.md) | Architecture, configuration, and operations guides |
+| [AGENTS.md](AGENTS.md) | Repository knowledge base, source entry points, invariants, and agent verification guidance |
 | [scripts/](scripts/README.md) | Launch, certificate, profiling, reporting, and diagnostic tools |
 | [examples/](examples/README.md) | Runnable clients, batch/partition fetches, long polling, embedded brokers, recovery and retention |
 | [config/](config/server.properties) | Server properties, JVM flags, and Logback configuration |
@@ -302,3 +316,9 @@ Waits are elapsed time inside jdk.FileForce, clipped to each measured stage. Con
 <!-- benchmark-capacity-details:end -->
 
 </details>
+
+## Help and contributions
+
+For setup help or a reproducible bug, start with [support and troubleshooting](SUPPORT.md). Use the [issue forms](https://github.com/RishabhRathi-Dev/Setu/issues/new/choose) for bugs and feature requests. Report vulnerabilities privately following the [security policy](SECURITY.md).
+
+Contributions should include focused changes, relevant verification, and updated documentation. The [contributing guide](CONTRIBUTING.md) covers setup, checks, and pull requests; [AGENTS.md](AGENTS.md) records the repository map and contracts for coding agents.

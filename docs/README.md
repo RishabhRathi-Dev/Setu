@@ -2,6 +2,19 @@
 
 Start with the [project README](../README.md) for a runnable quickstart and supported behavior. These guides describe the current implementation; the module READMEs provide API and subsystem detail.
 
+## Choose a path
+
+| Goal | Reading path |
+| --- | --- |
+| Try Setu locally | [Quickstart](../README.md#quick-start) → [runnable examples](../examples/README.md) |
+| Add the Java client | [Maven dependency and client API](../setu-client/README.md) → [consumer semantics](../setu-core/README.md#broker-semantics) |
+| Run or recover a broker | [Configuration](configuration.md) → [operations](operations.md) → [storage contracts](../setu-storage/README.md) |
+| Embed a secure listener | [Secure server wiring](../setu-server/README.md#secure-broker-wiring-example) → [identities, ACLs, and quotas](../setu-security/README.md) |
+| Change the implementation | [Contributing](../CONTRIBUTING.md) → [architecture](architecture.md) → [repository knowledge base](../AGENTS.md) |
+| Investigate a problem | [Troubleshooting](operations.md#logs-and-diagnosis) → [support and issue reporting](../SUPPORT.md) |
+
+## Project guides
+
 | Guide | What it explains |
 | --- | --- |
 | [Architecture](architecture.md) | Module dependencies, request flow, persistence, consumers, and backpressure |
@@ -9,6 +22,8 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | [Operations](operations.md) | Packaging, startup, logs, shutdown, recovery, migration, and troubleshooting |
 | [Contributing](../CONTRIBUTING.md) | Build requirements, verification commands, and repository conventions |
 | [Tooling](../scripts/README.md) | Launchers, certificate generation, benchmarks, JFR, and badge publication |
+| [Security policy](../SECURITY.md) | Private vulnerability reporting and deployment boundaries |
+| [Repository knowledge base](../AGENTS.md) | Source entry points, critical contracts, and verification guidance for coding agents |
 
 ## Module references
 
@@ -23,3 +38,5 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | Benchmarks | [Profiles, qualification criteria, and JFR interpretation](../setu-benchmark/README.md) |
 
 Mermaid diagrams are stored as text alongside the explanations and render directly on GitHub. Local benchmark output belongs under ignored `logs/`, rather than in documentation. Published measurements must identify their source revision and qualification status.
+
+The source of truth for standalone properties is [SetuServerMain.java](../setu-server/src/main/java/io/setu/server/SetuServerMain.java); for wire field order it is [ProtocolCodec.java](../setu-core/src/main/java/io/setu/core/protocol/ProtocolCodec.java). If a guide differs from the implementation, include the affected revision when [reporting the discrepancy](../SUPPORT.md).

@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a reproducible problem with Setu.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues and check the operations guide first.
+        For vulnerabilities, follow SECURITY.md instead of posting details here.
+        Remove credentials, private keys, and application data from all examples and logs.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem and its impact. What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest example, exact commands, and relevant configuration.
+      placeholder: |
+        1. Build with ...
+        2. Start with ...
+        3. Send ...
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the commit, OS, JDK, Maven version, storage mode, and transport.
+      placeholder: |
+        Commit (git rev-parse HEAD):
+        OS:
+        java -version:
+        Maven Wrapper version (./mvnw.cmd -version or bash ./mvnw -version):
+        Storage mode (FILE / IN_MEMORY):
+        Transport (blocking / selector / embedded TLS):
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs and additional evidence
+      description: Paste relevant error text or sanitized logs. For performance issues, include profile, resources, and qualification results.
+      render: text

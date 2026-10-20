@@ -104,11 +104,13 @@ The tool builds the benchmark classes, writes a new recording directory under `l
 | `QUOTA_EXCEEDED` | Inspect memory-log/write-queue admission, transport budgets, and secure principal quotas; reduce batch/load or advance consumers |
 | Memory records missing | Join before producing; check member expiry, acknowledgements, and optional lossy retention |
 | Empty fetch | Check offset, available data, and byte budget; an oversized first record returns an empty page |
-| `OFFSET_OUT_OF_RANGE` | Check partition end and timed memory expiry; choose a valid application resume point |
+| `OFFSET_OUT_OF_RANGE` | Check partition end, timed memory expiry, and file retention; inspect the reported resume boundary before choosing an application resume point |
 | Member no longer registered | Rejoin and resume according to storage semantics; heartbeats do not replace acknowledgements |
 | Slow long poll times out at client | Set client read timeout above the requested wait, at most 30 seconds plus headroom |
 | `AUTHORIZATION_DENIED` after valid mTLS | Register exact principal/resource/permission grants in the embedding application |
 | Lost produce response | Treat outcome as uncertain; automatic retry can duplicate records |
+
+If these checks do not resolve the problem, follow [support and issue reporting](../SUPPORT.md) and include the revision, environment, configuration, and a minimal reproduction. Use the [security policy](../SECURITY.md) for suspected vulnerabilities.
 
 ## AOT cache lifecycle
 

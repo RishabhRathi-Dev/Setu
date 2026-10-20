@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose an improvement with a concrete use case.
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Problem or use case
+      description: What are you trying to accomplish? Describe the limitation you encounter today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired outcome and an example of how someone would use it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include workarounds and why they do not meet the use case.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Compatibility and scope
+      description: Note any expected API, wire protocol, storage format, configuration, or performance implications.

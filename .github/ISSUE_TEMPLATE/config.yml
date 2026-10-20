@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation and troubleshooting
+    url: https://github.com/RishabhRathi-Dev/Setu/blob/HEAD/SUPPORT.md
+    about: Find setup instructions, configuration, and operational guidance.
+  - name: Report a security vulnerability
+    url: https://github.com/RishabhRathi-Dev/Setu/blob/HEAD/SECURITY.md
+    about: Follow the private reporting guidance before sharing security details.
