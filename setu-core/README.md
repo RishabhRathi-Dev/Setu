@@ -75,4 +75,4 @@ From the repository root with Java 26:
 .\mvnw.cmd -pl setu-core -am test
 ```
 
-Tests cover protocol validation/ownership, offsets, membership, long polling, memory reclamation, expiry and Chronicle recovery. See the [project overview](../README.md#current-implementation-snapshot) for module boundaries.
+Tests cover protocol validation/ownership, offsets, membership, long polling, memory reclamation, expiry and Chronicle recovery. See the [architecture guide](../docs/architecture.md) for module boundaries.

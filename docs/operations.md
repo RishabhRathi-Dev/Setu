@@ -1,0 +1,106 @@
+# Operations
+
+Setu runs as a single broker process. The standalone launcher provides a local plaintext listener; embed the [secure server factory](../setu-server/README.md#secure-broker-wiring-example) for TLS/mTLS. [Configuration](configuration.md) lists every supported setting.
+
+## Build and distribute
+
+Use JDK 26 and run from the repository root:
+
+```powershell
+.\mvnw.cmd -pl setu-server -am package
+```
+
+Use `bash ./mvnw` on Linux/macOS. Packaging produces:
+
+```text
+setu-server/target/
+├── setu-server-1.0.0-SNAPSHOT.jar
+└── lib/                            # Runtime dependency JARs
+```
+
+Keep the application JAR and its adjacent `lib/` together. Include `config/jvm.options` and your properties file in the distribution, and choose a consistent working directory for data and logs. The JAR manifest identifies the entry point and relative dependency classpath.
+
+## Start and stop
+
+```powershell
+.\scripts\start-broker.ps1 --config config/server.properties
+```
+
+On Linux/macOS:
+
+```bash
+bash ./scripts/start-broker.sh --config config/server.properties
+```
+
+The launchers locate the application JAR and shared JVM flags from their own repository location. Configuration arguments and runtime paths remain relative to the caller's working directory. A direct PowerShell launch is:
+
+```powershell
+java '@config/jvm.options' -jar setu-server/target/setu-server-1.0.0-SNAPSHOT.jar --config config/server.properties
+```
+
+Look for `Setu listening on` with the bound address, storage mode, and transport. Run the [quickstart client](../examples/SetuQuickstart.java) to verify a complete produce/fetch/ack exchange; it writes two records to a local `quickstart` topic.
+
+Ctrl+C runs the shutdown hook: acceptance stops, tracked connections close, accepted log writes drain, and the broker closes its partition logs. In an embedded application, close the server before the broker. Keep one broker owner per partition; an exclusive lock prevents simultaneous file-mode ownership.
+
+## Durable data and recovery
+
+File-mode layout is:
+
+```text
+data/
+└── <topic>/
+    └── partition-<id>/
+        ├── .setu.lock
+        ├── metadata.cq4t
+        └── <daily-cycle>.cq4
+```
+
+On startup, Setu validates committed documents and rebuilds its logical-offset index. A malformed committed document fails startup. An incomplete native document does not consume a recovered offset. Preserve the failing data for investigation; do not edit queue bytes or discard later files to force startup.
+
+For a consistent offline copy, stop the broker cleanly and copy the complete data root, including metadata and all partition files. Active-file snapshot/backup coordination is not implemented. Restore into a separate root with one owner, use a compatible application/JDK, and verify recovered topics and records before switching applications. Broker consumer offsets, memberships, ACLs, and quotas must be recreated by applications.
+
+Older length-prefixed `.log` partitions require the [offline migration procedure](../setu-storage/README.md#migrating-existing-data). Import into a new, nonexistent directory outside the source root; the importer preserves the source. Verify the import before changing `data.dir`.
+
+Monitor disk space: daily roll and mapping block size do not impose retention. There is no supported online topic-deletion or segment-pruning API. A durable success means the local force boundary completed; it does not provide replication or protection against a failed device. Lost replies can leave writes with uncertain outcomes.
+
+## Logs and diagnosis
+
+`logs/setu.log` contains operational events. Logs rotate daily or at 100 MB, retain 14 days, and cap archives at 2 GB. Set `SETU_LOG_DIR` and `SETU_LOG_LEVEL`, or pass `-Dsetu.log.level` on a direct JVM launch. The system property takes precedence. Correlation IDs, session IDs, errors, and consumer-expiry details help connect client failures with server events.
+
+For a local JFR capture using the existing TCP workload:
+
+```powershell
+python scripts/run-jfr.py --storage-mode FILE
+```
+
+The tool builds the benchmark classes, writes a new recording directory under `logs/jfr/`, and validates completed measured-stage markers. It is a diagnostic smoke workload, with clients and broker in one JVM and no OS resource quota. The [benchmark guide](../setu-benchmark/README.md#local-jfr-capture) explains output files, recording limits, and full qualification profiles.
+
+| Symptom | Check / response |
+| --- | --- |
+| `java` missing or compiler release unsupported | Set `JAVA_HOME` and `PATH` to JDK 26; check `java -version` and Maven's JDK |
+| JAR missing / dependency class not found | Rebuild `setu-server` with `-am package`; retain adjacent `lib/` |
+| Chronicle access/native error | Launch with the shared `config/jvm.options` |
+| Existing AOT cache rejected | Launch with `--no-aot`, then regenerate the cache for the current build |
+| Address already in use | Stop the existing listener or select another `bind.port` |
+| Partition lock failure | Verify no other broker owns that data root |
+| Unknown property / invalid enum | Check exact supported keys and case in the [configuration reference](configuration.md) |
+| `QUOTA_EXCEEDED` | Inspect memory-log/write-queue admission, transport budgets, and secure principal quotas; reduce batch/load or advance consumers |
+| Memory records missing | Join before producing; check member expiry, acknowledgements, and optional lossy retention |
+| Empty fetch | Check offset, available data, and byte budget; an oversized first record returns an empty page |
+| `OFFSET_OUT_OF_RANGE` | Check partition end and timed memory expiry; choose a valid application resume point |
+| Member no longer registered | Rejoin and resume according to storage semantics; heartbeats do not replace acknowledgements |
+| Slow long poll times out at client | Set client read timeout above the requested wait, at most 30 seconds plus headroom |
+| `AUTHORIZATION_DENIED` after valid mTLS | Register exact principal/resource/permission grants in the embedding application |
+| Lost produce response | Treat outcome as uncertain; automatic retry can duplicate records |
+
+## AOT cache lifecycle
+
+```powershell
+.\scripts\start-broker.ps1 --train-aot
+.\scripts\start-broker.ps1 --config config/server.properties
+.\scripts\start-broker.ps1 --no-aot --config config/server.properties
+```
+
+Use the corresponding Bash launcher on Linux/macOS. Training generates `setu-server/target/setu-server.aot` through real plaintext and mTLS exchanges in both storage modes, including deliberate rejection cases. Existing caches are used in strict mode unless bypassed. Generate a new cache after changes to the JDK, platform, application, or dependencies. Caches are local build artifacts and remain untracked.
+
+On the tested JDK, Chronicle's module flags disable AOT class linking; shared application classes still load from the cache. JIT compilation remains responsible for native application code. See [the server guide](../setu-server/README.md#standalone-jar) for training and CI details.

@@ -1,127 +1,178 @@
 # Setu
 
-Setu is a **single-node message broker in Java 26** with topics, partitions, ordered offsets and a binary TCP protocol. **OpenHFT Chronicle Queue is the default durable storage engine**; an explicit in-memory mode supports volatile workloads.
+**A single-node Java message broker with partitioned logs, durable acknowledgements, and a binary TCP protocol.**
 
-[Build and CI](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml) · [Server guide](setu-server/README.md) · [Client API](setu-client/README.md) · [Benchmarks](setu-benchmark/README.md)
+[CI](https://github.com/RishabhRathi-Dev/Setu/actions/workflows/ci.yml) · [Architecture](docs/architecture.md) · [Configuration](docs/configuration.md) · [Operations](docs/operations.md) · [Contributing](CONTRIBUTING.md)
+
+Setu stores ordered records in topic partitions and exposes explicit produce, fetch, and consumer-progress operations. The default `FILE` engine uses OpenHFT Chronicle Queue; `IN_MEMORY` provides bounded, volatile storage. The implementation includes blocking and selector TCP transports, a synchronous Java client, and an embedded mTLS security pipeline.
+
+Setu is under active development. It runs as one broker process, with no replication or failover. Consumer state and security policies are process-local. See [implementation boundaries](#implementation-boundaries) before choosing a deployment model.
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Architecture](#architecture)
+- [Messaging and storage](#messaging-and-storage)
+- [Security](#security)
+- [Configuration](#configuration)
+- [Build and verification](#build-and-verification)
+- [Repository guide](#repository-guide)
+- [Implementation boundaries](#implementation-boundaries)
+- [Performance](#performance)
 
 ## Quick start
 
-Install a Java 26 JDK, set `JAVA_HOME`, and put its `bin` directory on `PATH`. The checked-in Maven Wrapper downloads Maven on first use.
+### 1. Build and start the broker
 
-From the repository root on Windows:
+Install **JDK 26**, set `JAVA_HOME` to its directory, and add its `bin/` directory to `PATH`. The Maven Wrapper downloads the pinned Maven distribution on first use; no separate Maven installation is required. Run these commands from the repository root.
+
+**Windows / PowerShell**
 
 ```powershell
 .\mvnw.cmd -pl setu-server -am package
 .\scripts\start-broker.ps1 --config config/server.properties
 ```
 
-On Linux or macOS:
+**Linux / macOS**
 
 ```bash
 bash ./mvnw -pl setu-server -am package
 bash ./scripts/start-broker.sh --config config/server.properties
 ```
 
-The broker listens on **127.0.0.1:9092**, stores messages under `data/`, and writes rolling operational logs under `logs/`. Ctrl+C closes the broker. The standalone launcher serves plaintext; use [secure embedding](setu-server/README.md#secure-broker-wiring-example) for TLS/mTLS listeners.
+Wait for `Setu listening on` in the console. Defaults are plaintext **127.0.0.1:9092**, durable data in `data/`, and rolling logs in `logs/`. Ctrl+C closes connections and drains accepted storage writes. Keep the JAR and its adjacent `setu-server/target/lib/` dependencies together.
 
-Both launchers load [config/jvm.options](config/jvm.options), including ZGC, string deduplication and Chronicle's required module/native access. Optional AOT training is available through `--train-aot`; regenerate the cache after changing the application, dependencies or JDK. See the [launch and AOT instructions](setu-server/README.md#standalone-jar).
+Both launchers load [config/jvm.options](config/jvm.options), including ZGC, string deduplication, and Chronicle's module/native access. [Operations](docs/operations.md) covers direct JAR launches, logging, shutdown, recovery, and optional AOT training.
 
-Configure the broker in [config/server.properties](config/server.properties):
+### 2. Produce and consume records
 
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| `storage.mode` | `FILE` | Chronicle Queue; use `IN_MEMORY` for volatile storage |
-| `data.dir` | `data` | Topic and partition data root |
-| `transport` | `blocking` | Virtual thread per connection; `selector` supports plaintext multiplexing |
-| `record.max.bytes` | 1 MiB | Maximum record payload |
-| `queue.block.bytes` | 64 MiB | Chronicle mapping block size, with a 64 MiB minimum |
-| `memory.log.max.bytes` | 256 MiB | Shared retained-log budget in memory mode |
-| `ack.timeout.millis` | 30,000 | Deadline for acknowledging fetched records |
-| `consumer.timeout.millis` | 60,000 | Consumer inactivity deadline |
+In a second terminal, run the checked-in [Java example](examples/SetuQuickstart.java). The command works in PowerShell and Bash with JDK 26 on `PATH`:
 
-Use [SetuClient](setu-client/README.md#example) to create topics, produce records and fetch by offset. It supports single-record and batched writes, long polling, membership, heartbeats and acknowledgements. Broker errors are returned as structured responses; callers must check `errorCode()`.
+```powershell
+java '@config/jvm.options' -cp 'setu-server/target/lib/*' examples/SetuQuickstart.java
+```
 
-## Current implementation snapshot
+On a fresh topic, it prints:
 
-- **Messaging:** topic creation and metadata, partitioned append/fetch, single and batch produce, group membership and offset acknowledgements.
-- **Protocol:** version 1 binary frames, correlation IDs, strict validation, bounded request/response admission and structured errors.
-- **Concurrency:** immutable payload ownership, CAS-based memory publication and write admission, bounded group commit, and coordinated consumer bookkeeping.
-- **Security:** embedded TLS/mTLS listeners, DNS SAN client identity, default-deny exact ACL grants, and per-principal message/byte quotas.
-- **Verification:** unit tests, real TCP/mTLS integration tests, process-kill recovery, bounded chaos, JFR profiles and AOT cache validation.
+```text
+0: hello, Setu
+1: ordered by partition
+```
 
-The broker runs in one process. Consumer membership, committed offsets, ACL grants and quota policies are process-local. Replication, failover, automatic consumer-group assignment/rebalancing, file retention and payload checksums are not implemented. The client is synchronous and has no automatic retry, reconnect or idempotent produce.
+The example creates a topic, joins a consumer group, appends a batch, fetches it, acknowledges the next offset, and leaves the group. It can be rerun; offsets increase in durable mode. Optional arguments select a host and port. Use a dedicated local broker while running it.
+
+For an application, build with `-pl setu-client -am install` and depend on `org.rishabh:setu-client:1.0.0-SNAPSHOT`. The [client guide](setu-client/README.md) documents error handling, TLS, timeouts, and ownership.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    client[SetuClient] --> server["setu-server<br/>TCP / TLS, framing and dispatch"]
-    server --> core["setu-core<br/>Protocol v1 and DefaultBroker"]
-    server -.-> security["setu-security<br/>Identity, ACLs and quotas"]
-    core --> storage["setu-storage<br/>MessageLog"]
-    storage --> file["FILE<br/>Chronicle Queue"]
-    storage --> memory["IN_MEMORY<br/>Immutable chunks"]
+    app[Java application] --> client[SetuClient]
+    client --> transport["TCP transport<br/>Blocking or selector"]
+    transport --> framing["Frame admission<br/>and protocol v1"]
+    framing --> dispatch[Request dispatch]
+    dispatch --> broker[DefaultBroker]
+    broker --> topics["Topics and partitions<br/>Consumer progress"]
+    topics --> logs[MessageLog]
+    logs --> file["FILE<br/>Group commit + Chronicle Queue"]
+    logs --> memory["IN_MEMORY<br/>Immutable chunks + budget"]
+    security["Embedded security<br/>mTLS, exact ACLs, quotas"] -.-> dispatch
 ```
 
-The server owns transport and request policy, core owns broker operations and shared protocol types, and storage owns the mapping from logical offsets to physical records. PostgreSQL is not part of the runtime.
+Transport manages sockets and buffer admission; core owns protocol and broker semantics; storage maps logical offsets to physical records. The embedded secure server authenticates connections and authorizes requests before dispatch. The standalone properties launcher serves plaintext.
 
-| Module | Responsibility |
-| --- | --- |
-| [setu-core](setu-core/README.md) | Broker API, topics/partitions, consumer bookkeeping and shared wire codec |
-| [setu-storage](setu-storage/README.md) | Chronicle Queue, in-memory logs, admission, group commit and recovery |
-| [setu-server](setu-server/README.md) | Standalone launcher, TCP transports, secure dispatch and AOT training |
-| [setu-client](setu-client/README.md) | Synchronous plaintext and TLS client |
-| [setu-security](setu-security/README.md) | Certificate identity, authorization and token-bucket quotas |
-| [setu-integration-tests](setu-integration-tests/README.md) | Functional requirements over real TCP and mTLS |
-| [setu-benchmark](setu-benchmark/README.md) | Load measurement, JFR, crash recovery and chaos workloads |
+The [architecture guide](docs/architecture.md) includes module dependencies, a durable-write sequence, consumer lifecycle, backpressure, and restart behavior. The [wire reference](setu-core/README.md#protocol-v1) describes framing and command IDs.
 
-## Storage and backpressure
+## Messaging and storage
 
-### Durable mode: `FILE`
+Records are opaque byte arrays. Ordering and dense, zero-based offsets apply **within each partition**. Applications select partitions explicitly. Batch produce returns the first assigned offset; fetch returns whole records within a byte budget. Consumer acknowledgements use the next offset after the last processed record.
 
-Each partition uses Chronicle Queue 2026.6 with native daily rolled `.cq4` files under `<data.dir>/<topic>/partition-<id>/`. Setu exposes dense, zero-based record offsets independently of Chronicle's physical indexes. The mapping block size does not limit daily file size or enable retention.
+| Behavior | `FILE` (default) | `IN_MEMORY` |
+| --- | --- | --- |
+| Engine | Chronicle Queue 2026.6 with bounded group commit | Immutable chunks published with CAS |
+| Successful produce | Touched queue and metadata files have completed the force boundary | Complete batch published in memory |
+| Restart | Topics and records recover from disk | Topics and records are lost |
+| Consumer join | Starts at offset zero | Starts at the current partition end |
+| Reclamation | File retention is not implemented | Slowest registered member's progress; no members allows immediate reclamation |
+| Primary admission | 32 MiB / 1,024 outstanding writes per partition | Shared 256 MiB accounted retained-log budget |
 
-A bounded writer groups adjacent produce requests. Success is returned after JDK mapped-file and channel forces cover touched queue files, indexes and roll metadata. The adapter uses this explicit force path because the resolved OpenHFT native Windows sync is a no-op. A partition has one broker owner. Durable writes serialize, while reads of previously committed records can proceed during forcing.
+In memory mode, **join before producing records a member needs**. Acknowledgement, leaving, and member expiry can release retained prefixes. Optional timed expiry is lossy and disabled by default. Buffer budgets are separate from retained-log admission and do not cap total process memory.
 
-Restart validates committed documents and rebuilds Setu's sparse logical-offset index. Malformed committed data fails startup. Failed or lost acknowledgements can have an uncertain outcome; this is local persistence without replication or exactly-once delivery.
-
-Existing length-prefixed `.log` data requires [offline migration into a fresh data root](setu-storage/README.md#migrating-existing-data). The importer preserves the source files.
-
-### Volatile mode: `IN_MEMORY`
-
-Complete batches publish as immutable chunks with CAS. Group members start at their join-time offsets; acknowledgements and member removal allow reclamation through the slowest registered member. Logical offsets remain monotonic as prefixes are removed. Restart discards topics and messages. Optional time-based expiry is lossy and disabled by default.
-
-The memory budget reserves whole batches before publication. Memory-log and durable write-queue saturation return `QUOTA_EXCEEDED`; clients can retry with backoff after consumer progress. Transport buffers have separate admission limits and can close a connection when no error reply can be admitted. These limits account for specific allocations, rather than imposing a total process-memory cap. See [storage semantics](setu-storage/README.md) and [server limits](setu-server/README.md).
+A failed or lost produce reply has an uncertain outcome; retrying can duplicate records. Read the [storage guide](setu-storage/README.md) for force semantics, recovery, ownership, admission, and [legacy migration](setu-storage/README.md#migrating-existing-data).
 
 ## Security
 
-`SecureServerFactory` composes mTLS authentication, request authorization and quotas with the broker. Client identities come from DNS subject alternative names; ACLs match exact principal/resource/permission grants and deny by default. TLS clients verify the broker hostname. The standalone properties launcher does not configure this secure path.
+`SecureServerFactory` composes JSSE TLS/mTLS, DNS SAN client identity, default-deny exact ACL grants, and per-principal request/byte quotas. TLS clients verify the broker hostname. Security policies are configured by the embedding application.
 
-See the [security module](setu-security/README.md) and [server integration guide](setu-server/README.md) for embedding. Development certificate scripts are available under `scripts/generate-certs.ps1` and `scripts/generate-certs.sh`.
+Use the [secure server example](setu-server/README.md#secure-broker-wiring-example) and [security reference](setu-security/README.md) to configure this path. Development certificate generators are available for [PowerShell](scripts/generate-certs.ps1) and [Bash](scripts/generate-certs.sh); generated keys and stores stay outside version control. Selector transport supports plaintext only.
 
-## Tests
+## Configuration
 
-Run production-module tests and functional TCP/mTLS integration tests without starting the capacity-exhaustion workload:
+The standalone launcher accepts `--config <properties-file>`. Unknown properties fail startup; paths are relative to the launch working directory.
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `storage.mode` | `FILE` | `FILE` or `IN_MEMORY` |
+| `transport` | `blocking` | Virtual thread per connection, or plaintext `selector` |
+| `record.max.bytes` | 1 MiB | Maximum payload per record |
+| `queue.block.bytes` | 64 MiB | Chronicle mapping block size; does not limit file growth |
+| `memory.log.max.bytes` | 256 MiB | Shared accounted retained-log budget |
+| `requests.max.bytes` / `responses.max.bytes` | 128 MiB each | Shared transport buffer budgets |
+| `ack.timeout.millis` / `consumer.timeout.millis` | 30,000 / 60,000 | Consumer progress and inactivity deadlines |
+
+See the [complete configuration reference](docs/configuration.md) for all 17 properties, units, validation, and runtime options. The checked-in [server.properties](config/server.properties) is the local-development baseline.
+
+## Build and verification
+
+Run production-module and real TCP/mTLS integration tests:
 
 ```powershell
 .\mvnw.cmd -pl setu-integration-tests -am test
 ```
 
-Use `bash ./mvnw` in place of `.\mvnw.cmd` on Linux/macOS. Python 3 is needed for benchmark tooling and its report tests:
+On Linux/macOS, substitute `bash ./mvnw`. Python 3.10+ is required for the benchmark tooling and its tests:
 
 ```bash
-python -m unittest discover -s scripts -p 'test_benchmark*.py'
+python -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-[CI](.github/workflows/ci.yml) also runs bounded chaos, isolated load checks, sustained smoke, node-target measurements with JFR, and secure AOT cache validation. Detailed benchmark commands and qualification rules live in the [benchmark guide](setu-benchmark/README.md).
+Benchmark-helper tests, bounded chaos, load checks, baseline/target measurements, and AOT validation are covered by [CI](.github/workflows/ci.yml). The root Maven reactor includes benchmark workloads; use the commands above for ordinary functional verification. [Contributing](CONTRIBUTING.md) documents the broader verification matrix and repository conventions.
+
+## Repository guide
+
+| Path | Responsibility / documentation |
+| --- | --- |
+| [setu-core/](setu-core/README.md) | Broker API, topics, partitions, membership, and protocol codec |
+| [setu-storage/](setu-storage/README.md) | Partition logs, group commit, recovery, and migration |
+| [setu-server/](setu-server/README.md) | TCP transports, secure dispatch, standalone launcher, and AOT |
+| [setu-client/](setu-client/README.md) | Synchronous Java client, plaintext and TLS |
+| [setu-security/](setu-security/README.md) | Authentication, exact ACLs, certificates, and quotas |
+| [setu-integration-tests/](setu-integration-tests/README.md) | Functional verification over real sockets |
+| [setu-benchmark/](setu-benchmark/README.md) | Throughput, latency, JFR, crash recovery, and chaos |
+| [docs/](docs/README.md) | Architecture, configuration, and operations guides |
+| [scripts/](scripts/README.md) | Launch, certificate, profiling, reporting, and diagnostic tools |
+| [examples/SetuQuickstart.java](examples/SetuQuickstart.java) | Runnable produce/fetch/acknowledge example |
+| [config/](config/server.properties) | Server properties, JVM flags, and Logback configuration |
+| [benchmark-badges/](benchmark-badges/node-target-results.json) | CI-maintained SVGs and measurement snapshots |
+
+Generated builds, IDE metadata, runtime data, credentials, logs, and recordings are ignored. Published benchmark snapshots remain tracked because CI uses them to update the README.
+
+## Implementation boundaries
+
+- One broker process; no replication, failover, or distributed coordination.
+- Consumer memberships and committed offsets are lost on restart; applications manage resumption.
+- No automatic partition assignment/rebalancing, producer deduplication, or exactly-once delivery.
+- File retention, payload checksums, and configurable acknowledgement modes are not implemented.
+- The Java client serializes calls and has no automatic retry, reconnect, routing, or async API.
+- ACL grants and quotas are process-local; persistent policy administration and automatic certificate rotation are not implemented.
 
 ## Performance
 
-The reference targets are **500K records/s in memory** and **250K records/s durable**, using 1 KiB records. Qualification requires sustained unique consumption, measured latency, stable heap, bounded CPU and zero request errors. Targets are goals, not guarantees.
+Reference targets are **500,000 records/s in memory** and **250,000 records/s durable**, with 1 KiB records. These are qualification goals. A completed run must also satisfy consumption, latency, CPU, heap, and error criteria. A smoke run or an unqualified result does not establish sustained capacity.
 
-The local Chronicle Windows diagnostic measured approximately **55K durable records/s** with real mapped-file forcing and did not qualify. Earlier custom-backend results do not establish Chronicle performance. See the [measurements and methods](setu-benchmark/README.md#default-openhft-storage).
+The [benchmark guide](setu-benchmark/README.md) documents reproducible profiles, strict/report-only policies, host budgets, and JFR interpretation. It also records a local Windows Chronicle diagnostic of approximately 55K durable records/s, which did not qualify. Results from the former custom storage engine do not qualify Chronicle Queue.
 
-The generated badges and diagnostics retain their measured source revision and qualification status. Read results against that revision: measurements from the former custom backend do not qualify the Chronicle engine. CI refreshes these blocks from subsequent measurements.
+The generated blocks below retain their source revision, host information, and qualification status. Read them against that revision rather than as measurements of the current checkout; CI refreshes them after new runs.
 
 <!-- benchmark-metrics-badges:start -->
 [![in-memory: 500.00K/s target, 322.78K/s CI, 65% unqualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39317780845)
@@ -250,31 +301,3 @@ Waits are elapsed time inside jdk.FileForce, clipped to each measured stage. Con
 <!-- benchmark-capacity-details:end -->
 
 </details>
-
-### FILE baseline latency
-
-Recorded **2026-10-17**. The strict FILE baseline offers **80,000 records/s**, separately from the 250K durable reference target above. It uses 1 KiB records, 256-record batches, 1.6 enforced CPU cores, a 5 GiB memory limit and a 128 MiB worker heap. Three independent repetitions each measure 50%, 80% and 100% load after at least 10s warmup, with 30s per measured window. Qualification requires scheduled-completion p99 **<10 ms at 50% load** and **<100 ms at higher loads**, plus the existing throughput, consumption, resource and error gates. Scheduled latency includes pacing backlog and recovery after a stall.
-
-| Run / configuration | Qualified windows | Worst 50%-load p99 ms | Worst 100%-load p99 ms | Median 100%-load records/s |
-| --- | ---: | ---: | ---: | ---: |
-| [Original implementation, `123a1d5`](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38947239551) | 8/9 | 404.226 | 6.054 | 79,991 |
-| [Same-size data-only force candidate, `b8f6a6a`](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39009943580) | 0/9 | 2,405.433 | 15,493.759 | 47,403 |
-| [Experimental private journal, `71d0a1a`](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39011113017) | 2/9 | 717.750 | 6,585.057 | 68,762 |
-| [Default configuration with kernel tracing, `6d83c21`](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39012198818) | 9/9 | 7.406 | 7.868 | 79,991 |
-
-These are separate hosted runs, not a controlled before/after comparison: hosts and storage differed. The passing trace used EPYC 7763 with `/dev/sda1` ext4; recent failed runs used EPYC 9V74 with `/dev/nvme0n1p1` ext4. Its observer also consumed 61.640 CPU seconds over 391.979s, so it is a passing control, not proof of a general fix. Trace mode intentionally skipped non-FILE jobs. The private-journal experiment was removed; the normal baseline retains the default runner, temp directory, workload and qualification gates.
-
-The original failed window had request p99 **9.527 ms** but scheduled p99 **404.226 ms**, with coincident file-force calls around **383 ms**. Its longest recorded GC pause was **0.137 ms**. [Original comparison and JFR](https://github.com/RishabhRathi-Dev/Setu/actions/runs/38947239551/artifacts/12067726785), [candidate evidence](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39009943580/artifacts/12092448405), [private-journal evidence](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39011113017/artifacts/12092834175) and [passing trace](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39012198818/artifacts/12093770791) retain the measured windows and captures; CI artifacts have 14-day retention.
-
-A separate [storage-only reproduction](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39012781206), with two real mapped writers and the same resource limits, recorded these native force latencies without broker work:
-
-| Barrier | Force p99 ms | Maximum force ms |
-| --- | ---: | ---: |
-| Full metadata force | 181.707 | 361.423 |
-| Same-size data-only force | 10.363 | 252.253 |
-
-During a captured 252.244 ms data-only force, both writers waited inside ext4 data writeback; CPU-throttle counters did not increase and memory-limit event counters stayed zero. Other captured waits included journal commits and block writeback throttling. The observer consumed 1.083 CPU seconds over 21.609s. [JFR and kernel stacks](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39012781206/artifacts/12093636320) establish storage-path blocking in this reproduction, but do not establish the exact cause of the original untraced event. These short sequential probes include warmup/order effects and do not qualify sustained throughput; only the diagnostic job ran.
-
-The retained Linux optimization uses full metadata forcing initially and after file-size changes, then data-only forcing for same-size writes. All touched payload, index/header and metadata files still complete their barriers before acknowledgment. Existing tests and thresholds are unchanged; unit, integration, benchmark-helper and AOT checks passed. Local Linux before/after baselines both qualified 9/9 windows: worst half-load p99 **7.492 → 6.701 ms**, worst full-load p99 **7.479 → 6.820 ms**, and median full-load throughput **79,991/s** in both.
-
-**Intermittent hosted latency remains unresolved.** Local measurements improved, but the optimization has not demonstrated consistent qualification across environments. Durable acknowledgments must wait for storage barriers, so a universal 10 ms latency bound cannot hold on storage that stalls for hundreds of milliseconds.

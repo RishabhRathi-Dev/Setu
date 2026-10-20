@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="448" height="24" viewBox="0 0 448 24" role="img" aria-label="memory peak rates: 433.95K prod/s · 872.32K consumed/s">
-  <title>memory peak rates: 433.95K prod/s · 872.32K consumed/s</title>
-  <rect width="448" height="24" rx="3" fill="#007ec6"/>
-  <path d="M3 0H152V24H3Q0 24 0 21V3Q0 0 3 0" fill="#555"/>
-  <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="12">
-    <text x="76" y="16">memory peak rates</text>
-    <text x="300" y="16">433.95K prod/s · 872.32K consumed/s</text>
-  </g>
-</svg>

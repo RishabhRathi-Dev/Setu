@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="416" height="24" viewBox="0 0 416 24" role="img" aria-label="memory JFR: stage 12 · 1.31 GiB/s alloc · 1.8ms GC">
-  <title>memory JFR: stage 12 · 1.31 GiB/s alloc · 1.8ms GC</title>
-  <rect width="416" height="24" rx="3" fill="#007ec6"/>
-  <path d="M3 0H96V24H3Q0 24 0 21V3Q0 0 3 0" fill="#555"/>
-  <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="12">
-    <text x="48" y="16">memory JFR</text>
-    <text x="256" y="16">stage 12 · 1.31 GiB/s alloc · 1.8ms GC</text>
-  </g>
-</svg>

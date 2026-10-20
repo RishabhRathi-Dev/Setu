@@ -2,11 +2,31 @@
 
 This module measures the broker through real TCP traffic and exercises crashes, limits and concurrent progress. Functional requirements belong to [setu-integration-tests](../setu-integration-tests/README.md). Short smoke runs validate mechanics; throughput claims require qualified full measurements.
 
+## Local JFR capture
+
+Use [run-jfr.py](../scripts/run-jfr.py) to build and run the existing TCP workload with JFR on Windows, Linux or macOS. Requires Python 3.10+ and JDK 26 (`JAVA_HOME`, `--java-home` or `java` on `PATH`). The PowerShell entry point forwards the same options:
+
+```powershell
+# Capture both IN_MEMORY and FILE sequentially; progress is printed live.
+.\scripts\run-jfr.ps1 --java-home 'C:\path\to\jdk-26'
+
+# Longer FILE capture with an explicit new output folder.
+python scripts/run-jfr.py --storage-mode FILE --warmup-millis 5000 --stage-millis 10000 --output logs/jfr/file-session
+```
+
+On Linux/macOS use `python3 scripts/run-jfr.py`. Run `--help` for heap, CPU count, payload, batch, concurrency and worker timeout options. Paths are resolved from the caller's working directory; the scripts themselves can be invoked from anywhere.
+
+Each new `logs/jfr/<timestamp>-<id>/` contains `build.log`, `run.json` (settings, source revision, exact commands and capture status), and one folder per storage mode with `sustained.jfr`, `worker.log`, `setu.log` and raw `stages.json` markers. Existing output folders are rejected to preserve earlier recordings. Broker scratch data is removed after each worker.
+
+Defaults are 1 KiB records, 256-record batches, at most two producer/consumer pairs, 512 MiB heap, 128 MiB direct memory, 64 MiB retained memory log, two-second warmup and three-second measurement per stage. Each worker ramps concurrency, then runs 50%/80%/100% of its healthy knee when one exists. An unhealthy ramp can end the run early; inspect `worker.log` for which stages ran. JFR uses the worker's existing `profile` configuration and 128 MiB rolling size limit; long captures can lose earlier events and fail the completeness check.
+
+The launcher verifies successful worker completion, traffic without request errors, readable JFR and matching measured-stage markers. It leaves performance analysis to you and does not run the report generators. These are diagnostic smoke captures with broker and clients in the same JVM and no OS resource quota; `qualified=false` is expected. Use the resource-enforced profiles below for qualified measurements.
+
 `CAPACITY_JFR` summaries include measured-stage produced/consumed counts and estimated allocation bytes per produced/consumed record, alongside allocation MiB, GC pause time and GC cycle time. Both allocation ratios use the entire broker-and-client JVM estimate; they do not attribute bytes to individual roles. A zero count reports a zero ratio, and older recordings without counts report zero counts. GC cycle time sums each cycle's overlap with the stage, including concurrent work; overlapping cycles can exceed the stage duration. It is elapsed cycle duration rather than GC CPU time; pause time remains separate. Compare these with the matching stage's latency percentiles, excluding warmup and cleanup.
 
 ## Run profiles
 
-Use Java 26 and Python 3. The resource-enforced launcher requires Linux/WSL, systemd and cgroup v2. Run commands from the repository root:
+Use Java 26 and Python 3.10+. The resource-enforced launcher requires Linux/WSL, systemd and cgroup v2. Run commands from the repository root:
 
 ```bash
 # Inspect detected hardware and the planned resource allocation.
@@ -27,6 +47,7 @@ python3 scripts/run-benchmarks.py --kind sustained --measurement full \
 | --- | --- |
 | `sustained` | Find a healthy throughput knee, then measure fixed loads at 50%, 80% and 100% of it |
 | `target` | Check fixed reference targets directly, independently of the measured knee |
+| `baseline` | Measure the fixed 1.6-CPU / 5 GiB CI envelope separately from reference targets |
 | `steady` | Separate broker/client JVMs at fixed load, with one and four partitions |
 | `chaos` | Bounded broker failure/limit checks |
 | `sweep`, `large-batch` | Historical fanout and batch-size diagnostics |
@@ -116,7 +137,7 @@ The optional `trace_file_waits` workflow dispatch runs only the original FILE ba
 
 Combine it with `trace_storage_only` to trace the short broker-free storage probe instead. Both modes retain their JFR/kernel counters and preserve the normal baseline configuration. The investigation includes an original-runner nine-window passing control and a separate reproduction of 252–361 ms barriers inside kernel writeback/journal waits; those results do not establish a general hosted fix.
 
-Default-branch publication validates source revision, resources, timing, durability and all measured JFR stages before updating JSON, SVG badges and the [main README](../README.md#performance). Missing captures are labeled incomplete. Older workflows cannot overwrite newer source measurements. `render-benchmark-badges.py` regenerates images/links from committed snapshots; historical, target and capacity blocks remain distinct.
+Default-branch publication validates source revision, resources, timing, durability and all measured JFR stages before updating JSON, SVG badges and the [main README](../README.md#performance). Missing captures are labeled incomplete. Older workflows cannot overwrite newer source measurements. `render-benchmark-badges.py` regenerates images/links from committed snapshots; legacy historical sections are optional and remain separate when present.
 
 Artifacts include `comparison.json`, `comparison.txt`, raw worker captures, JFR and an `optimization.md` analysis, including failed stages. Reanalyze without rerunning load:
 
@@ -127,7 +148,7 @@ python3 scripts/sustained_report.py --input logs/benchmarks/resources/<run>/comp
 Smoke artifacts exclude temporary broker data. Publication and report tests run with:
 
 ```bash
-python -m unittest discover -s scripts -p 'test_benchmark*.py'
+python -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 ## Bounded chaos and exhaustion
@@ -137,15 +158,3 @@ python -m unittest discover -s scripts -p 'test_benchmark*.py'
 ```
 
 Bounded tests cover process-kill recovery, malformed frames, record-size limits, expiry, quotas and concurrent consumer progress. `ProgressiveCapacityChaosTests` is a separate failure-seeking diagnostic: it continues doubling load toward runtime limits, counts broadcast fanout and uses a coarse latency histogram. Run it explicitly through `--kind capacity`; its peaks do not qualify sustained throughput or update current badges.
-
-## Earlier measurements
-
-These results predate the Chronicle default and do not qualify its performance. Raw snapshots preserve failed/interrupted attempts as well as final measurements.
-
-| Historical run | Result and scope | Evidence |
-| --- | --- | --- |
-| 15 October custom backend | All 18 full target windows passed; target medians 499,993.6/s memory and 249,992.5/s file; worst p99 2.023 / 2.826 ms | [Raw snapshot](performance-analysis-2026-10-15.json) |
-| 14 October custom backend | All 18 full target windows passed; target medians 499,985/s memory and 249,993/s file; worst p99 2.041 / 8.057 ms | [Raw snapshot](optimization-2026-10-14.json) |
-| 12 October CAS/MPSC comparison | Three short fanout comparisons found no material throughput gain; peak changed medians 1,019,401/s memory and 639,125/s file | Local `logs/lock-free/` captures |
-
-The October target host was Ryzen 5 7600X / Windows NTFS / Java 26.0.2.1 with eight active processors, no OS CPU quota, 1 KiB / 256-record batches, 64 MiB memory-log budget and 256 MiB memory / 128 MiB file heaps. Short before/after JFR diagnostics remain in the JSON; they are not substitutes for sustained qualification or resource-enforced CI results.

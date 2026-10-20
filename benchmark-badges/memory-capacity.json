@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 1,
-  "label": "memory capacity",
-  "message": "2,048×2,048 · OS limit · peak CPU 100% · 1252 MB · p99 2.1s",
-  "color": "red"
-}

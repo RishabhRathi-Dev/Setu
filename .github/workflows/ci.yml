@@ -96,7 +96,7 @@ jobs:
         run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*Tests,!*ChaosTests,!*BenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test
 
       - name: Test benchmark launchers, reports and badge publication
-        run: python3 -m unittest discover -s scripts -p 'test_benchmark*.py'
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Verify mapped-file durability barriers and delayed-force accounting
         shell: bash

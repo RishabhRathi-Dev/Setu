@@ -13,8 +13,8 @@ spec.loader.exec_module(badges)
 
 GROUPS = {
     'benchmark-metrics-badges': ('in-memory-sustained', 'file-sustained'),
-    'benchmark-target-diagnostics': ('memory-target-latency', 'file-target-latency',
-                                     'memory-target-resources', 'file-target-resources', 'memory-target-jfr', 'file-target-jfr'),
+    'benchmark-target-diagnostics': ('memory-target-latency', 'memory-target-resources', 'memory-target-jfr',
+                                     'file-target-latency', 'file-target-resources', 'file-target-jfr'),
     'benchmark-historical-badges': ('memory-throughput', 'file-throughput', 'memory-capacity',
                                     'file-capacity', 'memory-jfr', 'file-jfr'),
 }
@@ -24,7 +24,8 @@ def render(readme, output, workflow_url):
     source = readme.read_text(encoding='utf-8')
     assets = []
     for block, names in GROUPS.items():
-        if block == 'benchmark-target-diagnostics' and f'<!-- {block}:start -->' not in source:
+        if block in ('benchmark-target-diagnostics', 'benchmark-historical-badges') \
+                and all(f'<!-- {block}:{edge} -->' not in source for edge in ('start', 'end')):
             continue
         pattern = f'<!-- {block}:start -->.*?<!-- {block}:end -->'
         if len(re.findall(pattern, source, re.S)) != 1:

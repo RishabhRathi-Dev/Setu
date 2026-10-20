@@ -1,0 +1,75 @@
+# Configuration reference
+
+The standalone entry point is `io.setu.server.SetuServerMain`. Run from the repository root:
+
+```powershell
+.\scripts\start-broker.ps1 --config config/server.properties
+```
+
+On Linux/macOS use `bash ./scripts/start-broker.sh --config config/server.properties`. With no arguments, the launcher uses the same built-in defaults. Properties use Java's `.properties` format. Unknown keys, invalid numbers, and invalid enum/transport values fail startup. Relative paths resolve against the process working directory; there is no live reload.
+
+The source of defaults and accepted keys is [SetuServerMain.java](../setu-server/src/main/java/io/setu/server/SetuServerMain.java). The [checked-in properties](../config/server.properties) provide an editable local baseline. Byte values use bytes, not suffixes such as `128m`; all `millis` values use milliseconds.
+
+## Network and transport
+
+| Property | Default | Meaning / validation |
+| --- | --- | --- |
+| `bind.host` | `127.0.0.1` | Local bind address |
+| `bind.port` | `9092` | Port; `0` selects an available port reported in the startup log |
+| `transport` | `blocking` | Exact lowercase `blocking` or `selector`; selector is plaintext only |
+| `connections.max` | `10000` | Positive maximum tracked connections; excess connections close |
+| `accept.backlog` | `256` | Positive socket accept backlog |
+| `socket.timeout.millis` | `0` | Non-negative read timeout for blocking sockets, idle timeout for selector; zero disables |
+| `write.timeout.millis` | `30000` | Positive total reply-write deadline; slow readers disconnect |
+
+The properties launcher is plaintext. TLS/mTLS requires [secure embedding](../setu-server/README.md#secure-broker-wiring-example). With embedded blocking TLS, the socket read timeout also applies to handshake reads. Socket timeout values and connection counts are parsed as Java integers; ports must satisfy the socket API's range of 0–65,535.
+
+## Storage and retention
+
+| Property | Default | Meaning / validation |
+| --- | --- | --- |
+| `storage.mode` | `FILE` | Exact uppercase `FILE` or `IN_MEMORY` |
+| `data.dir` | `data` | File-mode data root; unused by memory mode |
+| `record.max.bytes` | `1048576` (1 MiB) | Maximum record payload; 0–15 MiB, also subject to frame/protocol limits |
+| `queue.block.bytes` | `67108864` (64 MiB) | Positive Chronicle mapping block size; effective minimum 64 MiB |
+| `memory.log.max.bytes` | `268435456` (256 MiB) | Non-negative shared accounted memory-log budget; zero disables the budget |
+| `memory.retention.millis` | `0` | Lossy maximum age in memory mode; 0–365 days; zero disables timed expiry |
+
+Chronicle rolls files daily. Mapping block size neither caps daily file growth nor enables file retention. Monitor free disk for durable workloads. File write admission is fixed at 32 MiB / 1,024 outstanding requests per partition; it is not a standalone property.
+
+Memory reclamation normally follows registered members' progress. Members start at the partition end on join; no members allows immediate reclamation. Positive timed retention can discard records a consumer has not processed. These memory-only settings do not provide file retention or a JVM/process memory limit.
+
+## Buffers and consumer deadlines
+
+| Property | Default | Meaning / validation |
+| --- | --- | --- |
+| `requests.max.bytes` | `134217728` (128 MiB) | Positive shared request allocation credit, including connection buffering |
+| `responses.max.bytes` | `134217728` (128 MiB) | Positive shared response/materialization credit, held through writes |
+| `ack.timeout.millis` | `30000` | Positive deadline for member acknowledgement of fetched records |
+| `consumer.timeout.millis` | `60000` | Positive member inactivity deadline |
+
+There are 17 supported properties in total. Consumer maintenance runs every 10 ms. An expired member must rejoin. Heartbeats maintain liveness but do not acknowledge processed records. Long-poll wait is a request parameter, capped at 30,000 ms; configure the client's read timeout above the requested wait.
+
+When budgets are exhausted, the server returns `QUOTA_EXCEEDED` if it can admit an error response, otherwise it closes the connection. Budget headroom must allow protocol metadata and accounting, as well as payload bytes. See [admission and failure behavior](../setu-server/README.md#admission-and-failure-behavior).
+
+## JVM, logging, and AOT
+
+| Control | Location | Behavior |
+| --- | --- | --- |
+| JDK selection | `JAVA_HOME`, or `java` on `PATH` | Launchers require JDK 26; Maven also uses `JAVA_HOME` |
+| JVM options | [config/jvm.options](../config/jvm.options) | ZGC, string deduplication, required Chronicle access, analytics disabled |
+| Heap/direct memory | JVM arguments in embedding/direct launches | Use workload-appropriate headroom; no standalone heap property |
+| Log directory | `SETU_LOG_DIR` | Default `logs`; contains `setu.log` and rolling archives |
+| Application log level | `-Dsetu.log.level` or `SETU_LOG_LEVEL` | System property takes precedence; `io.setu` defaults to `DEBUG`, root to `INFO` |
+| AOT generation | Launcher `--train-aot` | Creates `setu-server/target/setu-server.aot` using training traffic |
+| AOT bypass | Launcher `--no-aot` before broker arguments | Skips an existing strict-mode cache |
+
+The runtime uses [Logback configuration](../config/logback.xml) bundled in the server JAR. Editing that source requires rebuilding the JAR, or supplying an explicit Logback configuration to a direct JVM launch. Archives roll daily or at 100 MB, retain 14 days, and have a 2 GB total cap.
+
+For a direct launch with an explicit heap and log level:
+
+```powershell
+java '@config/jvm.options' -Xms256m -Xmx1g -Dsetu.log.level=INFO -jar setu-server/target/setu-server-1.0.0-SNAPSHOT.jar --config config/server.properties
+```
+
+Rebuild AOT caches when JDK, platform, application, or dependency JARs change. [Operations](operations.md) covers launch artifacts and recovery; the [server guide](../setu-server/README.md) covers custom embedded listeners and TLS policy.

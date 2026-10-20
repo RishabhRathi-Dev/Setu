@@ -16,6 +16,27 @@ render_spec.loader.exec_module(renderer)
 
 
 class BenchmarkCaptureTests(unittest.TestCase):
+    def test_renderer_supports_current_readme_without_historical_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            readme, output = root / 'README.md', root / 'badges'
+            output.mkdir()
+            current = {block: names for block, names in renderer.GROUPS.items()
+                       if block != 'benchmark-historical-badges'}
+            readme.write_text('\n'.join(f'<!-- {block}:start --><!-- {block}:end -->' for block in current))
+            for names in current.values():
+                for name in names:
+                    (output / (name + '.json')).write_text(json.dumps(
+                        dict(label=name, message='unqualified', color='yellow')))
+            renderer.render(readme, output, 'https://example.com/ci')
+            self.assertEqual(8, len(list(output.glob('*.svg'))))
+            before = {path: path.read_bytes() for path in [readme, *output.glob('*.svg')]}
+            readme.write_text(readme.read_text() + '\n<!-- benchmark-historical-badges:end -->')
+            with self.assertRaisesRegex(ValueError, 'missing or duplicate'):
+                renderer.render(readme, output, 'https://example.com/changed')
+            self.assertEqual({path: data for path, data in before.items() if path != readme},
+                             {path: path.read_bytes() for path in output.glob('*.svg')})
+
     def test_local_badges_escape_xml_preserve_metrics_and_do_not_rewrite_unchanged_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
