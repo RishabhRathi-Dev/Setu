@@ -86,9 +86,9 @@ The connection factory arguments are host, port, connect timeout, read timeout a
 | `acknowledge` | Commit the next offset after processing fetched records |
 | `request` | Send a typed `BrokerRequest` directly |
 
-Every request receives a correlation ID; responses must match both command and correlation. Broker denials return `BrokerResponse.errorCode()` rather than automatically throwing. Socket, framing, decoding and response-matching failures throw exceptions. The client does not reconnect after a transport failure.
+Every request receives a correlation ID; responses must match both command and correlation. Broker denials return `BrokerResponse.errorCode()` rather than automatically throwing. Socket, framing, decoding and response-matching failures throw exceptions, close the socket, and permanently invalidate the connection. Subsequent calls fail locally; create a new client explicitly. Normal broker error responses keep the connection reusable. The client does not retry or reconnect; a failed produce can still have an uncertain outcome.
 
-Calls on one instance are serialized. `produceBatch` requires a nonempty batch within the [protocol limits](../setu-core/README.md#protocol-v1); offsets follow list order. Durable acknowledgements follow the broker's [force boundary](../setu-storage/README.md#durability-and-recovery).
+Calls on one instance are serialized. Another thread can call `close()` to close the socket and cancel a blocked read or write, including when the read timeout is zero. Codec buffers are cleared under the request lock after socket cancellation. `produceBatch` requires a nonempty batch within the [protocol limits](../setu-core/README.md#protocol-v1); offsets follow list order. Durable acknowledgements follow the broker's [force boundary](../setu-storage/README.md#durability-and-recovery).
 
 Batch encoding copies caller bytes into the final wire frame. Fetched records share immutable slices of their response frame; `value()` returns a defensive copy. Keeping one slice can keep the complete frame alive. Copy values when retaining only a small subset for a long time.
 
@@ -105,7 +105,7 @@ For member-aware consumption:
 3. Process the records, then call `acknowledge(group, member, topic, partition, nextOffset)` with the last processed offset plus one.
 4. Send `heartbeat(group, member)` while idle, and `leaveGroup(group, member)` when done.
 
-Long-poll waits are 0–30 seconds; the socket read timeout must exceed the wait. Memory storage reclaims according to registered members' progress; file storage retains history unless optional file retention expires it. Expired members must rejoin. See [broker semantics](../setu-core/README.md#broker-semantics).
+Long-poll waits are 0–30 seconds; the socket read timeout must exceed the wait. On secure servers, member-aware fetches require both topic `CONSUME` and consumer-group `CONSUMER_GROUP_WRITE`; ordinary fetches require only topic consumption permission. Memory storage reclaims according to registered members' progress; file storage retains history unless optional file retention expires it. Expired members must rejoin. See [broker semantics](../setu-core/README.md#broker-semantics).
 
 ### Handling an expired file offset
 

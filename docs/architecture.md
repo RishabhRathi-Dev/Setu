@@ -111,6 +111,8 @@ File members start at zero; memory members start at the current partition end. A
 
 In memory mode, retained prefixes are reclaimed through the slowest registered member across groups. Leaving or expiry removes that retention claim. When no members remain, records can be reclaimed immediately, including after append. Join before producing records that must be consumed. Logical offsets keep increasing after reclamation.
 
+Consumer metadata defaults to 10,000 active members and 100,000 summed partition memberships. Group/member IDs are bounded to 4 KiB UTF-8. There is no independent committed-offset map or empty group map: memberless commits validate the boundary without retaining state.
+
 Maintenance checks consumer deadlines every 10 ms. The defaults are 30 seconds for outstanding acknowledgements and 60 seconds of inactivity. Expired consumers must rejoin. Timed memory expiry can additionally discard old records regardless of progress; it is disabled by default and can yield `OFFSET_OUT_OF_RANGE`.
 
 ## Ownership and backpressure
@@ -124,6 +126,8 @@ Public byte-array APIs defensively copy values. Internally, immutable privately 
 | Memory log | Whole-batch reservation; rejection leaves records and offsets unchanged |
 | File writer | Bounded outstanding requests/bytes, including active flush |
 | Secure request | Exact ACL check, then atomic request/byte quota consumption |
+| Consumer metadata | Atomic member and summed partition membership admission; capacity released on leave/expiry |
+| Incomplete request / TLS setup | Absolute frame/setup deadlines close stalled or trickling peers and release credit |
 | Slow socket reader | Disconnect after the total reply-write deadline |
 
 Log/write-queue saturation returns `QUOTA_EXCEEDED`. Buffer exhaustion also uses that error when request identity and reply credit permit a response; otherwise the server closes the connection. These budgets account for selected allocations, rather than enforcing a whole-process memory cap. Native mappings, indexes, and retained snapshots need separate headroom.

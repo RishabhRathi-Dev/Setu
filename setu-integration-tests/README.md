@@ -32,3 +32,5 @@ On Linux/macOS, use `bash ./mvnw` instead of `.\mvnw.cmd`. Maven applies the sha
 Tests bind loopback sockets on ephemeral ports. TLS fixtures are short-lived PKCS#12 stores/certificates generated with the JDK `keytool` under temporary directories. No certificate material is checked in. For manual development stores, use [generate-certs.ps1](../scripts/generate-certs.ps1) or [generate-certs.sh](../scripts/generate-certs.sh).
 
 Surefire reports are written under `setu-integration-tests/target/surefire-reports/`. [CI](../.github/workflows/ci.yml) runs integration tests after production unit checks and retains their reports.
+
+Client failure coverage uses real sockets to check blocked read/write cancellation, timeout/partial/malformed/mismatched replies invalidating the connection, and reuse after structured broker errors. TLS coverage checks stalled handshakes and frames, plus both topic and group permission for member-aware fetches.

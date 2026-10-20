@@ -40,7 +40,7 @@ The generated `target/setu-server.aot` is used automatically in strict mode. Reg
 
 `start()` binds synchronously; binding to port zero chooses an available port reported by `localAddress()`. `close()` stops acceptance, closes tracked connections and shuts down workers. The embedding application owns the server and broker, closing the server first.
 
-`TcpServerOptions` defaults to 10,000 connections, backlog 256, no read/idle timeout, 128 MiB request credit, 128 MiB response credit and a 30-second reply-write deadline. Excess connections are closed. Blocking TLS applies the read timeout to handshake and reads; selector mode uses it as an idle timeout. TLS is not supported by the selector transport.
+`TcpServerOptions` defaults to 10,000 connections, backlog 256, a 60-second read/idle timeout, 128 MiB request credit, 128 MiB response credit, a 10-second session-setup deadline, and 30-second frame-receipt and reply-write deadlines. Excess connections are closed. Blocking TLS applies the read timeout to handshake and reads; selector mode uses it as an idle timeout. Both transports measure frame receipt from the first header byte through the entire body; trickled bytes cannot renew that deadline. Setup includes TLS handshake and authentication. These absolute deadlines remain active when the idle timeout is disabled and end before broker dispatch/long polling. The existing three-, five- and six-argument options constructors use the default setup/frame deadlines; the eight-argument constructor configures them. TLS is not supported by the selector transport.
 
 ## Secure broker wiring example
 
@@ -95,7 +95,7 @@ The secure path completes TLS and authenticates the client before protocol proce
 | --- | --- | --- |
 | `CREATE_TOPIC` | `topic/<topic>` | `TOPIC_CREATE` |
 | `PRODUCE`, `PRODUCE_BATCH` | `topic/<topic>` | `PRODUCE` |
-| `FETCH` | `topic/<topic>` | `CONSUME` |
+| `FETCH` | `topic/<topic>`; additionally `consumer-group/<group>` when a member is supplied | `CONSUME`; additionally `CONSUMER_GROUP_WRITE` for member-aware fetches |
 | `JOIN_GROUP` | `consumer-group/<group>` | `CONSUMER_GROUP_CREATE` |
 | `COMMIT_OFFSET`, `LEAVE_GROUP`, `HEARTBEAT` | `consumer-group/<group>` | `CONSUMER_GROUP_WRITE` |
 | `METADATA` | `broker` | `VIEW_METADATA` |
@@ -112,7 +112,9 @@ Request credit is reserved before allocating a frame body and includes decoded p
 | --- | --- |
 | `requests.max.bytes`, `responses.max.bytes` | Shared per-server buffer budgets; 128 MiB each by default |
 | `write.timeout.millis` | Total reply-write deadline; 30 seconds by default; disconnects slow readers |
-| `socket.timeout.millis` | Read/idle timeout; zero disables it |
+| `socket.timeout.millis` | Read/idle timeout; 60 seconds by default; zero disables only this timeout |
+| `handshake.timeout.millis`, `frame.timeout.millis` | Positive absolute setup / frame-receipt deadlines; 10 / 30 seconds by default |
+| `consumers.max`, `consumer.partitions.max` | Active member / summed partition membership limits; 10,000 / 100,000 by default |
 | `memory.log.max.bytes` | Shared retained-memory log budget; 256 MiB default; zero disables it |
 | `memory.retention.millis` | Optional lossy memory expiry; zero preserves acknowledgement-based reclamation |
 | `file.retention.millis` | Optional completed-file expiry, measured from daily cycle end; zero disables it; newest file always remains |

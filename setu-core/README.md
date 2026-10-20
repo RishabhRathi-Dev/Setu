@@ -62,11 +62,11 @@ Use `0` for the final argument to disable file expiry. The newest populated dail
 | Offsets | Dense, zero-based record offsets within each partition; batch produce returns the first offset |
 | Fetch | Whole records within a payload-byte budget; an oversized first record yields an empty page |
 | Long polling | Optional wait of 0–30,000 ms; append, timeout, eviction or shutdown wakes the request |
-| Membership | Explicit join, leave, heartbeat and next-offset acknowledgement |
+| Membership | Explicit join, leave, heartbeat and next-offset acknowledgement; default 10,000 members / 100,000 summed partition memberships |
 | Expiry | Default 30-second acknowledgement / 60-second inactivity deadlines; maintenance runs every 10 ms |
-| Restart | File topics and records recover; memberships and committed offsets do not |
+| Restart | File topics and records recover; memberships and member acknowledgement progress do not |
 
-Memory members start at the partition end when they join. Acknowledgements reclaim through the lowest registered member's next offset; leaving or expiry removes that member's retention claim. File storage keeps full history by default. Optional `fileRetentionMillis` on the extended constructor expires completed daily files independently of consumer progress; fetches before the retained boundary return `OFFSET_OUT_OF_RANGE` with a resume offset. Consumer state is bookkeeping, without partition assignment or rebalancing.
+Memory members start at the partition end when they join. Acknowledgements reclaim through the lowest registered member's next offset; leaving or expiry removes that member's retention claim. File storage keeps full history by default. Optional `fileRetentionMillis` on the extended constructor expires completed daily files independently of consumer progress; fetches before the retained boundary return `OFFSET_OUT_OF_RANGE` with a resume offset. Consumer state is bookkeeping, without partition assignment or rebalancing. New joins exceeding either metadata limit return `QUOTA_EXCEEDED` before allocation. Rejoining an existing member remains possible at capacity; leave and expiry release capacity. The extended constructor accepts `ConsumerMetadataLimits`; group/member IDs are limited to 4 KiB UTF-8. `activeConsumerCount()` and `activeConsumerPartitionMemberships()` expose current usage. A `COMMIT_OFFSET` without a member validates the partition boundary and returns success without storing an offset; there is no offset lookup API. Member acknowledgements last only for the membership.
 
 Memory brokers share a 256 MiB retained-log budget by default. Whole-batch admission failure returns `QUOTA_EXCEEDED` without consuming offsets. Zero disables that budget. Protocol buffers and file indexes are outside it. See [storage ownership and admission](../setu-storage/README.md).
 
@@ -80,7 +80,7 @@ Memory fetches use immutable snapshots outside the membership/long-poll lock. Du
 | ---: | --- | --- |
 | 1 | `PRODUCE` | Assigned offset |
 | 2 | `FETCH` | Offset/value records |
-| 3 | `COMMIT_OFFSET` | Commit or member acknowledgement accepted |
+| 3 | `COMMIT_OFFSET` | Boundary validated, or joined member acknowledgement accepted |
 | 4 | `JOIN_GROUP` | Membership registered |
 | 5 | `LEAVE_GROUP` | Membership removed |
 | 6 | `HEARTBEAT` | Member refreshed |
@@ -90,7 +90,7 @@ Memory fetches use immutable snapshots outside the membership/long-poll lock. Du
 
 Responses repeat command and correlation ID, then carry a 16-bit error code and length-prefixed error message. Success adds the command's result; failures omit it. See [ErrorCode.java](src/main/java/io/setu/core/protocol/ErrorCode.java) for the error IDs and [ProtocolCodec.java](src/main/java/io/setu/core/protocol/ProtocolCodec.java) for field order.
 
-Decoding validates version, command, correlation ID, strict UTF-8, lengths, required fields and trailing bytes. String fields are capped at 4 KiB, batch payloads at 14 MiB / 10,000 records, and fetch payload budgets at 15 MiB. Transport and broker limits can be lower. Optional member and long-poll fields extend v1 requests; unsupported versions are rejected rather than negotiated.
+Decoding validates version, command, correlation ID, strict UTF-8, lengths, required fields and trailing bytes. String fields are capped at 4 KiB, batch payloads at 14 MiB / 10,000 records, and fetch payload budgets at 15 MiB. Transport and broker limits can be lower. Grouped fetches require both topic `CONSUME` and group `CONSUMER_GROUP_WRITE` permission on secure servers; ordinary fetches require only topic permission. Optional member and long-poll fields extend v1 requests; unsupported versions are rejected rather than negotiated.
 
 Public byte-array APIs copy payloads. Internal `MessageValue.Frame` overloads share immutable slices between protocol and storage, with admission before materialization. Retaining a slice can retain its backing frame.
 

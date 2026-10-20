@@ -19,10 +19,12 @@ The source of defaults and accepted keys is [SetuServerMain.java](../setu-server
 | `transport` | `blocking` | Exact lowercase `blocking` or `selector`; selector is plaintext only |
 | `connections.max` | `10000` | Positive maximum tracked connections; excess connections close |
 | `accept.backlog` | `256` | Positive socket accept backlog |
-| `socket.timeout.millis` | `0` | Non-negative read timeout for blocking sockets, idle timeout for selector; zero disables |
+| `socket.timeout.millis` | `60000` | Non-negative read timeout for blocking sockets, idle timeout for selector; zero disables |
+| `handshake.timeout.millis` | `10000` | Positive absolute connection-session setup deadline, including embedded TLS handshake/authentication |
+| `frame.timeout.millis` | `30000` | Positive deadline from the first header byte through the complete body, on both transports; trickling does not extend it |
 | `write.timeout.millis` | `30000` | Positive total reply-write deadline; slow readers disconnect |
 
-The properties launcher is plaintext. TLS/mTLS requires [secure embedding](../setu-server/README.md#secure-broker-wiring-example). With embedded blocking TLS, the socket read timeout also applies to handshake reads. Socket timeout values and connection counts are parsed as Java integers; ports must satisfy the socket API's range of 0–65,535.
+The properties launcher is plaintext. TLS/mTLS requires [secure embedding](../setu-server/README.md#secure-broker-wiring-example). With embedded blocking TLS, the socket read timeout also applies to handshake reads. The absolute setup and frame deadlines still apply when the socket timeout is zero. Frame deadlines end before broker dispatch, so they do not limit long polls. An idle connection awaiting its first frame byte is governed by the socket timeout. Socket timeout values and connection counts are parsed as Java integers; ports must satisfy the socket API's range of 0–65,535.
 
 ## Storage and retention
 
@@ -73,8 +75,12 @@ Changing the value back to `0` stops future automatic expiry after restart. It d
 | --- | --- | --- |
 | `requests.max.bytes` | `134217728` (128 MiB) | Positive shared request allocation credit, including connection buffering |
 | `responses.max.bytes` | `134217728` (128 MiB) | Positive shared response/materialization credit, held through writes |
+| `consumers.max` | `10000` | Positive maximum active group/member identities across the broker |
+| `consumer.partitions.max` | `100000` | Positive maximum sum of joined topic partition counts across all members |
 | `ack.timeout.millis` | `30000` | Positive deadline for member acknowledgement of fetched records |
 | `consumer.timeout.millis` | `60000` | Positive member inactivity deadline |
+
+New joins reserve both metadata limits atomically before allocating progress entries. Existing members can refresh at capacity. Leave and expiry release capacity; rejected joins return `QUOTA_EXCEEDED`. Group/member identities are capped at 4 KiB UTF-8 each. A commit without a member validates the offset but stores no state: there is no committed-offset lookup API. Member acknowledgements retain progress only for that membership.
 
 Consumer maintenance runs every 10 ms. An expired member must rejoin. Heartbeats maintain liveness but do not acknowledge processed records. Long-poll wait is a request parameter, capped at 30,000 ms; configure the client's read timeout above the requested wait.
 

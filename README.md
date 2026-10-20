@@ -132,6 +132,8 @@ The standalone launcher accepts `--config <properties-file>`. Unknown properties
 | `file.retention.millis` | `0` | Expire completed daily files by age; zero disables retention |
 | `memory.log.max.bytes` | 256 MiB | Shared accounted retained-log budget |
 | `requests.max.bytes` / `responses.max.bytes` | 128 MiB each | Shared transport buffer budgets |
+| `consumers.max` / `consumer.partitions.max` | 10,000 / 100,000 | Active member and summed partition membership admission |
+| `socket.timeout.millis` / `handshake.timeout.millis` / `frame.timeout.millis` | 60,000 / 10,000 / 30,000 | Idle/read, absolute setup and whole-frame deadlines |
 | `ack.timeout.millis` / `consumer.timeout.millis` | 30,000 / 60,000 | Consumer progress and inactivity deadlines |
 
 See the [complete configuration reference](docs/configuration.md) for all properties, units, validation, and runtime options, including [file retention examples](docs/configuration.md#file-retention-examples). The checked-in [server.properties](config/server.properties) is the local-development baseline.
@@ -150,7 +152,7 @@ On Linux/macOS, substitute `bash ./mvnw`. Python 3.10+ is required for the bench
 python -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-Benchmark-helper tests, bounded chaos, load checks, baseline/target measurements, and AOT validation are covered by [CI](.github/workflows/ci.yml). The root Maven reactor includes benchmark workloads; use the commands above for ordinary functional verification. [Contributing](CONTRIBUTING.md) documents the broader verification matrix and repository conventions.
+CI also runs Windows functional tests and [dependency/source security gates](.github/workflows/security.yml). Benchmark-helper tests, bounded chaos, load checks, baseline/target measurements, and AOT validation are covered by [CI](.github/workflows/ci.yml). The root Maven reactor includes benchmark workloads; use the commands above for ordinary functional verification. [Contributing](CONTRIBUTING.md) documents the broader verification matrix and repository conventions.
 
 ## Repository guide
 
@@ -175,7 +177,7 @@ Generated builds, IDE metadata, runtime data, credentials, logs, and recordings 
 ## Implementation boundaries
 
 - One broker process; no replication, failover, or distributed coordination.
-- Consumer memberships and committed offsets are lost on restart; applications manage resumption.
+- Consumer memberships and member acknowledgement progress are lost on restart; applications manage resumption.
 - No automatic partition assignment/rebalancing, producer deduplication, or exactly-once delivery.
 - Payload checksums and configurable acknowledgement modes are not implemented.
 - The Java client serializes calls and has no automatic retry, reconnect, routing, or async API.

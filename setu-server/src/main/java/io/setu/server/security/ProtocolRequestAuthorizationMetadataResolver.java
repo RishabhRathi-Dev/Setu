@@ -20,7 +20,10 @@ public final class ProtocolRequestAuthorizationMetadataResolver implements Reque
     private RequestAuthorizationMetadata resolve(BrokerRequest decoded) {
         return switch (decoded.command()) {
             case PRODUCE, PRODUCE_BATCH -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.PRODUCE);
-            case FETCH -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.CONSUME);
+            case FETCH -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.CONSUME,
+                    decoded.memberId() == null ? java.util.List.of() : java.util.List.of(
+                            new RequestAuthorizationMetadata.Requirement("consumer-group/" + decoded.groupId(),
+                                    Permission.CONSUMER_GROUP_WRITE)));
             case CREATE_TOPIC -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.TOPIC_CREATE);
             case COMMIT_OFFSET -> new RequestAuthorizationMetadata(
                     "consumer-group/" + decoded.groupId(), Permission.CONSUMER_GROUP_WRITE);

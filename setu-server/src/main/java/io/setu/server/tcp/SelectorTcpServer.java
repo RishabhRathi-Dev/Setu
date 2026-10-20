@@ -102,7 +102,8 @@ public final class SelectorTcpServer implements AutoCloseable {
                 }
                 long now = System.nanoTime();
                 for (Client client : clients)
-                    if (client.outbound != null && now - client.writeStarted > options.writeTimeoutMillis() * 1_000_000L)
+                    if ((client.outbound != null && now - client.writeStarted > options.writeTimeoutMillis() * 1_000_000L)
+                            || (client.receiving && now - client.frameStarted > options.frameTimeoutMillis() * 1_000_000L))
                         closeClient(client);
             }
         } catch (IOException | RuntimeException e) { if (running.get()) LOG.error("Selector loop failed", e); }
@@ -132,7 +133,13 @@ public final class SelectorTcpServer implements AutoCloseable {
         if (client.body == null) {
             int count = client.channel.read(client.header);
             if (count < 0) { closeClient(client); return; }
-            if (count > 0) client.activity = System.nanoTime();
+            if (count > 0) {
+                client.activity = System.nanoTime();
+                if (!client.receiving) {
+                    client.receiving = true;
+                    client.frameStarted = client.activity;
+                }
+            }
             if (client.header.hasRemaining()) return;
             int length = client.header.flip().getInt();
             client.header.clear();
@@ -144,7 +151,12 @@ public final class SelectorTcpServer implements AutoCloseable {
         if (count < 0) { closeClient(client); return; }
         if (count > 0) client.activity = System.nanoTime();
         if (!client.body.isComplete()) return;
+        if (System.nanoTime() - client.frameStarted >= options.frameTimeoutMillis() * 1_000_000L) {
+            closeClient(client);
+            return;
+        }
         var request = client.body.finish();
+        client.receiving = false;
         client.body = null;
         client.inFlight = true;
         key.interestOps(0);
@@ -237,6 +249,8 @@ public final class SelectorTcpServer implements AutoCloseable {
         boolean inFlight;
         long activity = System.nanoTime();
         long writeStarted;
+        long frameStarted;
+        boolean receiving;
         Client(SocketChannel channel, BufferBudget.Lease connectionCredit) { this.channel = channel; this.connectionCredit = connectionCredit; }
     }
 }

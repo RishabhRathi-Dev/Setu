@@ -2,7 +2,11 @@ package io.setu.server.tcp;
 
 /** Resource limits applied by the TCP acceptor. A zero socket timeout disables idle I/O timeout. */
 public record TcpServerOptions(int maxConnections, int acceptBacklog, int socketTimeoutMillis,
-                               long requestBufferBytes, long responseBufferBytes, int writeTimeoutMillis) {
+                               long requestBufferBytes, long responseBufferBytes, int writeTimeoutMillis,
+                               int handshakeTimeoutMillis, int frameTimeoutMillis) {
+    public TcpServerOptions(int connections, int backlog, int timeout, long requests, long responses, int writeTimeout) {
+        this(connections, backlog, timeout, requests, responses, writeTimeout, 10_000, 30_000);
+    }
     public TcpServerOptions(int connections, int backlog, int timeout) {
         this(connections, backlog, timeout, 128L * 1024 * 1024, 128L * 1024 * 1024);
     }
@@ -16,9 +20,11 @@ public record TcpServerOptions(int maxConnections, int acceptBacklog, int socket
         if (requestBufferBytes <= 0 || responseBufferBytes <= 0)
             throw new IllegalArgumentException("buffer budgets must be positive");
         if (writeTimeoutMillis <= 0) throw new IllegalArgumentException("write timeout must be positive");
+        if (handshakeTimeoutMillis <= 0 || frameTimeoutMillis <= 0)
+            throw new IllegalArgumentException("handshake and frame timeouts must be positive");
     }
 
     public static TcpServerOptions defaults() {
-        return new TcpServerOptions(10_000, 256, 0);
+        return new TcpServerOptions(10_000, 256, 60_000);
     }
 }

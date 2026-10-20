@@ -68,9 +68,16 @@ class TlsBrokerIntegrationTests {
                      new MtlsAuthenticator(new CertificateValidator()),
                      authorizer,
                      new QuotaManager(limiter),
-                     broker)) {
+                     broker, new io.setu.server.tcp.TcpServerOptions(
+                             10, 10, 0, 1024 * 1024, 1024 * 1024, 3000, 1000, 250))) {
             server.start();
             int port = server.localAddress().getPort();
+            // No TLS bytes: the handshake deadline must apply even with the idle timeout disabled.
+            try (var stalled = new java.net.Socket("localhost", port)) {
+                stalled.setSoTimeout(3000);
+                try { assertEquals(-1, stalled.getInputStream().read()); }
+                catch (java.net.SocketException reset) { /* The OS may report a reset. */ }
+            }
             try (io.setu.client.SetuClient client = io.setu.client.SetuClient.connectTls(
                     "localhost", port, clientTls, tlsContexts,
                     5_000, 5_000, 16 * 1024 * 1024)) {
@@ -82,9 +89,34 @@ class TlsBrokerIntegrationTests {
                 var fetched = client.fetch("orders", 0, 0, 1024);
                 assertEquals(ErrorCode.NONE, fetched.errorCode());
                 assertEquals("order-1", new String(fetched.records().getFirst().value()));
+                broker.execute(new io.setu.core.protocol.BrokerRequest(1, io.setu.core.protocol.Command.JOIN_GROUP,
+                        "orders", -1, -1, -1, null, 0, "protected", "member"));
+                assertEquals(ErrorCode.AUTHORIZATION_DENIED,
+                        client.fetch("protected", "member", "orders", 0, 0, 1024).errorCode());
+                var notFetched = org.junit.jupiter.api.Assertions.assertThrows(io.setu.core.broker.BrokerException.class,
+                        () -> broker.execute(new io.setu.core.protocol.BrokerRequest(1, io.setu.core.protocol.Command.COMMIT_OFFSET,
+                                "orders", 0, 1, 0, null, 0, "protected", "member")));
+                assertEquals(ErrorCode.BAD_REQUEST, notFetched.errorCode());
+                authorizer.grant("orders-service", "consumer-group/protected", Permission.CONSUMER_GROUP_WRITE);
+                assertEquals(ErrorCode.NONE,
+                        client.fetch("protected", "member", "orders", 0, 0, 1024).errorCode());
+                assertEquals(ErrorCode.NONE, client.acknowledge("protected", "member", "orders", 0, 1).errorCode());
                 authorizer.revoke("orders-service", "topic/orders", Permission.CONSUME);
+                assertEquals(ErrorCode.AUTHORIZATION_DENIED,
+                        client.fetch("protected", "member", "orders", 0, 0, 1024).errorCode());
                 var denied = client.fetch("orders", 0, 0, 1024);
                 assertEquals(ErrorCode.AUTHORIZATION_DENIED, denied.errorCode());
+            }
+            // An established TLS connection is also subject to the whole-frame deadline.
+            try (var tls = (javax.net.ssl.SSLSocket) tlsContexts.create(clientTls).getSocketFactory()
+                    .createSocket("localhost", port)) {
+                tls.setSoTimeout(3000);
+                tls.startHandshake();
+                var output = new java.io.DataOutputStream(tls.getOutputStream());
+                output.writeInt(1024); output.writeByte(0); output.flush();
+                org.junit.jupiter.api.Assertions.assertThrows(IOException.class, () -> {
+                    if (tls.getInputStream().read() == -1) throw new java.io.EOFException();
+                });
             }
         }
     }

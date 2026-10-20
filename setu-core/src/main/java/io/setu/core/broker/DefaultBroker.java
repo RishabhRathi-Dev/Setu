@@ -39,8 +39,8 @@ public final class DefaultBroker implements Broker {
     private final long consumerInactivityTimeoutNanos;
     private final MemoryLogBudget memoryBudget;
     private final Map<String, TopicState> topics = new ConcurrentHashMap<>();
-    private final Map<String, Long> committedOffsets = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, String>> groupMembers = new ConcurrentHashMap<>();
+    private final ConsumerMetadataLimits consumerMetadataLimits;
+    private int consumerPartitionMemberships;
     private final Map<ConsumerKey, ConsumerState> consumers = new ConcurrentHashMap<>();
     private volatile boolean closed;
     private final java.util.concurrent.ScheduledExecutorService maintenance;
@@ -101,6 +101,17 @@ public final class DefaultBroker implements Broker {
     public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
                          long queueBlockBytes, long ackTimeoutMillis, long consumerInactivityTimeoutMillis,
                          long maxRetainedMemoryBytes, long memoryRetentionMillis, long fileRetentionMillis) throws IOException {
+        this(storageMode, dataDirectory, maxRecordBytes, queueBlockBytes, ackTimeoutMillis,
+                consumerInactivityTimeoutMillis, maxRetainedMemoryBytes, memoryRetentionMillis,
+                fileRetentionMillis, ConsumerMetadataLimits.defaults());
+    }
+
+    /** Rejects new members atomically before allocating their partition progress metadata. */
+    public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
+                         long queueBlockBytes, long ackTimeoutMillis, long consumerInactivityTimeoutMillis,
+                         long maxRetainedMemoryBytes, long memoryRetentionMillis, long fileRetentionMillis,
+                         ConsumerMetadataLimits consumerMetadataLimits) throws IOException {
+        this.consumerMetadataLimits = Objects.requireNonNull(consumerMetadataLimits, "consumerMetadataLimits");
         this.storageMode = Objects.requireNonNull(storageMode, "storageMode");
         if (storageMode == StorageMode.FILE && dataDirectory == null)
             throw new IllegalArgumentException("dataDirectory is required for file storage");
@@ -329,7 +340,6 @@ public final class DefaultBroker implements Broker {
                 updateProgress(request.topic(), request.partition(), new ConsumerKey(request.groupId(), request.memberId()), request.offset());
             }
         }
-        committedOffsets.put(offsetKey(request.groupId(), request.topic(), request.partition()), request.offset());
         return BrokerResponse.ok(request.correlationId(), request.command());
     }
 
@@ -337,13 +347,17 @@ public final class DefaultBroker implements Broker {
         if (!topics.containsKey(request.topic())) {
             throw new BrokerException(ErrorCode.UNKNOWN_TOPIC, "Unknown topic: " + request.topic());
         }
-        Map<String, String> members = groupMembers.computeIfAbsent(request.groupId(), ignored -> new ConcurrentHashMap<>());
-        String existing = members.putIfAbsent(request.memberId(), request.topic());
-        if (existing != null && !existing.equals(request.topic())) {
-            throw new BrokerException(ErrorCode.BAD_REQUEST, "Member is already registered for a different topic");
-        }
+        validateConsumerId(request.groupId());
+        validateConsumerId(request.memberId());
         ConsumerKey key = new ConsumerKey(request.groupId(), request.memberId());
+        ConsumerState existing = consumers.get(key);
+        if (existing != null && !existing.topic.equals(request.topic()))
+            throw new BrokerException(ErrorCode.BAD_REQUEST, "Member is already registered for a different topic");
         if (existing == null) {
+            int partitions = topics.get(request.topic()).partitions.size();
+            if (consumers.size() >= consumerMetadataLimits.maxMembers()
+                    || partitions > consumerMetadataLimits.maxPartitionMemberships() - consumerPartitionMemberships)
+                throw new BrokerException(ErrorCode.QUOTA_EXCEEDED, "Consumer metadata limit reached");
             Map<Integer, Long> offsets = new ConcurrentHashMap<>();
             Map<Integer, Long> fetchedOffsets = new ConcurrentHashMap<>();
             TopicState topic = topics.get(request.topic());
@@ -353,6 +367,7 @@ public final class DefaultBroker implements Broker {
                 fetchedOffsets.put(i, initialOffset);
             }
             consumers.put(key, new ConsumerState(request.topic(), offsets, fetchedOffsets));
+            consumerPartitionMemberships += partitions;
             consumers.get(key).touch(System.nanoTime());
             for (int i = 0; i < topic.partitions.size(); i++) updateProgress(request.topic(), i, key, offsets.get(i));
             if (LOG.isDebugEnabled()) LOG.debug("Consumer joined group={} member={} topic={} initial_offsets={}",
@@ -366,23 +381,22 @@ public final class DefaultBroker implements Broker {
     }
 
     private synchronized BrokerResponse leaveGroup(BrokerRequest request) {
-        Map<String, String> members = groupMembers.get(request.groupId());
-        String topic = members == null ? null : members.remove(request.memberId());
         ConsumerState removed = consumers.remove(new ConsumerKey(request.groupId(), request.memberId()));
-        if (removed != null) synchronized (removed) { removeProgress(new ConsumerKey(request.groupId(), request.memberId()), removed); }
-        if (topic == null && removed != null) topic = removed.topic;
+        String topic = removed == null ? null : removed.topic;
+        if (removed != null) {
+            consumerPartitionMemberships -= removed.nextOffsets.size();
+            synchronized (removed) { removeProgress(new ConsumerKey(request.groupId(), request.memberId()), removed); }
+        }
         if (topic != null) reclaimTopic(topic);
         if (LOG.isDebugEnabled()) LOG.debug("Consumer left group={} member={} topic={}", request.groupId(), request.memberId(), topic);
         return BrokerResponse.ok(request.correlationId(), request.command());
     }
 
     private BrokerResponse heartbeat(BrokerRequest request) {
-        Map<String, String> members = groupMembers.get(request.groupId());
-        if (members == null || !members.containsKey(request.memberId())) {
-            throw new BrokerException(ErrorCode.BAD_REQUEST, "Consumer group member is not registered");
-        }
         ConsumerState consumer = consumers.get(new ConsumerKey(request.groupId(), request.memberId()));
-        if (consumer != null) consumer.touch(System.nanoTime());
+        if (consumer == null)
+            throw new BrokerException(ErrorCode.BAD_REQUEST, "Consumer group member is not registered");
+        consumer.touch(System.nanoTime());
         return BrokerResponse.ok(request.correlationId(), request.command());
     }
 
@@ -396,16 +410,12 @@ public final class DefaultBroker implements Broker {
                 synchronized (consumer) {
                     if (!consumer.expired(now, ackTimeoutNanos, consumerInactivityTimeoutNanos)) continue;
                     if (!consumers.remove(entry.getKey(), consumer)) continue;
+                    consumerPartitionMemberships -= consumer.nextOffsets.size();
                     removeProgress(entry.getKey(), consumer);
                     LOG.warn("Consumer expired group={} member={} topic={} inactive_ms={} pending_ack_partitions={} acknowledged_offsets={} fetched_offsets={}",
                             entry.getKey().groupId, entry.getKey().memberId, consumer.topic,
                             TimeUnit.NANOSECONDS.toMillis(now - consumer.lastActivityNanos), consumer.pendingAckSince.keySet(),
                             consumer.nextOffsets, consumer.fetchedOffsets);
-                    Map<String, String> members = groupMembers.get(entry.getKey().groupId);
-                    if (members != null) {
-                        members.remove(entry.getKey().memberId);
-                        if (members.isEmpty()) groupMembers.remove(entry.getKey().groupId, members);
-                    }
                 }
             }
         }
@@ -519,9 +529,14 @@ public final class DefaultBroker implements Broker {
         }
     }
 
-    private static String offsetKey(String group, String topic, int partition) {
-        return group + '\0' + topic + '\0' + partition;
+    private static void validateConsumerId(String id) {
+        if (id == null || id.isBlank() || id.length() > 4096
+                || id.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 4096)
+            throw new BrokerException(ErrorCode.BAD_REQUEST, "Consumer identity must be 1..4096 UTF-8 bytes");
     }
+
+    public int activeConsumerCount() { return consumers.size(); }
+    public synchronized int activeConsumerPartitionMemberships() { return consumerPartitionMemberships; }
 
     private static void validateTopicName(String topic) {
         if (topic == null || topic.equals(".") || topic.equals("..")

@@ -37,8 +37,10 @@ public final class TcpServer implements AutoCloseable {
         this.bindAddress = Objects.requireNonNull(bindAddress, "bindAddress");
         this.connectionHandler = Objects.requireNonNull(connectionHandler, "connectionHandler");
         this.options = Objects.requireNonNull(options, "options");
-        if (connectionHandler instanceof io.setu.server.connection.FramedConnectionHandler framed)
+        if (connectionHandler instanceof io.setu.server.connection.FramedConnectionHandler framed) {
             framed.configureBudgets(options.requestBufferBytes(), options.responseBufferBytes(), options.writeTimeoutMillis());
+            framed.configureDeadlines(options.handshakeTimeoutMillis(), options.frameTimeoutMillis());
+        }
     }
 
     /** Binds synchronously, then returns once the accept loop has been started. */

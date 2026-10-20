@@ -67,14 +67,16 @@ public final class SecuredRequestProcessor implements RequestProcessor {
         }
 
         try {
-            AuthorizationContext context = new AuthorizationContext(
-                    identity.principal(), metadata.resource(), metadata.permission());
-            var authorization = authorizer.authorize(identity, context);
-            if (authorization == null || !authorization.allowed()) {
-                String reason = authorization == null ? "authorizer returned no decision" : authorization.reason();
-                LOG.warn("Authorization denied principal={} resource={} permission={} reason={}",
-                        identity.principal(), metadata.resource(), metadata.permission(), reason);
-                return error(request, frame, ErrorCode.AUTHORIZATION_DENIED, reason);
+            for (var requirement : metadata.requirements()) {
+                AuthorizationContext context = new AuthorizationContext(
+                        identity.principal(), requirement.resource(), requirement.permission());
+                var authorization = authorizer.authorize(identity, context);
+                if (authorization == null || !authorization.allowed()) {
+                    String reason = authorization == null ? "authorizer returned no decision" : authorization.reason();
+                    LOG.warn("Authorization denied principal={} resource={} permission={} reason={}",
+                            identity.principal(), requirement.resource(), requirement.permission(), reason);
+                    return error(request, frame, ErrorCode.AUTHORIZATION_DENIED, reason);
+                }
             }
 
             var quota = quotaManager.check(identity.principal(), 1, length);

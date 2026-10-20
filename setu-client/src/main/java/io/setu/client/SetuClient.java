@@ -32,6 +32,7 @@ public final class SetuClient implements AutoCloseable {
     private final DataInputStream input;
     private final DataOutputStream output;
     private final int maxFrameSize;
+    private volatile boolean closed;
     private final AtomicInteger correlationIds = new AtomicInteger();
     private final ProtocolCodec.ProduceBatchEncoder batchEncoder = new ProtocolCodec.ProduceBatchEncoder();
     private final ProtocolCodec.ResponseReader responseReader = new ProtocolCodec.ResponseReader();
@@ -117,6 +118,7 @@ public final class SetuClient implements AutoCloseable {
 
     private synchronized BrokerResponse exchange(Command command, int correlation, String topic, int partition,
                                                   long offset, byte[] requestBytes) throws IOException {
+        if (closed) throw new IOException("Client connection is closed");
         long started = LOG.isDebugEnabled() ? System.nanoTime() : 0;
         try {
             if (LOG.isDebugEnabled()) LOG.debug("Sending command={} correlation={} peer={} topic={} partition={} offset={} frame_bytes={}",
@@ -137,10 +139,17 @@ public final class SetuClient implements AutoCloseable {
                         topic, partition, response.errorCode(), response.errorMessage());
             return response;
         } catch (IOException | RuntimeException failure) {
+            closed = true;
+            try { socket.close(); } catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
             LOG.error("Client request failed command={} correlation={} peer={} topic={} partition={} offset={}",
                     command, correlation, socket.getRemoteSocketAddress(),
                     topic, partition, offset, failure);
             throw failure;
+        } finally {
+            if (closed) {
+                batchEncoder.clear();
+                responseReader.clear();
+            }
         }
     }
 
@@ -217,10 +226,16 @@ public final class SetuClient implements AutoCloseable {
     }
 
     @Override
-    public synchronized void close() throws IOException {
-        batchEncoder.clear();
-        responseReader.clear();
+    public void close() throws IOException {
+        closed = true;
         if (LOG.isDebugEnabled()) LOG.debug("Client closing peer={}", socket.getRemoteSocketAddress());
-        socket.close();
+        // Socket close must not wait for the monitor held by a blocked exchange.
+        try { socket.close(); }
+        finally {
+            synchronized (this) {
+                batchEncoder.clear();
+                responseReader.clear();
+            }
+        }
     }
 }

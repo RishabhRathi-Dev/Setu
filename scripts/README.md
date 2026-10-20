@@ -56,3 +56,7 @@ python -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 The suites cover resource planning/enforcement, parser validation, sustained/target qualification, badge publication, and JFR capture validation/lifecycle. Test artifacts remain under ignored temporary/build directories.
+
+## Source security gate
+
+`python scripts/check-codeql.py <sarif-directory>` validates CodeQL evidence and fails on security severity >=7 or error-level results. Missing/invalid evidence fails. [Security CI](../.github/workflows/security.yml) retains full SARIF, including lower-severity findings. Run `python -m unittest discover -s scripts -p 'test_*.py'` after changing this gate.

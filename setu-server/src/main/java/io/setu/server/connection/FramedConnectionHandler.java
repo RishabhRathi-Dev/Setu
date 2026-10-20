@@ -26,13 +26,27 @@ public final class FramedConnectionHandler implements ConnectionHandler {
     private io.setu.core.protocol.BufferBudget requestBudget = new io.setu.core.protocol.BufferBudget(128L * 1024 * 1024);
     private io.setu.core.protocol.BufferBudget responseBudget = new io.setu.core.protocol.BufferBudget(128L * 1024 * 1024);
     private int writeTimeoutMillis = 30_000;
-    private static final java.util.concurrent.ScheduledThreadPoolExecutor WRITE_DEADLINES = writeDeadlines();
+    private int handshakeTimeoutMillis = 10_000;
+    private int frameTimeoutMillis = 30_000;
 
-    private static java.util.concurrent.ScheduledThreadPoolExecutor writeDeadlines() {
-        var timer = new java.util.concurrent.ScheduledThreadPoolExecutor(1, task ->
-                Thread.ofPlatform().daemon().name("setu-write-deadlines").unstarted(task));
-        timer.setRemoveOnCancelPolicy(true);
-        return timer;
+    public void configureDeadlines(int handshakeTimeoutMillis, int frameTimeoutMillis) {
+        if (handshakeTimeoutMillis <= 0 || frameTimeoutMillis <= 0)
+            throw new IllegalArgumentException("handshake and frame timeouts must be positive");
+        this.handshakeTimeoutMillis = handshakeTimeoutMillis;
+        this.frameTimeoutMillis = frameTimeoutMillis;
+    }
+
+    private ConnectionSession openSession(SocketChannel channel) throws IOException {
+        try (var deadline = new ChannelDeadline(channel, handshakeTimeoutMillis)) {
+            ConnectionSession session = sessionFactory.open(channel);
+            try {
+                deadline.complete();
+                return session;
+            } catch (IOException failure) {
+                try { session.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                throw failure;
+            }
+        }
     }
 
     /** Called by the owning acceptor before it serves connections. */
@@ -84,7 +98,7 @@ public final class FramedConnectionHandler implements ConnectionHandler {
         long started = System.nanoTime();
         try (var sessionContext = MDC.putCloseable("sessionId", Long.toString(sessionId));
              var connectionCredit = requestBudget.reserve(17L * 1024);
-             ConnectionSession session = sessionFactory.open(channel);
+             ConnectionSession session = openSession(channel);
              var principalContext = MDC.putCloseable("principal", session.identity() == null
                      ? "anonymous" : session.identity().principal().toString())) {
             if (LOG.isDebugEnabled()) LOG.debug("Session opened peer={} max_frame_bytes={} tcp_nodelay={}", peer, maxFrameSize,
@@ -94,26 +108,28 @@ public final class FramedConnectionHandler implements ConnectionHandler {
             while (channel.isOpen()) {
                 int first = input.read();
                 if (first < 0) return;
-                int length = (first << 24) | input.readUnsignedByte() << 16
-                        | input.readUnsignedByte() << 8 | input.readUnsignedByte();
-                if (length < 0 || length > maxFrameSize) throw new IOException("Invalid frame length: " + length);
-                // Reserve frame + decoded payload allowance before allocating either body.
-                try (var requestCredit = requestBudget.reserve(2L * length + 1024);
-                     var requestContext = io.setu.core.protocol.RequestBuffers.activate(requestCredit);
-                     var responseCredit = new io.setu.core.protocol.ResponseBuffers(responseBudget);
-                     var context = responseCredit.activate()) {
-                    var request = io.setu.storage.log.MessageValue.Frame.readFrom(input, length);
-                    byte[] response = Objects.requireNonNull(
-                            requestProcessor.process(session.identity(), request), "request processor response");
-                    responseCredit.ensure(response.length);
-                    var deadline = WRITE_DEADLINES.schedule(() -> {
-                        try { channel.close(); } catch (IOException ignored) { }
-                    }, writeTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS);
-                    try { FrameCodec.writeFrame(output, response, maxFrameSize); }
-                    finally { deadline.cancel(false); }
-                    frames++;
-                } catch (IOException e) { throw e; }
-                catch (Exception e) { throw new IOException("Frame processing failed", e); }
+                try (var frameDeadline = new ChannelDeadline(channel, frameTimeoutMillis)) {
+                    int length = (first << 24) | input.readUnsignedByte() << 16
+                            | input.readUnsignedByte() << 8 | input.readUnsignedByte();
+                    if (length < 0 || length > maxFrameSize) throw new IOException("Invalid frame length: " + length);
+                    // Reserve frame + decoded payload allowance before allocating either body.
+                    try (var requestCredit = requestBudget.reserve(2L * length + 1024);
+                         var requestContext = io.setu.core.protocol.RequestBuffers.activate(requestCredit);
+                         var responseCredit = new io.setu.core.protocol.ResponseBuffers(responseBudget);
+                         var context = responseCredit.activate()) {
+                        var request = io.setu.storage.log.MessageValue.Frame.readFrom(input, length);
+                        // Receipt is complete; long polling and dispatch have their own lifecycle.
+                        frameDeadline.complete();
+                        byte[] response = Objects.requireNonNull(
+                                requestProcessor.process(session.identity(), request), "request processor response");
+                        responseCredit.ensure(response.length);
+                        try (var deadline = new ChannelDeadline(channel, writeTimeoutMillis)) {
+                            FrameCodec.writeFrame(output, response, maxFrameSize);
+                        }
+                        frames++;
+                    } catch (IOException e) { throw e; }
+                    catch (Exception e) { throw new IOException("Frame processing failed", e); }
+                }
             }
         } catch (IOException | RuntimeException failure) {
             if (failure instanceof io.setu.core.protocol.BufferBudget.Exhausted)

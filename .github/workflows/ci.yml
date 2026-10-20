@@ -26,13 +26,40 @@ permissions:
   contents: read
 
 jobs:
+  windows-functional:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '26'
+          cache: maven
+      - name: Run functional TCP, mTLS and filesystem tests on Windows
+        shell: pwsh
+        run: .\mvnw.cmd --batch-mode --no-transfer-progress -pl setu-integration-tests -am test
+      - name: Package and exercise the Windows launcher
+        shell: pwsh
+        run: |
+          .\mvnw.cmd --batch-mode --no-transfer-progress -pl setu-server -am -DskipTests package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\scripts\start-broker.ps1 --no-aot --help
+      - name: Retain Windows test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-functional-results
+          path: '**/target/surefire-reports/'
+          retention-days: 14
+
   trace-file-waits:
     if: github.event_name == 'workflow_dispatch' && inputs.trace_file_waits
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '26'
@@ -65,7 +92,7 @@ jobs:
             python3 scripts/run-benchmarks.py --kind baseline --measurement full \
               --storage-mode FILE --payload-sizes 1024 --data-directory "$RUNNER_TEMP"
           fi
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: file-force-kernel-trace
@@ -83,10 +110,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Java 26
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '26'
@@ -112,7 +139,7 @@ jobs:
 
       - name: Retain file-force diagnostic evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: file-force-probe
           path: |
@@ -122,7 +149,7 @@ jobs:
 
       - name: Retain unit and benchmark-helper test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unit-test-results
           path: '**/target/surefire-reports/'
@@ -169,7 +196,7 @@ jobs:
 
       - name: Retain AOT validation logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: aot-validation-logs
           path: '${{ runner.temp }}/aot-*.log'
@@ -182,10 +209,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Java 26
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '26'
@@ -196,7 +223,7 @@ jobs:
 
       - name: Retain integration test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-test-results
           path: '**/target/surefire-reports/'
@@ -211,10 +238,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Java 26
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '26'
@@ -252,7 +279,7 @@ jobs:
 
       - name: Retain benchmark logs and failure reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: benchmark-smoke-${{ github.run_attempt }}
           path: |
@@ -273,8 +300,8 @@ jobs:
         mode: [IN_MEMORY, FILE]
         payload: [256, 512, 1024, 4096]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '26'
@@ -296,7 +323,7 @@ jobs:
           fi
       - name: Retain raw captures and report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sustained-${{ matrix.mode }}-${{ matrix.payload }}-${{ github.run_attempt }}
           path: |
@@ -314,8 +341,8 @@ jobs:
       matrix:
         mode: [IN_MEMORY, FILE]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '26'
@@ -335,7 +362,7 @@ jobs:
           fi
       - name: Retain baseline measurements, JFR and test reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: performance-baseline-${{ matrix.mode }}-${{ github.run_attempt }}
           path: |
@@ -353,8 +380,8 @@ jobs:
       matrix:
         mode: [IN_MEMORY, FILE]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '26'
@@ -375,7 +402,7 @@ jobs:
           fi
       - name: Retain target measurements, JFR and test reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: node-target-${{ matrix.mode }}-${{ github.run_attempt }}
           path: |
@@ -385,10 +412,10 @@ jobs:
           retention-days: 14
 
   publish-benchmark-badges:
-    needs: [unit-tests, integration-tests, node-target-benchmark]
+    needs: [unit-tests, integration-tests, windows-functional, node-target-benchmark]
     if: >-
       always() && needs.unit-tests.result == 'success' && needs.integration-tests.result == 'success'
-      && needs.node-target-benchmark.result != 'cancelled'
+      && needs.windows-functional.result == 'success' && needs.node-target-benchmark.result != 'cancelled'
       && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
@@ -398,10 +425,10 @@ jobs:
       group: benchmark-badges-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           pattern: node-target-*-${{ github.run_attempt }}
           path: reports

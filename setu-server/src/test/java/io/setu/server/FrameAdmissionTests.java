@@ -11,6 +11,74 @@ import java.util.function.LongSupplier;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FrameAdmissionTests {
+    @Test void frameDeadlineEndsBeforeDispatchAndDoesNotCloseTheNextFrame() throws Exception {
+        var options = new TcpServerOptions(4, 4, 0, 128 * 1024, 128 * 1024, 3000, 3000, 100);
+        var handler = new FramedConnectionHandler(1024, bytes -> {
+            try { Thread.sleep(200); } catch (InterruptedException e) { throw new IOException(e); }
+            return bytes;
+        });
+        try (var server = new TcpServer(new InetSocketAddress("127.0.0.1", 0), handler, options)) {
+            server.start();
+            try (var client = new Socket()) {
+                client.connect(server.localAddress()); client.setSoTimeout(3000);
+                for (int i = 0; i < 2; i++) {
+                    FrameCodec.writeFrame(new DataOutputStream(client.getOutputStream()), new byte[]{1}, 1024);
+                    assertArrayEquals(new byte[]{1}, FrameCodec.readFrame(new DataInputStream(client.getInputStream()), 1024));
+                }
+            }
+        }
+    }
+
+    @Test void blockingFrameDeadlineReleasesStalledBodies() throws Exception { verifyReadDeadline(false, false, false); }
+    @Test void selectorFrameDeadlineReleasesStalledBodies() throws Exception { verifyReadDeadline(true, false, false); }
+    @Test void blockingFrameDeadlineStopsTrickledBodies() throws Exception { verifyReadDeadline(false, true, false); }
+    @Test void selectorFrameDeadlineStopsTrickledBodies() throws Exception { verifyReadDeadline(true, true, false); }
+    @Test void blockingFrameDeadlineCoversPartialHeaders() throws Exception { verifyReadDeadline(false, true, true); }
+    @Test void selectorFrameDeadlineCoversPartialHeaders() throws Exception { verifyReadDeadline(true, true, true); }
+
+    private void verifyReadDeadline(boolean selector, boolean trickle, boolean header) throws Exception {
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        io.setu.server.dispatcher.RequestHandler handler = bytes -> { calls.incrementAndGet(); return bytes; };
+        var options = new TcpServerOptions(4, 4, 0, 128 * 1024, 128 * 1024, 3000, 3000, 250);
+        var framed = new FramedConnectionHandler(1024, handler);
+        var blocking = selector ? null : new TcpServer(new InetSocketAddress("127.0.0.1", 0), framed, options);
+        var nio = selector ? new SelectorTcpServer(new InetSocketAddress("127.0.0.1", 0), 1024, options, handler) : null;
+        LongSupplier requests = selector ? nio::inFlightRequestBytes : framed::inFlightRequestBytes;
+        try (AutoCloseable server = selector ? nio : blocking; var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            if (selector) nio.start(); else blocking.start();
+            var address = selector ? nio.localAddress() : blocking.localAddress();
+            try (var partial = new Socket()) {
+                partial.connect(address);
+                partial.setSoTimeout(3000);
+                var output = new DataOutputStream(partial.getOutputStream());
+                if (header) output.writeByte(0); else { output.writeInt(1024); output.writeByte(1); }
+                output.flush();
+                var writer = workers.submit(() -> {
+                    if (!trickle) return null;
+                    try {
+                        for (int i = 0; i < (header ? 2 : 100); i++) {
+                            Thread.sleep(75);
+                            output.writeByte(0); output.flush();
+                        }
+                    } catch (IOException closed) { /* Expiry closes the socket while bytes still trickle. */ }
+                    return null;
+                });
+                try { assertEquals(-1, partial.getInputStream().read()); }
+                catch (SocketException reset) { /* EOF and reset both mean the deadline closed the peer. */ }
+                writer.cancel(true);
+            }
+            awaitRequestBytes(requests, 0);
+            assertEquals(0, calls.get());
+            try (var healthy = new Socket()) {
+                healthy.connect(address); healthy.setSoTimeout(3000);
+                FrameCodec.writeFrame(new DataOutputStream(healthy.getOutputStream()), new byte[]{1}, 1024);
+                assertArrayEquals(new byte[]{1}, FrameCodec.readFrame(new DataInputStream(healthy.getInputStream()), 1024));
+            }
+            assertEquals(1, calls.get());
+        }
+        assertEquals(0, requests.getAsLong());
+    }
+
     @Test void blockingWriteDeadlineReleasesSlowReaders() throws Exception { verifyWriteTimeout(false); }
     @Test void selectorWriteDeadlineReleasesSlowReaders() throws Exception { verifyWriteTimeout(true); }
 

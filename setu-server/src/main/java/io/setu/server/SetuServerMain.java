@@ -39,6 +39,7 @@ public final class SetuServerMain {
         }
         Set<String> supported = Set.of("bind.host", "bind.port", "storage.mode", "data.dir",
                 "record.max.bytes", "queue.block.bytes", "connections.max", "accept.backlog",
+                "handshake.timeout.millis", "frame.timeout.millis", "consumers.max", "consumer.partitions.max",
                 "socket.timeout.millis", "ack.timeout.millis", "consumer.timeout.millis", "transport", "memory.log.max.bytes",
                 "requests.max.bytes", "responses.max.bytes", "memory.retention.millis", "file.retention.millis", "write.timeout.millis");
         for (String key : properties.stringPropertyNames())
@@ -48,10 +49,12 @@ public final class SetuServerMain {
                 Math.toIntExact(number(properties, "bind.port", 9092)));
         TcpServerOptions options = new TcpServerOptions(Math.toIntExact(number(properties, "connections.max", 10_000)),
                 Math.toIntExact(number(properties, "accept.backlog", 256)),
-                Math.toIntExact(number(properties, "socket.timeout.millis", 0)),
+                Math.toIntExact(number(properties, "socket.timeout.millis", 60_000)),
                 number(properties, "requests.max.bytes", 128L * 1024 * 1024),
                 number(properties, "responses.max.bytes", 128L * 1024 * 1024),
-                Math.toIntExact(number(properties, "write.timeout.millis", 30_000)));
+                Math.toIntExact(number(properties, "write.timeout.millis", 30_000)),
+                Math.toIntExact(number(properties, "handshake.timeout.millis", 10_000)),
+                Math.toIntExact(number(properties, "frame.timeout.millis", 30_000)));
         String transport = properties.getProperty("transport", "blocking");
         if (!Set.of("blocking", "selector").contains(transport))
             throw new IllegalArgumentException("transport must be blocking or selector");
@@ -69,7 +72,10 @@ public final class SetuServerMain {
                 number(properties, "consumer.timeout.millis", DefaultBroker.DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS),
                 number(properties, "memory.log.max.bytes", DefaultBroker.DEFAULT_MAX_RETAINED_MEMORY_BYTES),
                 number(properties, "memory.retention.millis", 0),
-                number(properties, "file.retention.millis", 0))) {
+                number(properties, "file.retention.millis", 0),
+                new io.setu.core.broker.ConsumerMetadataLimits(
+                        Math.toIntExact(number(properties, "consumers.max", 10_000)),
+                        Math.toIntExact(number(properties, "consumer.partitions.max", 100_000))))) {
             BrokerRequestHandler handler = new BrokerRequestHandler(broker);
             TcpServer blocking = transport.equals("blocking")
                     ? new TcpServer(address, new FramedConnectionHandler(handler), options) : null;
