@@ -26,7 +26,7 @@ python scripts/run-jfr.py --storage-mode FILE
 python scripts/run-jfr.py --help
 ```
 
-For resource-enforced Linux/WSL runs, start with `python3 scripts/run-benchmarks.py --dry-run`. Baseline, target, and sustained expectation misses warn by default; use `--strict` to fail unmet performance expectations. Execution failures remain errors. [The benchmark guide](../setu-benchmark/README.md) defines measurement profiles, CPU/memory enforcement, output schemas, and qualification rules.
+For resource-enforced Linux/WSL runs, start with `python3 scripts/run-benchmarks.py --dry-run`. Baseline, target, sustained, and steady expectation misses warn by default; use `--strict` to fail unmet performance expectations. Execution failures remain errors. [The benchmark guide](../setu-benchmark/README.md) defines measurement profiles, CPU/memory enforcement, output schemas, and qualification rules.
 
 ## Badge publication
 

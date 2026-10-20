@@ -236,7 +236,7 @@ jobs:
         run: |
           set -o pipefail
           python3 scripts/run-benchmarks.py --kind steady --payload-sizes 1024 \
-            --fraction "$BENCHMARK_FRACTION" --log "$RUNNER_TEMP/logs/steady-throughput.log"
+            --fraction "$BENCHMARK_FRACTION" --report-only --log "$RUNNER_TEMP/logs/steady-throughput.log"
 
       - name: Run the short sustained smoke profile
         run: >-

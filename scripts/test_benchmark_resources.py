@@ -201,6 +201,45 @@ class ResourceBudgetTests(unittest.TestCase):
                         self.assertEqual('strict' if case == 'strict' else 'report-only', document['resources']['target_policy'])
                         if case == 'worker-exit': self.assertIn('worker failure detail', printed)
 
+    def test_steady_policy_preserves_worker_failures_and_forwards_strict_enforcement(self):
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        for flags, code, github_actions in product(([], ['--report-only'], ['--strict']), (0, 1), (False, True)):
+            with self.subTest(flags=flags, code=code, github_actions=github_actions), tempfile.TemporaryDirectory() as directory:
+                commands = []
+                def workload(command, **kwargs):
+                    commands.append(command)
+                    kwargs['stdout'].write('STEADY_STAGE partitions=1 produced=28736 delivered=28736 '
+                                           'missed_records=1280 errors=0\n'
+                                           'WARNING: Steady offered load missed mode=IN_MEMORY missed_records=1280\n')
+                    return type('Result', (), {'returncode': code})()
+                argv = ['run-benchmarks', '--kind', 'steady', '--payload-sizes', '1024',
+                        '--data-directory', directory, '--output', directory] + flags
+                with patch.object(resources, 'detect_host', return_value=self.host()), \
+                     patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
+                     patch.object(resources.subprocess, 'run', side_effect=workload), \
+                     patch.dict(resources.os.environ) as environment, \
+                     patch('builtins.print') as output, patch.object(sys, 'argv', argv):
+                    if github_actions:
+                        environment['GITHUB_ACTIONS'] = 'true'
+                    else:
+                        environment.pop('GITHUB_ACTIONS', None)
+                    if code:
+                        with self.assertRaisesRegex(RuntimeError, 'execution failed'):
+                            resources.main()
+                    else:
+                        resources.main()
+                strict = flags == ['--strict']
+                self.assertIn('-Dsetu.benchmark.steady.enforce=' + str(strict).lower(), commands[0])
+                snapshot = json.loads(next(Path(directory).rglob('resources.json')).read_text())
+                self.assertEqual('strict' if strict else 'report-only', snapshot['expectation_policy'])
+                self.assertIn('missed_records=1280', next(Path(directory).rglob('payload-*.log')).read_text())
+                if not code:
+                    printed = '\n'.join(str(call.args[0]) for call in output.call_args_list)
+                    prefix = '::warning::' if github_actions else 'WARNING: '
+                    self.assertIn(prefix + 'Steady offered load missed', printed)
+                    self.assertIn('STEADY_STAGE partitions=1', printed)
+
     def test_report_only_does_not_disable_capacity_or_other_profile_gates(self):
         old_handler = signal.getsignal(signal.SIGTERM)
         self.addCleanup(signal.signal, signal.SIGTERM, old_handler)

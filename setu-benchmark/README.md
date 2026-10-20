@@ -88,9 +88,22 @@ HDR histograms retain produce, fetch, acknowledgement and scheduled-completion l
 
 `FILE` forces every group commit before acknowledgement; memory mode is volatile. Filesystem/media details are recorded rather than assuming SSD durability/performance. Reports reject incomplete captures, duplicate runs, non-finite metrics, mixed payloads and invalid offered rates. Evidence is saved before evaluating qualification failures.
 
-Baseline, target and sustained measurements report unmet performance expectations as warnings by default, while retaining the measured values, failed limits and unqualified status. CI passes these completed measurements and includes the reports in its job summary and artifacts. Crashes, nonzero worker exits, timeouts, request errors, zero producer/consumer progress and incomplete or invalid captures still fail. `--report-only` selects this policy explicitly; `--strict` opts into failing on unmet performance expectations.
+Baseline, target, sustained and steady measurements report unmet performance expectations as warnings by default, while retaining measured values and failures. Baseline/target/sustained results retain their unqualified status; steady reports missed scheduled records separately from delivered records. CI passes completed expectation misses and retains the captures. Crashes, nonzero worker exits, timeouts, request errors, zero producer/consumer progress and incomplete or invalid captures still fail. `--report-only` selects this policy explicitly; `--strict` opts into failing on unmet performance expectations.
 
 Measured JFR stages now include `file_force_count`, `file_force_total_ms`, `file_force_p99_ms` and `file_force_max_ms`. New recordings enable every `jdk.FileForce` event with a zero threshold. Each call's elapsed wait is clipped to the measured interval, excluding warmup and cleanup; concurrent calls are summed separately, so total wait can exceed the stage duration. These are elapsed durability-barrier times, including any scheduling delay during the call. Older recordings can omit fast events, and older summaries without these metrics display `unavailable`. Reports retain the latency components separately so force waits can be compared with produce and scheduled-completion p99. Wait metrics are diagnostic and have no additional qualification threshold.
+
+## Isolated steady throughput
+
+`--kind steady` runs separate broker and client JVMs for both storage modes, with one and four partitions. The workload offers 10,000 records/s for three seconds after warmup. Each completed capture includes accepted/delivered records, measured rates, missed scheduled records, request errors, drain time, and request/scheduled-completion latency. `missed_records` counts records whose scheduled send slots were skipped before the deadline; it is not a count of lost accepted records.
+
+```bash
+python3 scripts/run-benchmarks.py --kind steady --payload-sizes 1024 --report-only
+python3 scripts/run-benchmarks.py --kind steady --payload-sizes 1024 --strict
+```
+
+By default, missed scheduled load emits a warning and all four configurations continue. Strict mode fails after retaining all completed configurations if any missed their offered load. Direct Maven runs use the same default; add `-Dsetu.benchmark.steady.enforce=true` to enforce it. A worker must still exit successfully, emit exactly one matching measured stage, make progress, report zero request errors, and drain every accepted record. Invalid/incomplete counters and delivery mismatches always fail. Raw broker/client output is printed even when a run fails and remains in `logs/benchmarks/steady/`.
+
+These short diagnostics do not qualify sustained capacity. CPU scheduling, JIT/GC, and storage stalls can affect offered-load attainment; inspect the retained timings and resource measurements before attributing a miss to any one cause.
 
 ## Direct node-target verification
 
@@ -127,7 +140,7 @@ This was substantially slower than the former custom backend on that host; it do
 
 ## CI and reports
 
-[CI](../.github/workflows/ci.yml) runs production/helper tests, integration tests, bounded chaos, isolated load, sustained smoke, two full fixed-budget baseline shards and two full node-target shards with JFR on pushes/PRs. Baseline, target and optional full sustained shards use `--report-only`: completed misses warn and remain unqualified in reports, while execution failures fail the job. Optional `full_benchmark` dispatch adds eight capacity comparisons across two modes and four payloads.
+[CI](../.github/workflows/ci.yml) runs production/helper tests, integration tests, bounded chaos, isolated load, sustained smoke, two full fixed-budget baseline shards and two full node-target shards with JFR on pushes/PRs. Steady, baseline, target and optional full sustained measurements use `--report-only`: completed misses warn and remain visible in captures/reports, while execution failures fail the job. Optional `full_benchmark` dispatch adds eight capacity comparisons across two modes and four payloads.
 
 `scripts/diagnostics/StorageForceProbe.java` measures two mapped writers with full and data-only barriers at any supplied disk path, independently of broker work. Compile it with Java 26 and run `io.setu.storage.log.StorageForceProbe <directory>` with `@config/jvm.options -Xms64m -Xmx128m -XX:ActiveProcessorCount=2`; use the same OS resource limits when comparing it with a baseline. The probe preserves offered-load backlog and rejects RAM filesystems. It diagnoses a storage path; it does not qualify or replace the full benchmark.
 

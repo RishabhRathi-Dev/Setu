@@ -239,12 +239,12 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='detect and print the plan without launching anything')
     policy = parser.add_mutually_exclusive_group()
     policy.add_argument('--report-only', action='store_true',
-                        help='report unmet baseline/target/sustained expectations as warnings (default)')
+                        help='report unmet baseline/target/sustained/steady expectations as warnings (default)')
     policy.add_argument('--strict', action='store_true',
-                        help='fail baseline/target/sustained measurements on unmet performance expectations')
+                        help='fail baseline/target/sustained/steady measurements on unmet performance expectations')
     args = parser.parse_args()
-    if (args.report_only or args.strict) and args.kind not in ('target', 'baseline', 'sustained'):
-        parser.error('--report-only/--strict apply to baseline, target and sustained measurements')
+    if (args.report_only or args.strict) and args.kind not in ('target', 'baseline', 'sustained', 'steady'):
+        parser.error('--report-only/--strict apply to baseline, target, sustained and steady measurements')
     args.report_only = not args.strict
     target_kind = args.kind in ('target', 'baseline')
     target_profile = 'ci-baseline' if args.kind == 'baseline' else 'reference'
@@ -315,7 +315,7 @@ def main():
                     payload_sizes=payloads, repeats=args.repeats if args.kind in ('target', 'baseline', 'sweep', 'sustained') else 1,
                     measurement=args.measurement, storage_mode=args.storage_mode, max_concurrency=args.max_concurrency,
                     stage_millis=args.stage_millis, warmup_millis=args.warmup_millis)
-    if args.kind in ('baseline', 'target', 'sustained'):
+    if args.kind in ('baseline', 'target', 'sustained', 'steady'):
         snapshot['expectation_policy'] = 'report-only' if args.report_only else 'strict'
     if target_kind:
         snapshot.update(target_profile=target_profile, target_policy='report-only' if args.report_only else 'strict',
@@ -366,6 +366,8 @@ def main():
                             f'-Dsetu.benchmark.max.concurrency={args.max_concurrency}',
                             f'-Dsetu.benchmark.stage.millis={args.stage_millis}',
                             f'-Dsetu.benchmark.warmup.millis={args.warmup_millis}', '-Dsetu.benchmark.jfr=true']
+            elif args.kind == 'steady':
+                command += ['-Dsetu.benchmark.steady.enforce=' + str(args.strict).lower()]
             elif args.kind == 'capacity':
                 command += ['-Dsetu.benchmark.max.concurrency=0', '-Dsetu.benchmark.min.stages=8',
                             '-Dsetu.benchmark.stage.millis=2000', '-Dsetu.benchmark.warmup.millis=2000',
@@ -399,6 +401,13 @@ def main():
             if result.returncode:
                 print('\n'.join(capture.read_text(encoding='utf-8').splitlines()[-60:]), flush=True)
                 raise RuntimeError(f'benchmark execution failed (exit {result.returncode}); capture: {capture}')
+            if args.kind == 'steady':
+                for line in capture.read_text(encoding='utf-8').splitlines():
+                    if line.startswith(('STEADY_CAPTURE ', 'STEADY_STAGE ', 'STEADY_BROKER ')):
+                        print(line, flush=True)
+                    elif line.startswith(('WARNING: Steady offered load missed', '::warning::Steady offered load missed')):
+                        message = line.removeprefix('WARNING: ').removeprefix('::warning::')
+                        print(('::warning::' if 'GITHUB_ACTIONS' in os.environ else 'WARNING: ') + message, flush=True)
             if target_kind:
                 if any(float(stage['errors']) != 0 or float(stage['produced']) <= 0 or float(stage['consumed']) <= 0
                        for run in runs for stage in run['stages']):
