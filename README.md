@@ -152,7 +152,7 @@ Benchmark-helper tests, bounded chaos, load checks, baseline/target measurements
 | [setu-benchmark/](setu-benchmark/README.md) | Throughput, latency, JFR, crash recovery, and chaos |
 | [docs/](docs/README.md) | Architecture, configuration, and operations guides |
 | [scripts/](scripts/README.md) | Launch, certificate, profiling, reporting, and diagnostic tools |
-| [examples/SetuQuickstart.java](examples/SetuQuickstart.java) | Runnable produce/fetch/acknowledge example |
+| [examples/](examples/README.md) | Runnable clients, batch/partition fetches, long polling, embedded brokers, recovery and retention |
 | [config/](config/server.properties) | Server properties, JVM flags, and Logback configuration |
 | [benchmark-badges/](benchmark-badges/node-target-results.json) | CI-maintained SVGs and measurement snapshots |
 
