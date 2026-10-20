@@ -20,9 +20,38 @@ try (var broker = new DefaultBroker(Path.of("data"), 1024 * 1024)) {
 }
 ```
 
-`DefaultBroker(Path, maxRecordBytes)` selects durable Chronicle Queue storage. `DefaultBroker(maxRecordBytes)` selects volatile memory. Constructors also accept an explicit `StorageMode`, queue mapping block size, consumer deadlines, retained-memory budget and optional lossy memory expiry. File use requires the shared [JVM options](../config/jvm.options).
+`DefaultBroker(Path, maxRecordBytes)` selects durable Chronicle Queue storage. `DefaultBroker(maxRecordBytes)` selects volatile memory. Constructors also accept an explicit `StorageMode`, queue mapping block size, consumer deadlines, retained-memory budget, optional lossy memory expiry and file retention. File use requires the shared [JVM options](../config/jvm.options).
 
 Direct broker calls bypass network authentication, ACLs and quotas. `BrokerException` carries application errors; I/O failures propagate to the embedding application. The server translates these into wire responses.
+
+### File retention example
+
+This embedded broker expires completed daily files seven days after their cycle end. Its maintenance task handles existing and new partitions; the application owns the broker's lifetime.
+
+```java
+import io.setu.core.broker.DefaultBroker;
+import io.setu.storage.log.MessageLogs;
+import io.setu.storage.log.StorageMode;
+import java.nio.file.Path;
+import java.time.Duration;
+
+long fileRetentionMillis = Duration.ofDays(7).toMillis();
+try (var broker = new DefaultBroker(
+        StorageMode.FILE,
+        Path.of("data"),
+        1024 * 1024, // maximum record payload
+        MessageLogs.DEFAULT_QUEUE_BLOCK_BYTES,
+        DefaultBroker.DEFAULT_ACK_TIMEOUT_MILLIS,
+        DefaultBroker.DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS,
+        DefaultBroker.DEFAULT_MAX_RETAINED_MEMORY_BYTES,
+        0, // timed memory expiry disabled; memory settings are unused in FILE mode
+        fileRetentionMillis)) {
+    // Execute broker requests or run the application's server here.
+    // Keep this scope open for the entire server lifetime.
+}
+```
+
+Use `0` for the final argument to disable file expiry. The newest populated daily file always remains, and expiry does not wait for consumers to acknowledge records. See the [worked timeline](../docs/operations.md#file-retention-timeline) for precise offset behavior.
 
 ## Broker semantics
 
@@ -37,7 +66,7 @@ Direct broker calls bypass network authentication, ACLs and quotas. `BrokerExcep
 | Expiry | Default 30-second acknowledgement / 60-second inactivity deadlines; maintenance runs every 10 ms |
 | Restart | File topics and records recover; memberships and committed offsets do not |
 
-Memory members start at the partition end when they join. Acknowledgements reclaim through the lowest registered member's next offset; leaving or expiry removes that member's retention claim. File storage keeps full history and permits reads from zero. Consumer state is bookkeeping, without partition assignment or rebalancing.
+Memory members start at the partition end when they join. Acknowledgements reclaim through the lowest registered member's next offset; leaving or expiry removes that member's retention claim. File storage keeps full history by default. Optional `fileRetentionMillis` on the extended constructor expires completed daily files independently of consumer progress; fetches before the retained boundary return `OFFSET_OUT_OF_RANGE` with a resume offset. Consumer state is bookkeeping, without partition assignment or rebalancing.
 
 Memory brokers share a 256 MiB retained-log budget by default. Whole-batch admission failure returns `QUOTA_EXCEEDED` without consuming offsets. Zero disables that budget. Protocol buffers and file indexes are outside it. See [storage ownership and admission](../setu-storage/README.md).
 

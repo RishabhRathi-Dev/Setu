@@ -27,7 +27,32 @@ Launch with the shared [config/jvm.options](../config/jvm.options). Maven tests,
 
 A partition contains daily rolled `.cq4` files, `metadata.cq4t` and an exclusive `.setu.lock`. Chronicle owns native mappings and physical indexes. Versioned Setu documents contain the first logical offset, count and length-prefixed records. Batches split near 1 MiB; an individual larger record stays whole. Dense Setu offsets continue across roll cycles and restart, independently of Chronicle's encoded indexes. A sparse pair of primitive arrays maps logical document offsets to physical indexes.
 
-`queue.block.bytes` controls mapping blocks, with a 64 MiB minimum/default (`MessageLogs.DEFAULT_QUEUE_BLOCK_BYTES`). It does not limit daily file size or enable retention. All native operations and closure serialize on the adapter; only one broker can own a partition.
+`queue.block.bytes` controls mapping blocks, with a 64 MiB minimum/default (`MessageLogs.DEFAULT_QUEUE_BLOCK_BYTES`). It does not limit daily file size. Optional file retention is configured separately. All native operations and closure serialize on the adapter; only one broker can own a partition.
+
+`file.retention.millis` defaults to zero (disabled). A positive value expires whole files once their daily cycle end is old enough, independently of consumer acknowledgements. The broker sweeps at startup and every minute; the newest populated cycle always remains, even while idle. Standalone `MessageLog` callers can invoke `discardExpiredFiles(retentionMillis)` themselves. Cleanup checkpoints a checksummed logical/physical boundary in `.setu-retention`, releases all queue mappings and force channels, removes obsolete files, and reopens the queue under the partition lock. Reads and appends pause during this operation. Logical offsets never reset; storage reads clamp to `firstOffset`, while broker fetches below it return `OFFSET_OUT_OF_RANGE` with a resume offset. Keep the checkpoint with the queue files when backing up or restoring a partition.
+
+### Standalone retention example
+
+When using storage directly, the caller schedules cleanup. This example opens an existing partition, performs one seven-day sweep, then reads from the retained boundary:
+
+```java
+import io.setu.storage.log.MessageLogs;
+import io.setu.storage.log.StorageMode;
+import java.nio.file.Path;
+import java.time.Duration;
+
+try (var log = MessageLogs.open(StorageMode.FILE,
+        Path.of("data/orders/partition-0"), 1024 * 1024)) {
+    log.discardExpiredFiles(Duration.ofDays(7).toMillis());
+    long firstRetained = log.firstOffset();
+    long nextAppend = log.nextOffset();
+    var page = log.read(firstRetained, 4 * 1024 * 1024);
+    System.out.printf("Retained range [%d, %d), page records=%d%n",
+            firstRetained, nextAppend, page.size());
+}
+```
+
+Stop any broker that owns the partition before running this example. A newly created partition has no history to expire; one populated cycle is always kept. Storage reads below `firstOffset()` clamp to that boundary. Applications that need explicit gap detection must compare their requested offset with the boundary or use the broker's `OFFSET_OUT_OF_RANGE` behavior. Use the [embedded broker example](../setu-core/README.md#file-retention-example) for automatic background maintenance.
 
 ## Durability and recovery
 
@@ -37,7 +62,7 @@ Acknowledgement follows a JDK file force on every touched queue file and roll me
 
 Appends and close serialize across the complete force. The committed offset and document boundary publish together only after forcing succeeds. Reads of the previously committed prefix can proceed during JDK forcing; offset checks do not acquire the I/O monitor. Sequential reads reuse the tailer's current index, while partial reads and rewinds seek as needed.
 
-Recovery validates committed headers, counts, lengths and dense offsets, then rebuilds Setu's sparse logical index. Chronicle's native indexes are persisted. Incomplete native documents do not consume recovered offsets; malformed committed documents fail startup without silently discarding later data.
+Recovery validates committed headers, counts, lengths and dense offsets, then rebuilds Setu's sparse logical index starting at the persisted retention boundary when present. Chronicle's native indexes are persisted. Incomplete native documents do not consume recovered offsets; malformed committed documents fail startup without silently discarding later data.
 
 Append failure poisons subsequent operations until reopen. Unacknowledged committed documents can remain after a failed append, so a failed/lost reply has an uncertain outcome. This does not provide idempotent retries or exactly-once delivery.
 
@@ -61,7 +86,7 @@ Run from the repository root. The final argument is the original maximum record 
 
 ## Limits and tests
 
-File retention, payload checksums, replicated storage, persisted consumer metadata and configurable acknowledgement modes are not implemented.
+Payload checksums, replicated storage, persisted consumer metadata and configurable acknowledgement modes are not implemented.
 
 From the repository root with Java 26:
 

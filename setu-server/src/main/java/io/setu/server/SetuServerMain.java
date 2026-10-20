@@ -40,7 +40,7 @@ public final class SetuServerMain {
         Set<String> supported = Set.of("bind.host", "bind.port", "storage.mode", "data.dir",
                 "record.max.bytes", "queue.block.bytes", "connections.max", "accept.backlog",
                 "socket.timeout.millis", "ack.timeout.millis", "consumer.timeout.millis", "transport", "memory.log.max.bytes",
-                "requests.max.bytes", "responses.max.bytes", "memory.retention.millis", "write.timeout.millis");
+                "requests.max.bytes", "responses.max.bytes", "memory.retention.millis", "file.retention.millis", "write.timeout.millis");
         for (String key : properties.stringPropertyNames())
             if (!supported.contains(key)) throw new IllegalArgumentException("Unknown configuration property: " + key);
         StorageMode mode = StorageMode.valueOf(properties.getProperty("storage.mode", "FILE"));
@@ -68,7 +68,8 @@ public final class SetuServerMain {
                 number(properties, "ack.timeout.millis", DefaultBroker.DEFAULT_ACK_TIMEOUT_MILLIS),
                 number(properties, "consumer.timeout.millis", DefaultBroker.DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS),
                 number(properties, "memory.log.max.bytes", DefaultBroker.DEFAULT_MAX_RETAINED_MEMORY_BYTES),
-                number(properties, "memory.retention.millis", 0))) {
+                number(properties, "memory.retention.millis", 0),
+                number(properties, "file.retention.millis", 0))) {
             BrokerRequestHandler handler = new BrokerRequestHandler(broker);
             TcpServer blocking = transport.equals("blocking")
                     ? new TcpServer(address, new FramedConnectionHandler(handler), options) : null;

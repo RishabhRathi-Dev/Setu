@@ -82,7 +82,7 @@ sequenceDiagram
     S-->>C: Success with matching correlation ID
 ```
 
-Each partition has one broker owner, an exclusive lock, daily rolled `.cq4` files, and `metadata.cq4t`. Logical Setu offsets are independent of Chronicle's physical indexes. A sparse in-memory index maps document offsets to physical positions.
+Each partition has one broker owner, an exclusive lock, daily rolled `.cq4` files, and `metadata.cq4t`. Logical Setu offsets are independent of Chronicle's physical indexes. A sparse in-memory index maps document offsets to physical positions. Optional age-based retention checkpoints the first retained logical offset and physical index before deleting completed daily files. Cleanup serializes with appends and reads, closes native mappings and force channels, deletes the expired prefix, then reopens the queue. The newest populated cycle remains as an offset anchor, including on idle partitions. Recovery resumes from the checksummed checkpoint, ignoring any obsolete files left by an interrupted deletion.
 
 The writer admits up to 32 MiB and 1,024 outstanding requests per partition, including active flushing. Adjacent requests share append/force work. Groups linger up to 250 microseconds; 256 KiB of accounted work triggers flushing. Accepted requests drain on close.
 
@@ -137,4 +137,4 @@ Log/write-queue saturation returns `QUOTA_EXCEEDED`. Buffer exhaustion also uses
 | ACL grants and quota registrations | Recreated by embedding application | Recreated by embedding application |
 | Connections, in-flight fetches, waiters | Lost | Lost |
 
-Replication, automatic failover, file retention, payload checksums, durable consumer metadata, and exactly-once delivery are not implemented. [Operations](operations.md) explains shutdown, recovery, and migration; [benchmarks](../setu-benchmark/README.md) explains what performance results establish.
+Replication, automatic failover, payload checksums, durable consumer metadata, and exactly-once delivery are not implemented. [Operations](operations.md) explains shutdown, recovery, and migration; [benchmarks](../setu-benchmark/README.md) explains what performance results establish.

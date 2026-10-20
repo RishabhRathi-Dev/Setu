@@ -34,10 +34,38 @@ The properties launcher is plaintext. TLS/mTLS requires [secure embedding](../se
 | `queue.block.bytes` | `67108864` (64 MiB) | Positive Chronicle mapping block size; effective minimum 64 MiB |
 | `memory.log.max.bytes` | `268435456` (256 MiB) | Non-negative shared accounted memory-log budget; zero disables the budget |
 | `memory.retention.millis` | `0` | Lossy maximum age in memory mode; 0–365 days; zero disables timed expiry |
+| `file.retention.millis` | `0` | File-mode age limit from the end of each daily cycle; 0–365 days; zero disables expiry |
 
-Chronicle rolls files daily. Mapping block size neither caps daily file growth nor enables file retention. Monitor free disk for durable workloads. File write admission is fixed at 32 MiB / 1,024 outstanding requests per partition; it is not a standalone property.
+Chronicle rolls files daily. Mapping block size does not cap daily file growth. Positive `file.retention.millis` enables cleanup at startup and every minute, independently of consumer progress. Only whole completed cycles expire; the newest populated file is always retained, even while idle. Record age can therefore exceed the configured duration by up to one daily cycle plus the sweep delay, and the newest file remains until a later cycle receives data. Fetches before the retained boundary return `OFFSET_OUT_OF_RANGE` with a resume offset. For seven days, set `file.retention.millis=604800000`. Monitor free disk for durable workloads. File write admission is fixed at 32 MiB / 1,024 outstanding requests per partition; it is not a standalone property.
 
-Memory reclamation normally follows registered members' progress. Members start at the partition end on join; no members allows immediate reclamation. Positive timed retention can discard records a consumer has not processed. These memory-only settings do not provide file retention or a JVM/process memory limit.
+Memory reclamation normally follows registered members' progress. Members start at the partition end on join; no members allows immediate reclamation. Positive timed retention can discard records a consumer has not processed. These memory-only settings do not configure file retention or a JVM/process memory limit.
+
+### File retention examples
+
+To keep completed daily files for seven days, edit `config/server.properties`:
+
+```properties
+storage.mode=FILE
+data.dir=data
+file.retention.millis=604800000
+```
+
+Restart the broker with the properties file; the setting applies to every existing and newly created file partition. Startup cleanup can immediately expire older files. Configuration is read only at startup.
+
+```powershell
+.\scripts\start-broker.ps1 --config config/server.properties
+```
+
+On Linux/macOS, use `bash ./scripts/start-broker.sh --config config/server.properties`.
+
+| Policy | `file.retention.millis` |
+| --- | --- |
+| Keep all files (default) | `0` |
+| One day after cycle end | `86400000` |
+| Seven days after cycle end | `604800000` |
+| Thirty days after cycle end | `2592000000` |
+
+Changing the value back to `0` stops future automatic expiry after restart. It does not restore deleted records or reset the retained offset. `memory.retention.millis` does not affect file partitions, and `file.retention.millis` does not affect memory partitions. See the [worked expiry timeline](operations.md#file-retention-timeline) and [embedded broker example](../setu-core/README.md#file-retention-example).
 
 ## Buffers and consumer deadlines
 
@@ -48,7 +76,7 @@ Memory reclamation normally follows registered members' progress. Members start 
 | `ack.timeout.millis` | `30000` | Positive deadline for member acknowledgement of fetched records |
 | `consumer.timeout.millis` | `60000` | Positive member inactivity deadline |
 
-There are 17 supported properties in total. Consumer maintenance runs every 10 ms. An expired member must rejoin. Heartbeats maintain liveness but do not acknowledge processed records. Long-poll wait is a request parameter, capped at 30,000 ms; configure the client's read timeout above the requested wait.
+Consumer maintenance runs every 10 ms. An expired member must rejoin. Heartbeats maintain liveness but do not acknowledge processed records. Long-poll wait is a request parameter, capped at 30,000 ms; configure the client's read timeout above the requested wait.
 
 When budgets are exhausted, the server returns `QUOTA_EXCEEDED` if it can admit an error response, otherwise it closes the connection. Budget headroom must allow protocol metadata and accounting, as well as payload bytes. See [admission and failure behavior](../setu-server/README.md#admission-and-failure-behavior).
 

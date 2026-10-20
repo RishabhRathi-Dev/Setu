@@ -93,7 +93,7 @@ Records are opaque byte arrays. Ordering and dense, zero-based offsets apply **w
 | Successful produce | Touched queue and metadata files have completed the force boundary | Complete batch published in memory |
 | Restart | Topics and records recover from disk | Topics and records are lost |
 | Consumer join | Starts at offset zero | Starts at the current partition end |
-| Reclamation | File retention is not implemented | Slowest registered member's progress; no members allows immediate reclamation |
+| Reclamation | Optional age-based retention of completed daily files | Slowest registered member's progress; no members allows immediate reclamation |
 | Primary admission | 32 MiB / 1,024 outstanding writes per partition | Shared 256 MiB accounted retained-log budget |
 
 In memory mode, **join before producing records a member needs**. Acknowledgement, leaving, and member expiry can release retained prefixes. Optional timed expiry is lossy and disabled by default. Buffer budgets are separate from retained-log admission and do not cap total process memory.
@@ -116,11 +116,12 @@ The standalone launcher accepts `--config <properties-file>`. Unknown properties
 | `transport` | `blocking` | Virtual thread per connection, or plaintext `selector` |
 | `record.max.bytes` | 1 MiB | Maximum payload per record |
 | `queue.block.bytes` | 64 MiB | Chronicle mapping block size; does not limit file growth |
+| `file.retention.millis` | `0` | Expire completed daily files by age; zero disables retention |
 | `memory.log.max.bytes` | 256 MiB | Shared accounted retained-log budget |
 | `requests.max.bytes` / `responses.max.bytes` | 128 MiB each | Shared transport buffer budgets |
 | `ack.timeout.millis` / `consumer.timeout.millis` | 30,000 / 60,000 | Consumer progress and inactivity deadlines |
 
-See the [complete configuration reference](docs/configuration.md) for all 17 properties, units, validation, and runtime options. The checked-in [server.properties](config/server.properties) is the local-development baseline.
+See the [complete configuration reference](docs/configuration.md) for all properties, units, validation, and runtime options, including [file retention examples](docs/configuration.md#file-retention-examples). The checked-in [server.properties](config/server.properties) is the local-development baseline.
 
 ## Build and verification
 
@@ -162,7 +163,7 @@ Generated builds, IDE metadata, runtime data, credentials, logs, and recordings 
 - One broker process; no replication, failover, or distributed coordination.
 - Consumer memberships and committed offsets are lost on restart; applications manage resumption.
 - No automatic partition assignment/rebalancing, producer deduplication, or exactly-once delivery.
-- File retention, payload checksums, and configurable acknowledgement modes are not implemented.
+- Payload checksums and configurable acknowledgement modes are not implemented.
 - The Java client serializes calls and has no automatic retry, reconnect, routing, or async API.
 - ACL grants and quotas are process-local; persistent policy administration and automatic certificate rotation are not implemented.
 

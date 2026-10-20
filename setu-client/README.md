@@ -71,7 +71,33 @@ For member-aware consumption:
 3. Process the records, then call `acknowledge(group, member, topic, partition, nextOffset)` with the last processed offset plus one.
 4. Send `heartbeat(group, member)` while idle, and `leaveGroup(group, member)` when done.
 
-Long-poll waits are 0–30 seconds; the socket read timeout must exceed the wait. Memory storage reclaims according to registered members' progress; file storage retains history. Expired members must rejoin. See [broker semantics](../setu-core/README.md#broker-semantics).
+Long-poll waits are 0–30 seconds; the socket read timeout must exceed the wait. Memory storage reclaims according to registered members' progress; file storage retains history unless optional file retention expires it. Expired members must rejoin. See [broker semantics](../setu-core/README.md#broker-semantics).
+
+### Handling an expired file offset
+
+File retention can remove data a consumer has not acknowledged. In the [worked timeline](../docs/operations.md#file-retention-timeline), `orders/0` retains offsets starting at `100`. A request for `0` returns a structured error; `SetuClient` does not throw for this broker response:
+
+```java
+import io.setu.client.SetuClient;
+import io.setu.core.protocol.ErrorCode;
+import java.io.IOException;
+
+try (var client = SetuClient.connectPlain("127.0.0.1", 9092,
+        5_000, 30_000, 16 * 1024 * 1024)) {
+    var response = client.fetch("orders", 0, 0, 1024);
+    if (response.errorCode() == ErrorCode.OFFSET_OUT_OF_RANGE) {
+        System.out.println(response.errorMessage());
+        // In the worked scenario: "Message retention expired; resume at offset 100".
+        // Stop here so the application can review the gap and choose a resume policy.
+    } else if (response.errorCode() != ErrorCode.NONE) {
+        throw new IOException(response.errorCode() + ": " + response.errorMessage());
+    } else {
+        System.out.println("Fetched " + response.records().size() + " records");
+    }
+}
+```
+
+After explicitly accepting the lost range in that scenario, resume with `client.fetch("orders", 0, 100, 1024)` on an open client. The value `100` is specific to the scenario; use the boundary reported by the broker for the actual partition. The current protocol includes that boundary in the error message, without a separate numeric field or automatic reset API. Another sweep can advance it before the retry. Applications that require every record should stop and recover the missing data from their own archive instead of skipping the gap. Group-member fetches return the same retention error; rejoining does not restore expired records.
 
 There is no automatic retry, reconnect, partition routing, pooling, async/pipelined API or producer deduplication. A lost produce response can mean the write succeeded; blindly retrying can duplicate records. `QUOTA_EXCEEDED` indicates admission/policy rejection and may require backoff, a smaller batch or consumer progress.
 

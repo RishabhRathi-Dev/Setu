@@ -93,6 +93,14 @@ public final class DefaultBroker implements Broker {
     public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
                          long queueBlockBytes, long ackTimeoutMillis, long consumerInactivityTimeoutMillis,
                          long maxRetainedMemoryBytes, long memoryRetentionMillis) throws IOException {
+        this(storageMode, dataDirectory, maxRecordBytes, queueBlockBytes, ackTimeoutMillis,
+                consumerInactivityTimeoutMillis, maxRetainedMemoryBytes, memoryRetentionMillis, 0);
+    }
+
+    /** File retention expires completed daily files regardless of consumer progress; zero disables it. */
+    public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
+                         long queueBlockBytes, long ackTimeoutMillis, long consumerInactivityTimeoutMillis,
+                         long maxRetainedMemoryBytes, long memoryRetentionMillis, long fileRetentionMillis) throws IOException {
         this.storageMode = Objects.requireNonNull(storageMode, "storageMode");
         if (storageMode == StorageMode.FILE && dataDirectory == null)
             throw new IllegalArgumentException("dataDirectory is required for file storage");
@@ -110,6 +118,8 @@ public final class DefaultBroker implements Broker {
         if (memoryRetentionMillis < 0 || memoryRetentionMillis > TimeUnit.DAYS.toMillis(365))
             throw new IllegalArgumentException("memory retention must be 0..365 days");
         memoryRetentionNanos = TimeUnit.MILLISECONDS.toNanos(memoryRetentionMillis);
+        if (fileRetentionMillis < 0 || fileRetentionMillis > TimeUnit.DAYS.toMillis(365))
+            throw new IllegalArgumentException("file retention must be 0..365 days");
         if (storageMode == StorageMode.FILE) {
             Files.createDirectories(this.dataDirectory);
             try { recoverTopics(); }
@@ -130,9 +140,17 @@ public final class DefaultBroker implements Broker {
                         ((io.setu.storage.log.InMemoryMessageLog) log).discardExpired(System.nanoTime(), memoryRetentionNanos);
             } catch (Exception e) { if (!closed) LOG.warn("Consumer maintenance failed", e); }
         }, 10, 10, java.util.concurrent.TimeUnit.MILLISECONDS);
-        LOG.info("Broker opened storage={} data_directory={} recovered_topics={} max_record_bytes={} queue_block_bytes={} memory_log_budget_bytes={} ack_timeout_ms={} inactivity_timeout_ms={}",
+        if (storageMode == StorageMode.FILE && fileRetentionMillis > 0)
+            maintenance.scheduleWithFixedDelay(() -> {
+                for (TopicState topic : topics.values()) for (MessageLog log : topic.partitions) {
+                    if (closed) return;
+                    try { log.discardExpiredFiles(fileRetentionMillis); }
+                    catch (Exception error) { if (!closed) LOG.warn("File retention cleanup failed", error); }
+                }
+            }, 0, 60, TimeUnit.SECONDS);
+        LOG.info("Broker opened storage={} data_directory={} recovered_topics={} max_record_bytes={} queue_block_bytes={} memory_log_budget_bytes={} ack_timeout_ms={} inactivity_timeout_ms={} file_retention_ms={}",
                 storageMode, this.dataDirectory, topics.size(), maxRecordBytes, queueBlockBytes,
-                maxRetainedMemoryBytes, ackTimeoutMillis, consumerInactivityTimeoutMillis);
+                maxRetainedMemoryBytes, ackTimeoutMillis, consumerInactivityTimeoutMillis, fileRetentionMillis);
     }
 
     /** Accounted memory-log payload/chunk bytes, including append reservations; excludes protocol buffers and file indexes. */
@@ -254,7 +272,7 @@ public final class DefaultBroker implements Broker {
         ensureOpen();
         if (consumer != null && consumers.get(new ConsumerKey(request.groupId(), request.memberId())) != consumer)
             throw new BrokerException(ErrorCode.BAD_REQUEST, "Slow consumer was evicted; rejoin the group");
-        if (storageMode == StorageMode.IN_MEMORY && memoryRetentionNanos > 0 && startOffset < log.firstOffset())
+        if ((storageMode == StorageMode.FILE || memoryRetentionNanos > 0) && startOffset < log.firstOffset())
             throw new BrokerException(ErrorCode.OFFSET_OUT_OF_RANGE,
                     "Message retention expired; resume at offset " + log.firstOffset());
         // Memory fetches use immutable snapshots outside the coordination lock.
@@ -266,7 +284,7 @@ public final class DefaultBroker implements Broker {
             records = log.read(startOffset, request.maxBytes(), io.setu.core.protocol.ResponseBuffers::reserve).stream()
                 .map(record -> new ProtocolRecord(record.offset(), record.payload())).toList();
         } finally { if (storageMode == StorageMode.FILE) progress.lock.unlock(); }
-        if (storageMode == StorageMode.IN_MEMORY && memoryRetentionNanos > 0) {
+        if (storageMode == StorageMode.FILE || memoryRetentionNanos > 0) {
             // Expiry may win between the boundary check and snapshot capture.
             // Preserve a snapshot that starts at the requested offset, but report
             // a gap if read had to clamp its start to a newer retained boundary.
@@ -524,7 +542,8 @@ public final class DefaultBroker implements Broker {
     public synchronized void close() throws IOException {
         if (closed) return;
         closed = true;
-        maintenance.shutdownNow();
+        // Do not interrupt a retention sweep while it owns Chronicle mappings or file channels.
+        maintenance.shutdown();
         IOException failure = null;
         for (TopicState state : topics.values()) {
             for (PartitionProgress progress : state.progress) {

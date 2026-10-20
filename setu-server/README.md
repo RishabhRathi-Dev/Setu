@@ -115,9 +115,10 @@ Request credit is reserved before allocating a frame body and includes decoded p
 | `socket.timeout.millis` | Read/idle timeout; zero disables it |
 | `memory.log.max.bytes` | Shared retained-memory log budget; 256 MiB default; zero disables it |
 | `memory.retention.millis` | Optional lossy memory expiry; zero preserves acknowledgement-based reclamation |
+| `file.retention.millis` | Optional completed-file expiry, measured from daily cycle end; zero disables it; newest file always remains |
 | `ack.timeout.millis`, `consumer.timeout.millis` | Consumer acknowledgement and inactivity deadlines |
 
-Fetch waits are capped at 30 seconds; client read timeouts must exceed the requested wait. Expired members must rejoin. Lossy memory expiry can produce `OFFSET_OUT_OF_RANGE`. [Storage](../setu-storage/README.md) documents group-commit limits, durability, recovery and legacy migration.
+Fetch waits are capped at 30 seconds; client read timeouts must exceed the requested wait. Expired members must rejoin. Memory or file expiry can produce `OFFSET_OUT_OF_RANGE` with a resume offset. File cleanup runs at startup and every minute, independently of acknowledgements. [Storage](../setu-storage/README.md) documents group-commit limits, durability, recovery and legacy migration.
 
 Malformed frame lengths, partial frames and TLS handshake failures close the connection. Protocol/application errors use structured responses when possible; unexpected I/O/runtime failures become `INTERNAL_ERROR`. A lost produce response has an uncertain outcome because producer deduplication is not implemented.
 

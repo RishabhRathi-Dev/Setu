@@ -61,7 +61,24 @@ For a consistent offline copy, stop the broker cleanly and copy the complete dat
 
 Older length-prefixed `.log` partitions require the [offline migration procedure](../setu-storage/README.md#migrating-existing-data). Import into a new, nonexistent directory outside the source root; the importer preserves the source. Verify the import before changing `data.dir`.
 
-Monitor disk space: daily roll and mapping block size do not impose retention. There is no supported online topic-deletion or segment-pruning API. A durable success means the local force boundary completed; it does not provide replication or protection against a failed device. Lost replies can leave writes with uncertain outcomes.
+Monitor disk space: daily roll and mapping block size do not cap disk usage. Set `file.retention.millis` to enable automatic age-based pruning of completed daily files; zero disables it. Cleanup runs at startup and every minute and always keeps the newest populated file, including on idle partitions. Age is measured from the end of a daily cycle, so individual records can remain up to an extra day plus the sweep delay. Consumer acknowledgements do not delay expiry. Fetching expired data returns `OFFSET_OUT_OF_RANGE` with the earliest retained offset. Cleanup briefly pauses partition I/O while releasing mappings and reopening the queue. Deletion failures are logged and retried on later sweeps. Preserve `.setu-retention` alongside queue files in backups; do not manually delete or edit it. There is no supported online topic-deletion API. A durable success means the local force boundary completed; it does not provide replication or protection against a failed device. Lost replies can leave writes with uncertain outcomes.
+
+### File retention timeline
+
+Suppose `orders/0` has the following UTC daily cycles and `file.retention.millis=172800000` (two days). A sweep at **2026-10-20 00:01 UTC** evaluates the files this way:
+
+| Cycle | Logical offsets | Cycle ends | Cleanup result |
+| --- | --- | --- | --- |
+| October 17 | 0–99 | October 18, 00:00 UTC | Expired: cycle end is at least two days old |
+| October 18 | 100–199 | October 19, 00:00 UTC | Retained: cycle end is only one day old |
+| October 19 | 200–299 | October 20, 00:00 UTC | Retained: cycle end is one minute old |
+| October 20 | 300–349 | October 21, 00:00 UTC | Retained: newest populated cycle |
+
+After cleanup, `firstOffset()` is `100` and `nextOffset()` is `350`. Fetching offset `0` returns `OFFSET_OUT_OF_RANGE` with `Message retention expired; resume at offset 100`. Fetching `100` can read the remaining history. The next append receives offset `350`, including after restart. Consumer acknowledgements and active memberships do not preserve the expired October 17 file. The [client example](../setu-client/README.md#handling-an-expired-file-offset) shows how to handle the response.
+
+For an idle partition, suppose October 17 is its only populated cycle. Cleanup keeps that file even on October 30. Once a new append creates an October 30 cycle, a later sweep can remove October 17. Retention therefore does not impose a strict maximum record age or disk-size cap. Small values such as `file.retention.millis=1000` still operate on daily files; they do not delete individual records after one second.
+
+To stop automatic expiry, set `file.retention.millis=0` and restart with that configuration. Existing retained offsets remain in force. When restoring an offline backup for inspection, start with retention disabled if the goal is to inspect all records in that backup before allowing cleanup.
 
 ## Logs and diagnosis
 

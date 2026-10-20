@@ -9,6 +9,7 @@ import net.openhft.chronicle.queue.ExcerptAppender;
 import net.openhft.chronicle.queue.ExcerptTailer;
 import net.openhft.chronicle.queue.RollCycle;
 import net.openhft.chronicle.queue.RollCycles;
+import net.openhft.chronicle.queue.impl.RollingResourcesCache;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueue;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
 
@@ -21,6 +22,7 @@ import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -36,9 +38,13 @@ public final class ChronicleMessageLog implements MessageLog {
     private static final int MAX_RECORDS_PER_READ = 10_000;
     private static final int TARGET_DOCUMENT_BYTES = 1024 * 1024;
     private final int maxRecordBytes;
-    private final SingleChronicleQueue queue;
-    private final ExcerptAppender appender;
-    private final ExcerptTailer tailer;
+    private SingleChronicleQueue queue;
+    private ExcerptAppender appender;
+    private ExcerptTailer tailer;
+    private final Path directory;
+    private final long blockBytes;
+    private final RollCycle rollCycle;
+    private final TimeProvider timeProvider;
     private final FileChannel lockChannel;
     private final FileLock partitionLock;
     private final Map<Path, ChronicleFileSync> syncFiles = new LinkedHashMap<>();
@@ -55,6 +61,8 @@ public final class ChronicleMessageLog implements MessageLog {
     // Publish only after every touched file has been forced. Offset validation and
     // acknowledgements need this committed boundary, not the writer's I/O monitor.
     private volatile long nextOffset;
+    private volatile long firstOffset;
+    private long firstIndex = -1;
     private boolean closed;
     private IOException failed;
     private Path activeFile;
@@ -74,6 +82,10 @@ public final class ChronicleMessageLog implements MessageLog {
         this.syncFactory = Objects.requireNonNull(syncFactory, "syncFactory");
         if (maxRecordBytes < 0 || blockBytes <= 0) throw new IllegalArgumentException("Invalid queue limits");
         this.maxRecordBytes = maxRecordBytes;
+        this.directory = directory;
+        this.blockBytes = blockBytes;
+        this.rollCycle = rollCycle;
+        this.timeProvider = timeProvider;
         Files.createDirectories(directory);
         try (var files = Files.list(directory)) {
             if (files.anyMatch(path -> path.getFileName().toString().endsWith(".log")))
@@ -103,6 +115,7 @@ public final class ChronicleMessageLog implements MessageLog {
             tailer = reader;
             lockChannel = locked;
             partitionLock = lock;
+            readRetentionBoundary();
             recover();
         } catch (Throwable failure) {
             for (AutoCloseable resource : new AutoCloseable[]{reader, writer, opened, lock, locked}) {
@@ -205,6 +218,7 @@ public final class ChronicleMessageLog implements MessageLog {
     @Override public synchronized List<LogRecord> read(long offset, int maxBytes, ReadAdmission admission) throws IOException {
         ensureOpen();
         if (offset < 0 || maxBytes < 0) throw new IllegalArgumentException("Negative read limit");
+        offset = Math.max(offset, firstOffset);
         if (offset >= nextOffset || maxBytes == 0) return List.of();
         var records = new ArrayList<LogRecord>();
         long payloadBytes = 0;
@@ -253,9 +267,132 @@ public final class ChronicleMessageLog implements MessageLog {
     }
 
     @Override public long nextOffset() { return nextOffset; }
+    @Override public long firstOffset() { return firstOffset; }
+
+    /** Deletes complete expired cycles, keeping the newest populated cycle as an offset anchor. */
+    @Override public void discardExpiredFiles(long retentionMillis) throws IOException {
+        if (retentionMillis < 0) throw new IllegalArgumentException("Negative file retention");
+        if (retentionMillis == 0) return;
+        synchronized (writerLock) {
+            synchronized (this) {
+                ensureOpen();
+                if (committedDocuments == 0) return;
+                long cutoff = timeProvider.currentTimeMillis() - retentionMillis;
+                int newest = rollCycle.toCycle(indexes[committedDocuments - 1]);
+                int keep = 0;
+                while (keep < committedDocuments) {
+                    int cycle = rollCycle.toCycle(indexes[keep]);
+                    if (cycle >= newest || ((long) cycle + 1) * rollCycle.lengthInMillis() + queue.epoch() > cutoff) break;
+                    keep++;
+                }
+                if (keep > 0) {
+                    writeRetentionBoundary(offsets[keep], indexes[keep]);
+                    firstOffset = offsets[keep];
+                    firstIndex = indexes[keep];
+                    System.arraycopy(offsets, keep, offsets, 0, documents - keep);
+                    System.arraycopy(indexes, keep, indexes, 0, documents - keep);
+                    documents -= keep;
+                    committedDocuments -= keep;
+                }
+                if (firstIndex < 0) return;
+                var cache = new RollingResourcesCache(rollCycle, queue.epoch(),
+                        name -> directory.resolve(name + ".cq4").toFile(), file -> file.getName().replaceFirst("\\.cq4$", ""));
+                List<Path> expired;
+                try (var paths = Files.list(directory)) {
+                    int retainedCycle = rollCycle.toCycle(firstIndex);
+                    expired = paths.filter(path -> path.getFileName().toString().endsWith(".cq4"))
+                            .filter(path -> cache.parseCount(path.getFileName().toString().replaceFirst("\\.cq4$", "")) < retainedCycle)
+                            .sorted().toList();
+                }
+                if (expired.isEmpty()) return;
+                // Closing all native mappings and force channels makes deletion safe on Windows too.
+                try { closeQueue(); }
+                catch (Exception error) { failed = new IOException("Cannot release queue for retention", error); throw failed; }
+                IOException deletionFailure = null;
+                try {
+                    for (Path path : expired) Files.deleteIfExists(path);
+                } catch (IOException error) { deletionFailure = error; }
+                finally {
+                    try { reopenQueue(); }
+                    catch (Exception error) {
+                        failed = new IOException("Cannot reopen queue after retention", error);
+                        if (deletionFailure != null) failed.addSuppressed(deletionFailure);
+                        throw failed;
+                    }
+                }
+                if (deletionFailure != null) throw deletionFailure; // retry the remaining prefix on the next sweep
+            }
+        }
+    }
+
+    private void reopenQueue() {
+        queue = SingleChronicleQueueBuilder.binary(directory).blockSize(Math.max(64L << 20, blockBytes))
+                .rollCycle(rollCycle).timeProvider(timeProvider).syncMode(SyncMode.NONE).build();
+        queue.refreshDirectoryListing();
+        appender = queue.createAppender();
+        tailer = queue.createTailer();
+        appender.singleThreadedCheckDisabled(true);
+        tailer.singleThreadedCheckDisabled(true);
+    }
+
+    private void closeQueue() throws IOException {
+        IOException failure = null;
+        var resources = new ArrayList<AutoCloseable>(List.of(tailer, appender, queue));
+        resources.addAll(syncFiles.values());
+        try {
+            for (AutoCloseable resource : resources) {
+                try { resource.close(); }
+                catch (Exception error) {
+                    if (failure == null) failure = new IOException("Cannot close queue resource", error);
+                    else failure.addSuppressed(error);
+                }
+            }
+        } finally {
+            syncFiles.clear();
+            activeFile = null;
+            BackgroundResourceReleaser.releasePendingResources();
+        }
+        if (failure != null) throw failure;
+    }
+
+    private void readRetentionBoundary() throws IOException {
+        Path state = directory.resolve(".setu-retention");
+        if (!Files.exists(state)) return;
+        byte[] data = Files.readAllBytes(state);
+        if (data.length != 32) throw new IOException("Invalid retention boundary");
+        ByteBuffer input = ByteBuffer.wrap(data);
+        long format = input.getLong(), offset = input.getLong(), index = input.getLong();
+        var checksum = new java.util.zip.CRC32C();
+        checksum.update(data, 0, 24);
+        if (format != FORMAT || offset <= 0 || index < 0 || input.getLong() != checksum.getValue())
+            throw new IOException("Invalid retention boundary");
+        firstOffset = offset;
+        firstIndex = index;
+    }
+
+    private void writeRetentionBoundary(long offset, long index) throws IOException {
+        ByteBuffer data = ByteBuffer.allocate(32).putLong(FORMAT).putLong(offset).putLong(index);
+        var checksum = new java.util.zip.CRC32C();
+        checksum.update(data.array(), 0, 24);
+        data.putLong(checksum.getValue()).flip();
+        Path temporary = directory.resolve(".setu-retention.tmp");
+        try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+            while (data.hasRemaining()) channel.write(data);
+            channel.force(true);
+        }
+        Files.move(temporary, directory.resolve(".setu-retention"),
+                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        // Persist the rename before unlinking data on systems that support directory fsync.
+        if (!System.getProperty("os.name").startsWith("Windows"))
+            try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) { channel.force(true); }
+    }
 
     private void recover() throws IOException {
-        tailer.toStart();
+        nextOffset = firstOffset;
+        if (firstIndex >= 0) {
+            if (!tailer.moveToIndex(firstIndex)) throw new IOException("Missing retained Chronicle boundary");
+        } else tailer.toStart();
         while (true) {
             try (var document = tailer.readingDocument()) {
                 if (!document.isPresent()) break;
@@ -270,6 +407,7 @@ public final class ChronicleMessageLog implements MessageLog {
             }
         }
         committedDocuments = documents;
+        if (firstIndex >= 0 && documents == 0) throw new IOException("Missing retained Chronicle document");
     }
 
     private int readHeader(Bytes<?> bytes, long expectedOffset) throws IOException {

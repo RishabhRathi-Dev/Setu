@@ -163,6 +163,7 @@ public final class GroupCommitMessageLog implements MessageLog {
     public long outstandingBytes() { return state.get().bytes; }
     public int outstandingRequests() { return state.get().requests; }
     public void discardBefore(long offset) throws IOException { delegate.discardBefore(offset); }
+    public void discardExpiredFiles(long retentionMillis) throws IOException { delegate.discardExpiredFiles(retentionMillis); }
     public void close() throws IOException {
         while (true) {
             State before = state.get();
