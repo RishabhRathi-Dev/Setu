@@ -18,7 +18,10 @@ import io.setu.server.SecureServerFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.EOFException;
 import java.io.IOException;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -26,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class TlsBrokerIntegrationTests {
     private static final String PASSWORD = "changeit-test-only";
@@ -114,9 +118,13 @@ class TlsBrokerIntegrationTests {
                 tls.startHandshake();
                 var output = new java.io.DataOutputStream(tls.getOutputStream());
                 output.writeInt(1024); output.writeByte(0); output.flush();
-                org.junit.jupiter.api.Assertions.assertThrows(IOException.class, () -> {
-                    if (tls.getInputStream().read() == -1) throw new java.io.EOFException();
-                });
+                try {
+                    assertEquals(-1, tls.getInputStream().read(), "Server must close the stalled TLS frame");
+                } catch (SocketTimeoutException timeout) {
+                    fail("Server did not close the stalled TLS frame before the client read timeout", timeout);
+                } catch (SocketException | EOFException closed) {
+                    // Abrupt server closure may surface as a reset or truncated TLS stream.
+                }
             }
         }
     }
