@@ -8,6 +8,9 @@ This module verifies broker behavior through public client/server APIs over real
 | --- | --- |
 | Storage modes | Produce/fetch in both modes, full Chronicle history and immutable batch snapshots |
 | Consumer progress | Join-time memory offsets and acknowledgement-based reclamation |
+| Recovery | File memberships and only acknowledged progress survive restart; leave removes saved state |
+| Async client | Concurrent pooled writes, keyed routing, payload ownership, bounded queues, close, read reconnects and no uncertain-write retries |
+| PostgreSQL | Optional database tests for outbox rollback, relay redelivery and atomic inbox/business effects; CI provides PostgreSQL |
 | Backpressure | Whole-batch memory admission, quota rejection, reclamation and successful retry |
 | Security | Real mTLS, certificate identity, authenticated broker requests and ACL denial |
 

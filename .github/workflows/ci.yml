@@ -26,6 +26,35 @@ permissions:
   contents: read
 
 jobs:
+  postgres-outbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: setu_test
+          POSTGRES_USER: setu_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U setu_test -d setu_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '26'
+          cache: maven
+      - name: Verify PostgreSQL outbox and inbox transactions
+        env:
+          SETU_TEST_POSTGRES_URL: jdbc:postgresql://localhost:5432/setu_test
+          SETU_TEST_POSTGRES_USER: setu_test
+        run: >-
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-integration-tests -am
+          '-Dtest=PostgresOutboxIntegrationTests' '-Dsurefire.failIfNoSpecifiedTests=false' test
   windows-functional:
     runs-on: windows-latest
     timeout-minutes: 20

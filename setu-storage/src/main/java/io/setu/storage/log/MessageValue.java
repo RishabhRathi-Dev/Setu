@@ -117,4 +117,6 @@ public final class MessageValue {
     public byte[] copy() { return Arrays.copyOfRange(bytes, offset, offset + length); }
 
     public void copyTo(ByteBuffer output) { output.put(bytes, offset, length); }
+
+    void updateChecksum(java.util.zip.CRC32C checksum) { checksum.update(bytes, offset, length); }
 }

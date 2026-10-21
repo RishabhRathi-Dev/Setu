@@ -92,7 +92,7 @@ On restart, Setu discovers topics and partitions, validates committed documents 
 
 ## Consumer lifecycle
 
-Membership records progress; it does not assign partitions or rebalance clients. Applications decide which partitions to read and how to resume after a restart.
+Membership records progress; it does not assign partitions or rebalance clients. Applications decide which partitions to read. File brokers force membership changes and acknowledgements into `@consumer-state/` and recover them on restart; clients query `FETCH_OFFSET` to resume. Leave and expiry remove progress. Memory metadata remains volatile.
 
 ```mermaid
 stateDiagram-v2
@@ -137,8 +137,8 @@ Log/write-queue saturation returns `QUOTA_EXCEEDED`. Buffer exhaustion also uses
 | State | `FILE` restart | `IN_MEMORY` restart |
 | --- | --- | --- |
 | Topics, partitions, records | Recovered from the data root | Lost |
-| Membership and acknowledged/committed offsets | Lost | Lost |
+| Active memberships and member acknowledged offsets | Recovered from the consumer journal with fresh inactivity deadlines | Lost |
 | ACL grants and quota registrations | Recreated by embedding application | Recreated by embedding application |
 | Connections, in-flight fetches, waiters | Lost | Lost |
 
-Replication, automatic failover, payload checksums, durable consumer metadata, and exactly-once delivery are not implemented. [Operations](operations.md) explains shutdown, recovery, and migration; [benchmarks](../setu-benchmark/README.md) explains what performance results establish.
+New durable documents validate CRC32C checksums; legacy documents lack this protection. Replication, automatic failover, and exactly-once delivery are not implemented. [Operations](operations.md) explains shutdown, recovery, and migration; [benchmarks](../setu-benchmark/README.md) explains what performance results establish.

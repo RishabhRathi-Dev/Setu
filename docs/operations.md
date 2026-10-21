@@ -57,7 +57,7 @@ data/
 
 On startup, Setu validates committed documents and rebuilds its logical-offset index. A malformed committed document fails startup. An incomplete native document does not consume a recovered offset. Preserve the failing data for investigation; do not edit queue bytes or discard later files to force startup.
 
-For a consistent offline copy, stop the broker cleanly and copy the complete data root, including metadata and all partition files. Active-file snapshot/backup coordination is not implemented. Restore into a separate root with one owner, use a compatible application/JDK, and verify recovered topics and records before switching applications. Broker consumer offsets, memberships, ACLs, and quotas must be recreated by applications.
+For a consistent offline copy, stop the broker cleanly and copy the complete data root, including `@consumer-state/`, metadata and all partition files. Active-file snapshot/backup coordination is not implemented. Restore into a separate root with one owner, use a compatible application/JDK, and verify recovered topics, records, memberships and acknowledged offsets before switching applications. File consumer state recovers with fresh inactivity deadlines; ACLs and quotas must be recreated by applications. The consumer journal currently has no compaction; monitor its disk usage. New writes use checksummed format 2, which older binaries cannot read; preserve a pre-upgrade backup if rollback is required.
 
 Older length-prefixed `.log` partitions require the [offline migration procedure](../setu-storage/README.md#migrating-existing-data). Import into a new, nonexistent directory outside the source root; the importer preserves the source. Verify the import before changing `data.dir`.
 

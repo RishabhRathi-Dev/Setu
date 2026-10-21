@@ -10,7 +10,7 @@
 
 Setu stores ordered records in topic partitions and exposes explicit produce, fetch, and consumer-progress operations. The default `FILE` engine uses OpenHFT Chronicle Queue; `IN_MEMORY` provides bounded, volatile storage. The implementation includes blocking and selector TCP transports, a synchronous Java client, and an embedded mTLS security pipeline.
 
-Setu is under active development. It runs as one broker process, with no replication or failover. Consumer state and security policies are process-local. See [implementation boundaries](#implementation-boundaries) before choosing a deployment model.
+Setu is under active development. It runs as one broker process, with no replication or failover. File brokers recover active consumer memberships and acknowledged progress; security policies remain process-local. See [implementation boundaries](#implementation-boundaries) before choosing a deployment model.
 
 ## At a glance
 
@@ -177,11 +177,13 @@ Generated builds, IDE metadata, runtime data, credentials, logs, and recordings 
 ## Implementation boundaries
 
 - One broker process; no replication, failover, or distributed coordination.
-- Consumer memberships and member acknowledgement progress are lost on restart; applications manage resumption.
+- File brokers recover memberships and acknowledged progress. Memory brokers lose them on restart. Leave and expiry remove progress in both modes.
 - No automatic partition assignment/rebalancing, producer deduplication, or exactly-once delivery.
-- Payload checksums and configurable acknowledgement modes are not implemented.
-- The Java client serializes calls and has no automatic retry, reconnect, routing, or async API.
+- New durable documents carry CRC32C checksums; older documents remain readable without checksum protection. Configurable acknowledgement modes are not implemented.
+- `SetuClient` serializes calls. `AsyncSetuClient` adds bounded connection pooling, keyed partition routing, reconnects and optional read retries; writes are never automatically retried.
 - ACL grants and quotas are process-local; persistent policy administration and automatic certificate rotation are not implemented.
+
+The [PostgreSQL outbox/inbox adapter](docs/postgres-outbox.md) supports transactional publication intent and deduplicated database effects. Publication may repeat; broker-side transactions and producer deduplication remain unimplemented.
 
 ## Performance
 

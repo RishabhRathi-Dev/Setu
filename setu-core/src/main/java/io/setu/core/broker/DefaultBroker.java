@@ -5,6 +5,8 @@ import io.setu.core.protocol.BrokerRequest;
 import io.setu.core.protocol.BrokerResponse;
 import io.setu.core.protocol.ErrorCode;
 import io.setu.core.protocol.ProtocolRecord;
+import io.setu.core.protocol.ProtocolCodec;
+import io.setu.core.protocol.Command;
 import io.setu.storage.log.MessageLog;
 import io.setu.storage.log.MessageLogs;
 import io.setu.storage.log.StorageMode;
@@ -44,6 +46,7 @@ public final class DefaultBroker implements Broker {
     private int consumerPartitionMemberships;
     private final Map<ConsumerKey, ConsumerState> consumers = new ConcurrentHashMap<>();
     private volatile boolean closed;
+    private MessageLog consumerJournal;
     private final java.util.concurrent.ScheduledExecutorService maintenance;
     private final long memoryRetentionNanos;
 
@@ -134,8 +137,19 @@ public final class DefaultBroker implements Broker {
             throw new IllegalArgumentException("file retention must be 0..365 days");
         if (storageMode == StorageMode.FILE) {
             Files.createDirectories(this.dataDirectory);
-            try { recoverTopics(); }
+            try {
+                recoverTopics();
+                Path journalPath = this.dataDirectory.resolve("@consumer-state");
+                if (Files.exists(journalPath, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                        && !journalPath.toRealPath().startsWith(this.dataDirectory.toRealPath()))
+                    throw new IOException("Consumer metadata directory escapes the data directory");
+                consumerJournal = MessageLogs.open(StorageMode.FILE, journalPath, 16 * 1024, queueBlockBytes);
+                recoverConsumers();
+            }
             catch (IOException | RuntimeException | Error failure) {
+                if (consumerJournal != null) {
+                    try { consumerJournal.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                }
                 for (TopicState topic : topics.values()) for (MessageLog log : topic.partitions) {
                     try { log.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
                 }
@@ -178,6 +192,7 @@ public final class DefaultBroker implements Broker {
             case FETCH -> fetch(request);
             case METADATA -> metadata(request);
             case COMMIT_OFFSET -> commitOffset(request);
+            case FETCH_OFFSET -> fetchOffset(request);
             case JOIN_GROUP -> joinGroup(request);
             case LEAVE_GROUP -> leaveGroup(request);
             case HEARTBEAT -> heartbeat(request);
@@ -343,6 +358,8 @@ public final class DefaultBroker implements Broker {
 
     private BrokerResponse commitOffset(BrokerRequest request) throws IOException {
         MessageLog log = partition(request.topic(), request.partition());
+        if (request.offset() < 0)
+            throw new BrokerException(ErrorCode.BAD_REQUEST, "Committed offset must be non-negative");
         if (request.offset() > log.nextOffset()) {
             throw new BrokerException(ErrorCode.OFFSET_OUT_OF_RANGE, "Committed offset is beyond the partition end");
         }
@@ -359,6 +376,7 @@ public final class DefaultBroker implements Broker {
                 long fetched = consumer.fetchedOffsets.getOrDefault(request.partition(), previous);
                 if (request.offset() > fetched)
                     throw new BrokerException(ErrorCode.BAD_REQUEST, "Cannot acknowledge records that were not fetched");
+                if (request.offset() != previous) persistConsumer(request);
                 consumer.nextOffsets.put(request.partition(), request.offset());
                 consumer.acknowledged(request.partition(), request.offset(), previous, System.nanoTime());
                 updateProgress(request.topic(), request.partition(), new ConsumerKey(request.groupId(), request.memberId()), request.offset());
@@ -367,7 +385,22 @@ public final class DefaultBroker implements Broker {
         return BrokerResponse.ok(request.correlationId(), request.command());
     }
 
-    private synchronized BrokerResponse joinGroup(BrokerRequest request) {
+    private BrokerResponse fetchOffset(BrokerRequest request) {
+        partition(request.topic(), request.partition());
+        ConsumerState consumer = consumers.get(new ConsumerKey(request.groupId(), request.memberId()));
+        if (consumer == null || !consumer.topic.equals(request.topic()))
+            throw new BrokerException(ErrorCode.BAD_REQUEST, "Consumer group member is not registered for this topic");
+        synchronized (consumer) {
+            if (consumers.get(new ConsumerKey(request.groupId(), request.memberId())) != consumer)
+                throw new BrokerException(ErrorCode.BAD_REQUEST, "Consumer group member is no longer registered");
+            consumer.touch(System.nanoTime());
+            return new BrokerResponse(request.correlationId(), request.command(), ErrorCode.NONE, "",
+                    consumer.nextOffsets.get(request.partition()), List.of(), Map.of());
+        }
+    }
+
+    private synchronized BrokerResponse joinGroup(BrokerRequest request) throws IOException {
+        ensureOpen();
         if (!topics.containsKey(request.topic())) {
             throw new BrokerException(ErrorCode.UNKNOWN_TOPIC, "Unknown topic: " + request.topic());
         }
@@ -390,6 +423,7 @@ public final class DefaultBroker implements Broker {
                 offsets.put(i, initialOffset);
                 fetchedOffsets.put(i, initialOffset);
             }
+            persistConsumer(request);
             consumers.put(key, new ConsumerState(request.topic(), offsets, fetchedOffsets));
             consumerPartitionMemberships += partitions;
             consumers.get(key).touch(System.nanoTime());
@@ -404,12 +438,18 @@ public final class DefaultBroker implements Broker {
         return BrokerResponse.ok(request.correlationId(), request.command());
     }
 
-    private synchronized BrokerResponse leaveGroup(BrokerRequest request) {
-        ConsumerState removed = consumers.remove(new ConsumerKey(request.groupId(), request.memberId()));
+    private synchronized BrokerResponse leaveGroup(BrokerRequest request) throws IOException {
+        ensureOpen();
+        ConsumerKey key = new ConsumerKey(request.groupId(), request.memberId());
+        ConsumerState removed = consumers.get(key);
         String topic = removed == null ? null : removed.topic;
         if (removed != null) {
-            consumerPartitionMemberships -= removed.nextOffsets.size();
-            synchronized (removed) { removeProgress(new ConsumerKey(request.groupId(), request.memberId()), removed); }
+            synchronized (removed) {
+                persistConsumer(request);
+                consumers.remove(key);
+                consumerPartitionMemberships -= removed.nextOffsets.size();
+                removeProgress(key, removed);
+            }
         }
         if (topic != null) reclaimTopic(topic);
         if (LOG.isDebugEnabled()) LOG.debug("Consumer left group={} member={} topic={}", LogText.escape(request.groupId()), LogText.escape(request.memberId()), LogText.escape(topic));
@@ -424,7 +464,7 @@ public final class DefaultBroker implements Broker {
         return BrokerResponse.ok(request.correlationId(), request.command());
     }
 
-    private void expireConsumers(long now) {
+    private void expireConsumers(long now) throws IOException {
         for (Map.Entry<ConsumerKey, ConsumerState> entry : consumers.entrySet()) {
             ConsumerState consumer = entry.getValue();
             if (!consumer.expired(now, ackTimeoutNanos, consumerInactivityTimeoutNanos)) continue;
@@ -433,6 +473,9 @@ public final class DefaultBroker implements Broker {
                 if (closed) return;
                 synchronized (consumer) {
                     if (!consumer.expired(now, ackTimeoutNanos, consumerInactivityTimeoutNanos)) continue;
+                    if (consumers.get(entry.getKey()) != consumer) continue;
+                    persistConsumer(new BrokerRequest(0, Command.LEAVE_GROUP, null, -1, -1, -1,
+                            null, 0, entry.getKey().groupId(), entry.getKey().memberId()));
                     if (!consumers.remove(entry.getKey(), consumer)) continue;
                     consumerPartitionMemberships -= consumer.nextOffsets.size();
                     removeProgress(entry.getKey(), consumer);
@@ -553,6 +596,48 @@ public final class DefaultBroker implements Broker {
         }
     }
 
+    private void persistConsumer(BrokerRequest request) throws IOException {
+        if (consumerJournal != null) consumerJournal.append(ProtocolCodec.encodeRequest(request));
+    }
+
+    private void recoverConsumers() throws IOException {
+        MessageLog journal = consumerJournal;
+        consumerJournal = null;
+        try {
+            long offset = 0;
+            while (offset < journal.nextOffset()) {
+                var records = journal.read(offset, 1024 * 1024);
+                if (records.isEmpty()) throw new IOException("Consumer metadata journal has a gap");
+                for (var record : records) {
+                    BrokerRequest request = ProtocolCodec.decodeRequest(record.value());
+                    switch (request.command()) {
+                        case JOIN_GROUP -> joinGroup(request);
+                        case LEAVE_GROUP -> leaveGroup(request);
+                        case COMMIT_OFFSET -> {
+                            ConsumerState consumer = consumers.get(new ConsumerKey(request.groupId(), request.memberId()));
+                            if (consumer == null || !consumer.topic.equals(request.topic())
+                                    || request.offset() < consumer.nextOffsets.getOrDefault(request.partition(), Long.MAX_VALUE)
+                                    || request.offset() > partition(request.topic(), request.partition()).nextOffset())
+                                throw new IOException("Invalid committed consumer progress");
+                            consumer.nextOffsets.put(request.partition(), request.offset());
+                            consumer.fetchedOffsets.put(request.partition(), request.offset());
+                            updateProgress(request.topic(), request.partition(),
+                                    new ConsumerKey(request.groupId(), request.memberId()), request.offset());
+                        }
+                        default -> throw new IOException("Invalid consumer metadata command");
+                    }
+                    offset = record.offset() + 1;
+                }
+            }
+            long now = System.nanoTime();
+            consumers.values().forEach(consumer -> consumer.touch(now));
+        } catch (BrokerException invalid) {
+            throw new IOException("Invalid consumer metadata journal", invalid);
+        } finally {
+            consumerJournal = journal;
+        }
+    }
+
     private static void validateConsumerId(String id) {
         if (id == null || id.isBlank() || id.length() > 4096
                 || id.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 4096)
@@ -584,6 +669,9 @@ public final class DefaultBroker implements Broker {
         // Do not interrupt a retention sweep while it owns Chronicle mappings or file channels.
         maintenance.shutdown();
         IOException failure = null;
+        if (consumerJournal != null) {
+            try { consumerJournal.close(); } catch (IOException error) { failure = error; }
+        }
         for (TopicState state : topics.values()) {
             for (PartitionProgress progress : state.progress) {
                 progress.lock.lock();

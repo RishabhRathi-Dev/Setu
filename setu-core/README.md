@@ -64,9 +64,11 @@ Use `0` for the final argument to disable file expiry. The newest populated dail
 | Long polling | Optional wait of 0–30,000 ms; append, timeout, eviction or shutdown wakes the request |
 | Membership | Explicit join, leave, heartbeat and next-offset acknowledgement; default 10,000 members / 100,000 summed partition memberships |
 | Expiry | Default 30-second acknowledgement / 60-second inactivity deadlines; maintenance runs every 10 ms |
-| Restart | File topics and records recover; memberships and member acknowledgement progress do not |
+| Restart | File topics, records, active memberships and acknowledged progress recover; memory state is lost |
 
-Memory members start at the partition end when they join. Acknowledgements reclaim through the lowest registered member's next offset; leaving or expiry removes that member's retention claim. File storage keeps full history by default. Optional `fileRetentionMillis` on the extended constructor expires completed daily files independently of consumer progress; fetches before the retained boundary return `OFFSET_OUT_OF_RANGE` with a resume offset. File topic paths are normalized and checked against the configured data directory; topic/partition symlinks that escape their parent are rejected. Consumer state is bookkeeping, without partition assignment or rebalancing. New joins exceeding either metadata limit return `QUOTA_EXCEEDED` before allocation. Rejoining an existing member remains possible at capacity; leave and expiry release capacity. The extended constructor accepts `ConsumerMetadataLimits`; group/member IDs are limited to 4 KiB UTF-8. `activeConsumerCount()` and `activeConsumerPartitionMemberships()` expose current usage. A `COMMIT_OFFSET` without a member validates the partition boundary and returns success without storing an offset; there is no offset lookup API. Member acknowledgements last only for the membership.
+Memory members start at the partition end when they join. Acknowledgements reclaim through the lowest registered member's next offset; leaving or expiry removes that member's retention claim. File storage keeps full history by default. Optional `fileRetentionMillis` on the extended constructor expires completed daily files independently of consumer progress; fetches before the retained boundary return `OFFSET_OUT_OF_RANGE` with a resume offset. File topic paths are normalized and checked against the configured data directory; topic/partition symlinks that escape their parent are rejected. Consumer state is bookkeeping, without partition assignment or rebalancing. New joins exceeding either metadata limit return `QUOTA_EXCEEDED` before allocation. Rejoining an existing member remains possible at capacity; leave and expiry release capacity. The extended constructor accepts `ConsumerMetadataLimits`; group/member IDs are limited to 4 KiB UTF-8. `activeConsumerCount()` and `activeConsumerPartitionMemberships()` expose current usage. A `COMMIT_OFFSET` without a member validates the partition boundary and returns success without storing an offset. Member acknowledgements last only for the membership; `FETCH_OFFSET` returns a registered member's next acknowledged offset.
+
+File brokers force join, changed acknowledgement, leave and expiry events to a separate Chronicle journal in `@consumer-state/` before publishing the change. Startup replays the journal after recovering partitions; invalid committed metadata fails startup. Recovered members receive a fresh inactivity interval, and only acknowledged progress is restored: pending fetched records must be fetched again before acknowledging them. Heartbeats and fetched positions are not journaled. The journal is not subject to topic retention and currently grows with membership/progress changes; include it in backups and monitor disk use. There is no journal compaction yet. Leave and expiry delete membership progress, including across restart. Fresh file members still start at zero and can encounter a retained-history gap.
 
 Memory brokers share a 256 MiB retained-log budget by default. Whole-batch admission failure returns `QUOTA_EXCEEDED` without consuming offsets. Zero disables that budget. Protocol buffers and file indexes are outside it. See [storage ownership and admission](../setu-storage/README.md).
 
@@ -87,6 +89,7 @@ Memory fetches use immutable snapshots outside the membership/long-poll lock. Du
 | 7 | `METADATA` | Topic/partition-count map |
 | 8 | `CREATE_TOPIC` | Topic created |
 | 9 | `PRODUCE_BATCH` | First assigned offset; records follow in input order |
+| 10 | `FETCH_OFFSET` | Registered member's next acknowledged offset as a signed 64-bit integer |
 
 Responses repeat command and correlation ID, then carry a 16-bit error code and length-prefixed error message. Success adds the command's result; failures omit it. See [ErrorCode.java](src/main/java/io/setu/core/protocol/ErrorCode.java) for the error IDs and [ProtocolCodec.java](src/main/java/io/setu/core/protocol/ProtocolCodec.java) for field order.
 
@@ -96,7 +99,9 @@ Public byte-array APIs copy payloads. Internal `MessageValue.Frame` overloads sh
 
 ## Limits and tests
 
-Replication, durable consumer metadata, automatic group coordination and idempotent/exactly-once delivery are not implemented. Storage migration and persistence boundaries are documented in the [storage guide](../setu-storage/README.md).
+`FETCH_OFFSET` uses the `COMMIT_OFFSET` field layout with a required member and a nonnegative placeholder offset (the Java client sends zero). Secure servers require group `CONSUMER_GROUP_WRITE`. Older brokers reject command 10; there is no version negotiation.
+
+Replication, automatic group coordination and idempotent/exactly-once delivery are not implemented. Storage migration and persistence boundaries are documented in the [storage guide](../setu-storage/README.md).
 
 From the repository root with Java 26:
 

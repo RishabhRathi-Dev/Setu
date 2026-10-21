@@ -2,7 +2,7 @@ package io.setu.core.protocol;
 
 public enum Command {
     PRODUCE(1), FETCH(2), COMMIT_OFFSET(3), JOIN_GROUP(4), LEAVE_GROUP(5), HEARTBEAT(6), METADATA(7), CREATE_TOPIC(8),
-    PRODUCE_BATCH(9);
+    PRODUCE_BATCH(9), FETCH_OFFSET(10);
 
     private final int id;
 

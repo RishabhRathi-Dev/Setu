@@ -53,7 +53,7 @@ Production dependencies: `core → storage`; `client → core + security`; `serv
 - Fetch returns whole records within its payload-byte budget. An oversized first record yields an empty page.
 - Acknowledgement uses the **next** offset after processing. Heartbeats maintain liveness but do not acknowledge records.
 - Memory members join at the current partition end. Join before producing records they need; no members allows immediate reclamation. File members start at zero, subject to retained history.
-- Membership and committed consumer offsets are process-local and do not survive restart in either mode.
+- FILE memberships and member acknowledgements recover from `@consumer-state/`; IN_MEMORY metadata is volatile. Leave and expiry remove progress. Fetched positions do not recover.
 - Long polling is capped at 30 seconds. Client read timeouts must exceed the requested wait.
 
 ### Storage and ownership
@@ -109,4 +109,4 @@ Follow the existing Java/package style and [.editorconfig](.editorconfig). Keep 
 
 Do not commit runtime data, generated keys/stores, passwords, logs, JFR recordings, heap dumps, AOT caches, build outputs, or IDE state. Respect [.gitignore](.gitignore). Leave local data and credentials intact. Follow [SECURITY.md](SECURITY.md) for vulnerability reports.
 
-Replication, failover, durable consumer metadata, producer deduplication, automatic retries/reconnects, payload checksums, and distributed security administration are not implemented. Do not document or imply these capabilities without implementing and verifying them.
+Replication, failover, producer deduplication, exactly-once transactions, automatic group coordination, configurable acknowledgement modes, and distributed security administration are not implemented. Async clients may retry reads but never uncertain writes. New file documents carry CRC32C; legacy documents remain unchecked. Do not document additional capabilities without implementing and verifying them.

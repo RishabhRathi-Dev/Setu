@@ -20,6 +20,7 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | [Architecture](architecture.md) | Module dependencies, request flow, persistence, consumers, and backpressure |
 | [Configuration](configuration.md) | Every standalone property, defaults, validation, and runtime controls |
 | [Operations](operations.md) | Packaging, startup, logs, shutdown, recovery, migration, and troubleshooting |
+| [PostgreSQL outbox/inbox](postgres-outbox.md) | Transactional publishing intent, duplicate delivery and database effects |
 | [Contributing](../CONTRIBUTING.md) | Build requirements, verification commands, and repository conventions |
 | [Tooling](../scripts/README.md) | Launchers, certificate generation, benchmarks, JFR, and badge publication |
 | [Security policy](../SECURITY.md) | Private vulnerability reporting and deployment boundaries |

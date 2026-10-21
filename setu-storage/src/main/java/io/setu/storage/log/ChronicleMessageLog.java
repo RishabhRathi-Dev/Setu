@@ -34,6 +34,7 @@ import java.util.Objects;
 /** Chronicle Queue partition log with dense Setu offsets independent of Chronicle roll-cycle indexes. */
 public final class ChronicleMessageLog implements MessageLog {
     private static final long FORMAT = 0x5345545500000001L;
+    private static final long CHECKSUM_FORMAT = 0x5345545500000002L;
     private static final int HEADER_BYTES = 20;
     private static final int MAX_RECORDS_PER_READ = 10_000;
     private static final int TARGET_DOCUMENT_BYTES = 1024 * 1024;
@@ -54,6 +55,9 @@ public final class ChronicleMessageLog implements MessageLog {
     // Append/close own this lock across forcing; the adapter monitor protects
     // Chronicle access, allowing committed reads during the independent JDK force.
     private final Object writerLock = new Object();
+    private final byte[] checksumBuffer = new byte[8192];
+    private final java.util.zip.CRC32C readChecksum = new java.util.zip.CRC32C();
+    private final java.util.zip.CRC32C writeChecksum = new java.util.zip.CRC32C();
     private long[] offsets = new long[128];
     private long[] indexes = new long[128];
     private int documents;
@@ -166,7 +170,19 @@ public final class ChronicleMessageLog implements MessageLog {
                     try (var document = appender.writingDocument()) {
                         try {
                             Bytes<?> bytes = document.wire().bytes();
-                            bytes.writeLong(FORMAT).writeLong(first + start).writeInt(end - start);
+                            writeChecksum.reset();
+                            for (int i = start; i < end; i++) {
+                                MessageValue value = owned.get(i);
+                                int length = value.length();
+                                if (java.nio.ByteOrder.nativeOrder() == java.nio.ByteOrder.LITTLE_ENDIAN) {
+                                    for (int shift = 0; shift < 32; shift += 8) writeChecksum.update(length >>> shift);
+                                } else {
+                                    for (int shift = 24; shift >= 0; shift -= 8) writeChecksum.update(length >>> shift);
+                                }
+                                value.updateChecksum(writeChecksum);
+                            }
+                            bytes.writeLong(CHECKSUM_FORMAT).writeLong(first + start).writeInt(end - start)
+                                    .writeInt((int) writeChecksum.getValue());
                             var output = new DataOutputStream(bytes.outputStream());
                             for (int i = start; i < end; i++) {
                                 MessageValue value = owned.get(i);
@@ -411,9 +427,29 @@ public final class ChronicleMessageLog implements MessageLog {
     }
 
     private int readHeader(Bytes<?> bytes, long expectedOffset) throws IOException {
-        if (bytes.readRemaining() < HEADER_BYTES || bytes.readLong() != FORMAT || bytes.readLong() != expectedOffset)
+        if (bytes.readRemaining() < HEADER_BYTES)
+            throw new IOException("Truncated Chronicle Setu document header");
+        long format = bytes.readLong();
+        if ((format != FORMAT && format != CHECKSUM_FORMAT) || bytes.readLong() != expectedOffset)
             throw new IOException("Invalid Chronicle Setu document header or offset sequence");
         int count = bytes.readInt();
+        if (format == CHECKSUM_FORMAT) {
+            if (bytes.readRemaining() < Integer.BYTES) throw new IOException("Missing Chronicle payload checksum");
+            long expectedChecksum = Integer.toUnsignedLong(bytes.readInt());
+            long start = bytes.readPosition();
+            readChecksum.reset();
+            try {
+                while (bytes.readRemaining() > 0) {
+                    int length = (int) Math.min(checksumBuffer.length, bytes.readRemaining());
+                    bytes.read(checksumBuffer, 0, length);
+                    readChecksum.update(checksumBuffer, 0, length);
+                }
+            } finally {
+                bytes.readPosition(start);
+            }
+            if (readChecksum.getValue() != expectedChecksum)
+                throw new IOException("Chronicle payload checksum mismatch at offset " + expectedOffset);
+        }
         if (count <= 0 || count > bytes.readRemaining() / Integer.BYTES)
             throw new IOException("Invalid Chronicle document record count");
         return count;

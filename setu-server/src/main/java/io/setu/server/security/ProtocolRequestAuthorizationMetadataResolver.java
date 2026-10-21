@@ -25,7 +25,7 @@ public final class ProtocolRequestAuthorizationMetadataResolver implements Reque
                             new RequestAuthorizationMetadata.Requirement("consumer-group/" + decoded.groupId(),
                                     Permission.CONSUMER_GROUP_WRITE)));
             case CREATE_TOPIC -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.TOPIC_CREATE);
-            case COMMIT_OFFSET -> new RequestAuthorizationMetadata(
+            case COMMIT_OFFSET, FETCH_OFFSET -> new RequestAuthorizationMetadata(
                     "consumer-group/" + decoded.groupId(), Permission.CONSUMER_GROUP_WRITE);
             case JOIN_GROUP -> new RequestAuthorizationMetadata(
                     "consumer-group/" + decoded.groupId(), Permission.CONSUMER_GROUP_CREATE);

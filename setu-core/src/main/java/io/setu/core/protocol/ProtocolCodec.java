@@ -144,7 +144,7 @@ public final class ProtocolCodec {
                 }
                 if (request.waitMillis() > 0) out.writeInt(request.waitMillis());
             }
-            case COMMIT_OFFSET -> {
+            case COMMIT_OFFSET, FETCH_OFFSET -> {
                 writeString(out, request.groupId());
                 writeString(out, request.topic());
                 out.writeInt(request.partition());
@@ -189,7 +189,7 @@ public final class ProtocolCodec {
                         -1, -1, readValue(in, frame), 0, null, null, List.of(), 0);
                 case PRODUCE_BATCH -> decodeProduceBatch(in, correlation, frame);
                 case FETCH -> decodeFetch(in, correlation);
-                case COMMIT_OFFSET -> decodeCommit(in, correlation);
+                case COMMIT_OFFSET, FETCH_OFFSET -> decodeCommit(in, correlation, header.command);
                 case JOIN_GROUP -> decodeJoin(in, correlation);
                 case LEAVE_GROUP, HEARTBEAT -> new BrokerRequest(correlation, header.command, null, -1, -1, -1,
                         null, 0, readString(in), readString(in));
@@ -212,13 +212,13 @@ public final class ProtocolCodec {
         }
     }
 
-    private static BrokerRequest decodeCommit(ByteBuffer in, int correlation) throws IOException {
+    private static BrokerRequest decodeCommit(ByteBuffer in, int correlation, Command command) throws IOException {
         String group = readString(in);
         String topic = readString(in);
         int partition = in.getInt();
         long offset = in.getLong();
         String member = in.hasRemaining() ? readString(in) : null;
-        return new BrokerRequest(correlation, Command.COMMIT_OFFSET, topic, partition, offset,
+        return new BrokerRequest(correlation, command, topic, partition, offset,
                 0, null, 0, group, member);
     }
 
@@ -300,12 +300,14 @@ public final class ProtocolCodec {
                 if (request.partitionCount() <= 0 || request.partitionCount() > 1_024)
                     throw bad("partitionCount must be between 1 and 1024", request.correlationId());
             }
-            case COMMIT_OFFSET -> {
+            case COMMIT_OFFSET, FETCH_OFFSET -> {
                 requireTopic(request.topic());
                 requireString(request.groupId(), "groupId", request.correlationId());
                 if (request.partition() < 0 || request.offset() < 0)
                     throw bad("partition and offset must be non-negative", request.correlationId());
                 if (request.memberId() != null)
+                    requireString(request.memberId(), "memberId", request.correlationId());
+                if (request.command() == Command.FETCH_OFFSET)
                     requireString(request.memberId(), "memberId", request.correlationId());
             }
             case JOIN_GROUP -> {
@@ -346,7 +348,8 @@ public final class ProtocolCodec {
             return encodeFetchResponse(response);
         long size = 18L + response.errorMessage().getBytes(StandardCharsets.UTF_8).length;
         if (response.errorCode() == ErrorCode.NONE) {
-            if (response.command() == Command.PRODUCE || response.command() == Command.PRODUCE_BATCH) size += 8;
+            if (response.command() == Command.PRODUCE || response.command() == Command.PRODUCE_BATCH
+                    || response.command() == Command.FETCH_OFFSET) size += 8;
             if (response.command() == Command.METADATA) {
                 size += 4;
                 for (String topic : response.topics().keySet()) size += 8L + topic.getBytes(StandardCharsets.UTF_8).length;
@@ -360,7 +363,7 @@ public final class ProtocolCodec {
         writeString(out, response.errorMessage());
         if (response.errorCode() != ErrorCode.NONE) return bytes.finish();
         switch (response.command()) {
-            case PRODUCE, PRODUCE_BATCH -> out.writeLong(response.offset());
+            case PRODUCE, PRODUCE_BATCH, FETCH_OFFSET -> out.writeLong(response.offset());
             case METADATA -> {
                 out.writeInt(response.topics().size());
                 for (Map.Entry<String, Integer> topic : response.topics().entrySet()) {
@@ -416,7 +419,7 @@ public final class ProtocolCodec {
             Map<String, Integer> topics = Map.of();
             if (errorCode == ErrorCode.NONE) {
                 switch (header.command) {
-                    case PRODUCE, PRODUCE_BATCH -> offset = in.getLong();
+                    case PRODUCE, PRODUCE_BATCH, FETCH_OFFSET -> offset = in.getLong();
                     case FETCH -> {
                         int count = boundedCount(in.getInt());
                         if (count > in.remaining() / 12) throw new EOFException("Truncated record headers");

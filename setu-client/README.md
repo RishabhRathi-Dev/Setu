@@ -84,6 +84,7 @@ The connection factory arguments are host, port, connect timeout, read timeout a
 | `fetch` | Return whole records from a starting offset within a byte budget |
 | `joinGroup`, `heartbeat`, `leaveGroup` | Manage explicit membership |
 | `acknowledge` | Commit the next offset after processing fetched records |
+| `fetchOffset` | Look up a registered member's acknowledged next offset for restart resumption |
 | `request` | Send a typed `BrokerRequest` directly |
 
 Every request receives a correlation ID; responses must match both command and correlation. Broker denials return `BrokerResponse.errorCode()` rather than automatically throwing. Socket, framing, decoding and response-matching failures throw exceptions, close the socket, and permanently invalidate the connection. Subsequent calls fail locally; create a new client explicitly. Normal broker error responses keep the connection reusable. The client does not retry or reconnect; a failed produce can still have an uncertain outcome.
@@ -133,9 +134,30 @@ try (var client = SetuClient.connectPlain("127.0.0.1", 9092,
 
 After explicitly accepting the lost range in that scenario, resume with `client.fetch("orders", 0, 100, 1024)` on an open client. The value `100` is specific to the scenario; use the boundary reported by the broker for the actual partition. The current protocol includes that boundary in the error message, without a separate numeric field or automatic reset API. Another sweep can advance it before the retry. Applications that require every record should stop and recover the missing data from their own archive instead of skipping the gap. Group-member fetches return the same retention error; rejoining does not restore expired records.
 
-There is no automatic retry, reconnect, partition routing, pooling, async/pipelined API or producer deduplication. A lost produce response can mean the write succeeded; blindly retrying can duplicate records. `QUOTA_EXCEEDED` indicates admission/policy rejection and may require backoff, a smaller batch or consumer progress.
+`SetuClient` does not retry, reconnect, pool connections or route partitions. A lost produce response can mean the write succeeded; blindly retrying can duplicate records. `QUOTA_EXCEEDED` indicates admission/policy rejection and may require backoff, a smaller batch or consumer progress.
+
+File memberships survive restart until leave or expiry. Call `fetchOffset(group, member, topic, partition)` and use the response's `offset()` to resume after checking `errorCode()`. Only acknowledged progress recovers; records fetched before restart must be fetched again before acknowledgement. Recovered members receive a fresh inactivity interval. Leave/expiry remove their saved progress; a newly joined file member starts at zero. File retention can still remove needed records.
+
+## Bounded async client
+
+`AsyncSetuClient` returns `CompletableFuture<BrokerResponse>` and uses a fixed number of independent connections. Its constructor takes a connection factory, connection count (1–1,024), bounded queued request count, and read retry count (0–10). The factory can call either `SetuClient.connectPlain` or `connectTls`; TLS hostname verification is preserved. Connections open lazily, reconnect after I/O failure, and close with the async client. Queue saturation completes the returned future exceptionally with `RejectedExecutionException`.
+
+```java
+try (var client = new io.setu.client.AsyncSetuClient(
+        () -> SetuClient.connectPlain("127.0.0.1", 9092, 5000, 35000, 16 * 1024 * 1024),
+        4, 128, 1)) {
+    var response = client.produce("orders", "customer-42", new byte[]{1}).join();
+    if (response.errorCode() != ErrorCode.NONE) throw new IllegalStateException(response.errorMessage());
+}
+```
+
+The keyed overload queries and caches immutable topic partition counts, routing via `floorMod(key.hashCode(), count)`. The explicit partition overload preserves application routing. Neither overload orders concurrent writes across connections; await one result before submitting the next when order matters. `request(BrokerRequest)` exposes the other commands asynchronously. Payloads are copied before scheduling by public byte-array APIs.
+
+Only `METADATA`, `FETCH` and `FETCH_OFFSET` retry I/O failures, within the configured count. Structured broker errors are returned without retry. Writes are never retried automatically; the next independent request can reconnect. There is no producer deduplication or exactly-once processing. Cancellation skips a task that has not started; cancelling a future does not undo an active broker operation. `close()` closes sockets and completes running/queued request futures exceptionally. Read timeouts must still exceed long-poll waits.
 
 ## Build and verification
+
+For transactional database publishing and deduplicated PostgreSQL effects, see the [outbox/inbox integration](../docs/postgres-outbox.md). Broker publication remains at least once; PostgreSQL inbox keys protect work committed in the same database transaction.
 
 From the repository root with Java 26:
 

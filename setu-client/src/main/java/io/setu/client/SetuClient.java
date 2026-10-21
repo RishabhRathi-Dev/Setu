@@ -217,6 +217,11 @@ public final class SetuClient implements AutoCloseable {
                 0, null, 0, groupId, memberId));
     }
 
+    public BrokerResponse fetchOffset(String groupId, String memberId, String topic, int partition) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.FETCH_OFFSET, topic, partition, 0,
+                0, null, 0, groupId, memberId));
+    }
+
     public BrokerResponse metadata() throws IOException {
         return request(new BrokerRequest(nextId(), Command.METADATA, null, -1, -1,
                 -1, null, 0, null, null));
