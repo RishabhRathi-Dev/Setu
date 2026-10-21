@@ -153,7 +153,11 @@ try (var client = new io.setu.client.AsyncSetuClient(
 
 The keyed overload queries and caches immutable topic partition counts, routing via `floorMod(key.hashCode(), count)`. The explicit partition overload preserves application routing. Neither overload orders concurrent writes across connections; await one result before submitting the next when order matters. `request(BrokerRequest)` exposes the other commands asynchronously. Payloads are copied before scheduling by public byte-array APIs.
 
-Only `METADATA`, `FETCH` and `FETCH_OFFSET` retry I/O failures, within the configured count. Structured broker errors are returned without retry. Writes are never retried automatically; the next independent request can reconnect. There is no producer deduplication or exactly-once processing. Cancellation skips a task that has not started; cancelling a future does not undo an active broker operation. `close()` closes sockets and completes running/queued request futures exceptionally. Read timeouts must still exceed long-poll waits.
+`METADATA`, `FETCH`, `FETCH_OFFSET`, `GROUP_ASSIGNMENT`, `PRODUCE_IDEMPOTENT` and `TRANSACT` retry I/O failures within the configured count. Identified write retries preserve producer epoch, sequence and contents. Structured broker errors and ordinary/accepted writes are never retried. Cancellation skips a task that has not started; cancelling a future does not undo an active broker operation. `close()` closes sockets and completes running/queued request futures exceptionally. Read timeouts must still exceed long-poll waits.
+
+## Managed and transactional APIs
+
+`joinManagedGroup` / `groupAssignment` return generation-bearing assignments; pass the generation to the managed fetch/acknowledgement overloads. `produceIdempotent` takes `ProducerIdentity`; `transact` additionally takes `ConsumerCommit`. `produceBatch(..., AcknowledgementMode)` selects default durable completion or weaker queue admission. FILE-only producer/transaction/group semantics, sequencing responsibilities, retry limits, ACL grants and runnable API examples are in [managed groups and transactions](../docs/transactions.md). `AsyncSetuClient` provides typed idempotent/transactional methods as well as `request` for the other commands.
 
 ## Build and verification
 

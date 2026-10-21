@@ -19,7 +19,17 @@ public final class ProtocolRequestAuthorizationMetadataResolver implements Reque
 
     private RequestAuthorizationMetadata resolve(BrokerRequest decoded) {
         return switch (decoded.command()) {
-            case PRODUCE, PRODUCE_BATCH -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.PRODUCE);
+            case PRODUCE, PRODUCE_BATCH, PRODUCE_CONFIGURED -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.PRODUCE);
+            case PRODUCE_IDEMPOTENT, TRANSACT -> {
+                var requirements = new java.util.ArrayList<RequestAuthorizationMetadata.Requirement>();
+                requirements.add(new RequestAuthorizationMetadata.Requirement("producer/" + decoded.options().producer().id(), Permission.PRODUCE));
+                if (decoded.command() == Command.TRANSACT) {
+                    var commit = decoded.options().commit();
+                    requirements.add(new RequestAuthorizationMetadata.Requirement("topic/" + commit.topic(), Permission.CONSUME));
+                    requirements.add(new RequestAuthorizationMetadata.Requirement("consumer-group/" + commit.groupId(), Permission.CONSUMER_GROUP_WRITE));
+                }
+                yield new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.PRODUCE, requirements);
+            }
             case FETCH -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.CONSUME,
                     decoded.memberId() == null ? java.util.List.of() : java.util.List.of(
                             new RequestAuthorizationMetadata.Requirement("consumer-group/" + decoded.groupId(),
@@ -29,6 +39,12 @@ public final class ProtocolRequestAuthorizationMetadataResolver implements Reque
                     "consumer-group/" + decoded.groupId(), Permission.CONSUMER_GROUP_WRITE);
             case JOIN_GROUP -> new RequestAuthorizationMetadata(
                     "consumer-group/" + decoded.groupId(), Permission.CONSUMER_GROUP_CREATE);
+            case JOIN_MANAGED_GROUP -> new RequestAuthorizationMetadata(
+                    "consumer-group/" + decoded.groupId(), Permission.CONSUMER_GROUP_CREATE,
+                    java.util.List.of(new RequestAuthorizationMetadata.Requirement("topic/" + decoded.topic(), Permission.CONSUME)));
+            case GROUP_ASSIGNMENT -> new RequestAuthorizationMetadata(
+                    "consumer-group/" + decoded.groupId(), Permission.CONSUMER_GROUP_WRITE,
+                    java.util.List.of(new RequestAuthorizationMetadata.Requirement("topic/" + decoded.topic(), Permission.CONSUME)));
             case LEAVE_GROUP, HEARTBEAT -> new RequestAuthorizationMetadata(
                     "consumer-group/" + decoded.groupId(), Permission.CONSUMER_GROUP_WRITE);
             case METADATA -> new RequestAuthorizationMetadata("broker", Permission.VIEW_METADATA);

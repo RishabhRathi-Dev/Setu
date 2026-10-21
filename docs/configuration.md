@@ -75,8 +75,8 @@ Changing the value back to `0` stops future automatic expiry after restart. It d
 | --- | --- | --- |
 | `requests.max.bytes` | `134217728` (128 MiB) | Positive shared request allocation credit, including connection buffering |
 | `responses.max.bytes` | `134217728` (128 MiB) | Positive shared response/materialization credit, held through writes |
-| `consumers.max` | `10000` | Positive maximum active group/member identities across the broker |
-| `consumer.partitions.max` | `100000` | Positive maximum sum of joined topic partition counts across all members |
+| `consumers.max` | `10000` | Positive maximum active group/member identities; separately bounds retained FILE managed groups |
+| `consumer.partitions.max` | `100000` | Positive maximum sum of joined topic partition counts; separately bounds retained FILE managed-group partition offsets |
 | `ack.timeout.millis` | `30000` | Positive deadline for member acknowledgement of fetched records |
 | `consumer.timeout.millis` | `60000` | Positive member inactivity deadline |
 

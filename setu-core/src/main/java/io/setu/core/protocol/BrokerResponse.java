@@ -4,7 +4,12 @@ import java.util.List;
 import java.util.Map;
 
 public record BrokerResponse(int correlationId, Command command, ErrorCode errorCode, String errorMessage,
-                             long offset, List<ProtocolRecord> records, Map<String, Integer> topics) {
+                             long offset, List<ProtocolRecord> records, Map<String, Integer> topics,
+                             GroupAssignment assignment) {
+    public BrokerResponse(int correlationId, Command command, ErrorCode errorCode, String errorMessage,
+                          long offset, List<ProtocolRecord> records, Map<String, Integer> topics) {
+        this(correlationId, command, errorCode, errorMessage, offset, records, topics, null);
+    }
     public BrokerResponse {
         if (correlationId < 0) throw new IllegalArgumentException("correlationId must be non-negative");
         if (command == null || errorCode == null) throw new IllegalArgumentException("command and errorCode are required");

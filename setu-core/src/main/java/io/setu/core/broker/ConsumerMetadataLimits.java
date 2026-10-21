@@ -1,6 +1,6 @@
 package io.setu.core.broker;
 
-/** Bounds active member identities and the per-partition progress entries they allocate. */
+/** Bounds active membership and independently bounds retained managed groups and their partition offsets. */
 public record ConsumerMetadataLimits(int maxMembers, int maxPartitionMemberships) {
     public ConsumerMetadataLimits {
         if (maxMembers <= 0 || maxPartitionMemberships <= 0)

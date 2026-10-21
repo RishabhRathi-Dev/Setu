@@ -199,7 +199,8 @@ class ProtocolCodecTests {
             assertEquals(error, ProtocolCodec.decodeResponse(ProtocolCodec.encodeResponse(error)));
             assertEquals(error, ProtocolCodec.decodeResponse(owned(ProtocolCodec.encodeResponse(error))));
             if (command != Command.FETCH && command != Command.METADATA
-                    && command != Command.PRODUCE && command != Command.PRODUCE_BATCH) {
+                    && command != Command.PRODUCE && command != Command.PRODUCE_BATCH
+                    && command != Command.JOIN_MANAGED_GROUP && command != Command.GROUP_ASSIGNMENT) {
                 var ok = BrokerResponse.ok(13, command);
                 assertEquals(ok, ProtocolCodec.decodeResponse(ProtocolCodec.encodeResponse(ok)));
             }

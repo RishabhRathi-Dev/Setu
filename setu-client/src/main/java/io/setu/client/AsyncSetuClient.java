@@ -64,6 +64,20 @@ public final class AsyncSetuClient implements AutoCloseable {
         return request(new BrokerRequest(0, Command.PRODUCE, topic, partition, -1, -1, value, 0, null, null));
     }
 
+    public CompletableFuture<BrokerResponse> produceIdempotent(String topic, int partition,
+            java.util.List<byte[]> values, io.setu.core.protocol.ProducerIdentity producer) {
+        return request(new BrokerRequest(0, Command.PRODUCE_IDEMPOTENT, topic, partition, -1, -1,
+                null, 0, null, null, values).withOptions(new io.setu.core.protocol.RequestOptions(
+                producer, null, io.setu.core.protocol.AcknowledgementMode.DURABLE, -1)));
+    }
+
+    public CompletableFuture<BrokerResponse> transact(String topic, int partition, java.util.List<byte[]> values,
+            io.setu.core.protocol.ProducerIdentity producer, io.setu.core.protocol.ConsumerCommit commit) {
+        return request(new BrokerRequest(0, Command.TRANSACT, topic, partition, -1, -1,
+                null, 0, null, null, values).withOptions(new io.setu.core.protocol.RequestOptions(
+                producer, commit, io.setu.core.protocol.AcknowledgementMode.DURABLE, -1)));
+    }
+
     public CompletableFuture<BrokerResponse> produce(String topic, String key, byte[] value) {
         Objects.requireNonNull(key, "key");
         var payload = io.setu.storage.log.MessageValue.copyOf(value);
@@ -91,7 +105,8 @@ public final class AsyncSetuClient implements AutoCloseable {
 
     private BrokerResponse exchange(BrokerRequest request) throws IOException {
         boolean retryable = request.command() == Command.METADATA || request.command() == Command.FETCH
-                || request.command() == Command.FETCH_OFFSET;
+                || request.command() == Command.FETCH_OFFSET || request.command() == Command.GROUP_ASSIGNMENT
+                || request.command() == Command.PRODUCE_IDEMPOTENT || request.command() == Command.TRANSACT;
         for (int attempt = 0; ; attempt++) {
             if (closed) throw new IOException("Client is closed");
             SetuClient client = local.get();

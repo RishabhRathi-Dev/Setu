@@ -48,6 +48,10 @@ public final class GroupCommitMessageLog implements MessageLog {
         return appendValues(values.stream().map(MessageValue::copyOf).toList());
     }
     public long appendValues(List<MessageValue> values) throws IOException {
+        return await(appendValuesAsync(values), "Partition append failed");
+    }
+
+    public CompletableFuture<Long> appendValuesAsync(List<MessageValue> values) throws IOException {
         if (values.isEmpty()) throw new IllegalArgumentException("empty batch");
         List<MessageValue> owned = List.copyOf(values);
         long bytes = 0;
@@ -69,7 +73,7 @@ public final class GroupCommitMessageLog implements MessageLog {
         }
         LockSupport.unpark(writer);
         // Interruption cannot cancel an accepted write or hide its durability result.
-        return await(pending.result, "Partition append failed");
+        return pending.result;
     }
 
     private void writeLoop() {
@@ -158,6 +162,15 @@ public final class GroupCommitMessageLog implements MessageLog {
     public List<LogRecord> read(long offset, int bytes) throws IOException { return delegate.read(offset, bytes); }
     public List<LogRecord> read(long offset, int bytes, ReadAdmission admission) throws IOException { return delegate.read(offset, bytes, admission); }
     public long nextOffset() { return delegate.nextOffset(); }
+    public void awaitPendingWrites() throws IOException {
+        while (true) {
+            State current = state.get();
+            if (current.failed != null) throw new IOException("Partition writer failed", current.failed);
+            if (current.requests == 0) return;
+            if (Thread.currentThread().isInterrupted()) throw new IOException("Interrupted while draining partition writes");
+            LockSupport.parkNanos(this, 100_000);
+        }
+    }
     public long firstOffset() { return delegate.firstOffset(); }
     /** Includes the active durable flush as well as waiting requests. */
     public long outstandingBytes() { return state.get().bytes; }
