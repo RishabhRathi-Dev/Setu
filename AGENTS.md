@@ -48,7 +48,7 @@ Production dependencies: `core → storage`; `client → core + security`; `serv
 
 ### Records, offsets, and consumers
 
-- Ordering and dense logical offsets apply within a partition. Applications select partitions explicitly; there is no automatic assignment or rebalance.
+- Ordering and dense logical offsets apply within a partition. Explicit membership remains supported; FILE managed groups assign partitions and fence fetch/commit with generations after rebalancing.
 - Batch produce returns the first assigned offset. Whole-batch admission rejection must leave offsets and records unchanged.
 - Fetch returns whole records within its payload-byte budget. An oversized first record yields an empty page.
 - Acknowledgement uses the **next** offset after processing. Heartbeats maintain liveness but do not acknowledge records.
@@ -63,7 +63,7 @@ Production dependencies: `core → storage`; `client → core + security`; `serv
 - Setu offsets are independent of Chronicle indexes. Recovery validates committed documents and dense offsets; malformed committed data fails startup.
 - File retention expires whole completed UTC daily cycles, ignores consumer progress, and always preserves the newest populated cycle. Preserve the retention checkpoint with the queue files. Memory timed retention is separately configured and lossy.
 - Public byte-array APIs copy defensively. Internal immutable frames/slices may share storage; retaining a slice can keep the backing frame alive. Preserve ownership and memory accounting through admission, rejection, reclamation, and shutdown.
-- A failed or lost produce reply can have an uncertain outcome. Do not introduce claims of idempotent retries or exactly-once delivery.
+- Ordinary produces have uncertain retry outcomes. FILE idempotent/transactional writes use producer ID/epoch/sequence, cache only the latest result per producer/partition, and require strict sequencing. Transactions atomically couple one output partition with advancement of one fetched input offset; external effects require their own transaction integration.
 
 ### Transport and security
 
@@ -109,4 +109,4 @@ Follow the existing Java/package style and [.editorconfig](.editorconfig). Keep 
 
 Do not commit runtime data, generated keys/stores, passwords, logs, JFR recordings, heap dumps, AOT caches, build outputs, or IDE state. Respect [.gitignore](.gitignore). Leave local data and credentials intact. Follow [SECURITY.md](SECURITY.md) for vulnerability reports.
 
-Replication, failover, producer deduplication, exactly-once transactions, automatic group coordination, configurable acknowledgement modes, and distributed security administration are not implemented. Async clients may retry reads but never uncertain writes. New file documents carry CRC32C; legacy documents remain unchecked. Do not document additional capabilities without implementing and verifying them.
+Replication, failover, multi-output-partition transactions, distributed security administration and journal compaction are not implemented. See docs/transactions.md for managed groups, scoped producer fencing, transaction recovery, acknowledgement modes and bounds. Async clients retry reads and explicitly identified idempotent/transactional writes, never ordinary uncertain writes. New file documents carry CRC32C; legacy documents remain unchecked. Do not document additional capabilities without implementing and verifying them.

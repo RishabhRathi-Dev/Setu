@@ -178,12 +178,12 @@ Generated builds, IDE metadata, runtime data, credentials, logs, and recordings 
 
 - One broker process; no replication, failover, or distributed coordination.
 - File brokers recover memberships and acknowledged progress. Memory brokers lose them on restart. Leave and expiry remove progress in both modes.
-- No automatic partition assignment/rebalancing, producer deduplication, or exactly-once delivery.
-- New durable documents carry CRC32C checksums; older documents remain readable without checksum protection. Configurable acknowledgement modes are not implemented.
-- `SetuClient` serializes calls. `AsyncSetuClient` adds bounded connection pooling, keyed partition routing, reconnects and optional read retries; writes are never automatically retried.
+- FILE brokers offer opt-in managed assignment/rebalancing, producer deduplication and single-input/single-output-partition transactions. Producer sequencing and external effects still require application coordination; see [transaction guarantees and limits](docs/transactions.md).
+- New durable documents carry CRC32C checksums; older documents remain readable without checksum protection. Per-request `DURABLE` (default) and weaker `ACCEPTED` acknowledgement modes are available.
+- `SetuClient` serializes calls. `AsyncSetuClient` adds bounded pooling, keyed routing, reconnects and retries for reads and identified transactional/idempotent writes. Ordinary writes retain uncertain retry outcomes.
 - ACL grants and quotas are process-local; persistent policy administration and automatic certificate rotation are not implemented.
 
-The [PostgreSQL outbox/inbox adapter](docs/postgres-outbox.md) supports transactional publication intent and deduplicated database effects. Publication may repeat; broker-side transactions and producer deduplication remain unimplemented.
+The [PostgreSQL outbox/inbox adapter](docs/postgres-outbox.md) supports transactional publication intent and deduplicated database effects. Outbox publication may repeat; its PostgreSQL transaction is separate from Setu's broker transaction boundary.
 
 ## Performance
 

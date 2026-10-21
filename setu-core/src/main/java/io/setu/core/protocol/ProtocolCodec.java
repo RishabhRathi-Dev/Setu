@@ -113,10 +113,20 @@ public final class ProtocolCodec {
         validateRequest(request);
         int capacity = 32;
         if (request.command() == Command.PRODUCE) capacity = 24 + request.topic().length() + request.valueLength();
-        if (request.command() == Command.PRODUCE_BATCH) {
+        if (request.command() == Command.PRODUCE_BATCH || request.command() == Command.PRODUCE_IDEMPOTENT
+                || request.command() == Command.TRANSACT || request.command() == Command.PRODUCE_CONFIGURED) {
             // Validated topic names are ASCII; the complete batch is already bounded to 14 MiB.
             capacity = 24 + request.topic().length();
             for (int i = 0; i < request.valueCount(); i++) capacity += Integer.BYTES + request.valueLengthAt(i);
+            if (request.command() == Command.PRODUCE_CONFIGURED) capacity++;
+            if (request.command() == Command.PRODUCE_IDEMPOTENT || request.command() == Command.TRANSACT)
+                capacity += 20 + request.options().producer().id().getBytes(StandardCharsets.UTF_8).length;
+            if (request.command() == Command.TRANSACT) {
+                ConsumerCommit commit = request.options().commit();
+                capacity += 32 + commit.groupId().getBytes(StandardCharsets.UTF_8).length
+                        + commit.memberId().getBytes(StandardCharsets.UTF_8).length
+                        + commit.topic().length();
+            }
         }
         EncodingBuffer bytes = new EncodingBuffer(capacity);
         DataOutputStream out = new DataOutputStream(bytes);
@@ -127,22 +137,40 @@ public final class ProtocolCodec {
                 out.writeInt(request.partition());
                 writeValue(out, request.payload());
             }
-            case PRODUCE_BATCH -> {
+            case PRODUCE_BATCH, PRODUCE_IDEMPOTENT, TRANSACT, PRODUCE_CONFIGURED -> {
                 writeString(out, request.topic());
                 out.writeInt(request.partition());
                 out.writeInt(request.valueCount());
                 for (MessageValue value : request.payloads()) writeValue(out, value);
+                if (request.command() == Command.PRODUCE_CONFIGURED)
+                    out.writeByte(request.options().acknowledgementMode().ordinal());
+                if (request.command() == Command.PRODUCE_IDEMPOTENT || request.command() == Command.TRANSACT) {
+                    ProducerIdentity producer = request.options().producer();
+                    writeString(out, producer.id());
+                    out.writeLong(producer.epoch());
+                    out.writeLong(producer.sequence());
+                }
+                if (request.command() == Command.TRANSACT) {
+                    ConsumerCommit commit = request.options().commit();
+                    writeString(out, commit.groupId());
+                    writeString(out, commit.memberId());
+                    writeString(out, commit.topic());
+                    out.writeInt(commit.partition());
+                    out.writeLong(commit.nextOffset());
+                    out.writeLong(commit.generation());
+                }
             }
             case FETCH -> {
                 writeString(out, request.topic());
                 out.writeInt(request.partition());
                 out.writeLong(request.offset());
                 out.writeInt(request.maxBytes());
-                if (request.groupId() != null || request.waitMillis() > 0) {
+                if (request.groupId() != null || request.waitMillis() > 0 || request.options().generation() >= 0) {
                     writeString(out, request.groupId() == null ? "" : request.groupId());
                     writeString(out, request.memberId() == null ? "" : request.memberId());
                 }
-                if (request.waitMillis() > 0) out.writeInt(request.waitMillis());
+                if (request.waitMillis() > 0 || request.options().generation() >= 0) out.writeInt(request.waitMillis());
+                if (request.options().generation() >= 0) out.writeLong(request.options().generation());
             }
             case COMMIT_OFFSET, FETCH_OFFSET -> {
                 writeString(out, request.groupId());
@@ -150,8 +178,9 @@ public final class ProtocolCodec {
                 out.writeInt(request.partition());
                 out.writeLong(request.offset());
                 if (request.memberId() != null) writeString(out, request.memberId());
+                if (request.options().generation() >= 0) out.writeLong(request.options().generation());
             }
-            case JOIN_GROUP -> {
+            case JOIN_GROUP, JOIN_MANAGED_GROUP, GROUP_ASSIGNMENT -> {
                 writeString(out, request.groupId());
                 writeString(out, request.topic());
                 writeString(out, request.memberId());
@@ -187,10 +216,11 @@ public final class ProtocolCodec {
             BrokerRequest request = switch (header.command) {
                 case PRODUCE -> new BrokerRequest(correlation, header.command, readString(in, frame), in.getInt(),
                         -1, -1, readValue(in, frame), 0, null, null, List.of(), 0);
-                case PRODUCE_BATCH -> decodeProduceBatch(in, correlation, frame);
+                case PRODUCE_BATCH, PRODUCE_IDEMPOTENT, TRANSACT, PRODUCE_CONFIGURED ->
+                        decodeProduceBatch(in, correlation, frame, header.command);
                 case FETCH -> decodeFetch(in, correlation);
                 case COMMIT_OFFSET, FETCH_OFFSET -> decodeCommit(in, correlation, header.command);
-                case JOIN_GROUP -> decodeJoin(in, correlation);
+                case JOIN_GROUP, JOIN_MANAGED_GROUP, GROUP_ASSIGNMENT -> decodeJoin(in, correlation, header.command);
                 case LEAVE_GROUP, HEARTBEAT -> new BrokerRequest(correlation, header.command, null, -1, -1, -1,
                         null, 0, readString(in), readString(in));
                 case CREATE_TOPIC -> new BrokerRequest(correlation, header.command, readString(in), -1, -1, -1,
@@ -218,8 +248,9 @@ public final class ProtocolCodec {
         int partition = in.getInt();
         long offset = in.getLong();
         String member = in.hasRemaining() ? readString(in) : null;
+        long generation = in.hasRemaining() ? in.getLong() : -1;
         return new BrokerRequest(correlation, command, topic, partition, offset,
-                0, null, 0, group, member);
+                0, null, 0, group, member).withGeneration(generation);
     }
 
     private static BrokerRequest decodeFetch(ByteBuffer in, int correlation) throws IOException {
@@ -234,12 +265,13 @@ public final class ProtocolCodec {
             member = readString(in);
         }
         int wait = in.hasRemaining() ? in.getInt() : 0;
+        long generation = in.hasRemaining() ? in.getLong() : -1;
         if (wait > 0 && "".equals(group) && "".equals(member)) { group = null; member = null; }
         return new BrokerRequest(correlation, Command.FETCH, topic, partition,
-                offset, maxBytes, MessageValue.empty(), 0, group, member, List.of(), wait);
+                offset, maxBytes, MessageValue.empty(), 0, group, member, List.of(), wait).withGeneration(generation);
     }
 
-    private static BrokerRequest decodeProduceBatch(ByteBuffer in, int correlation, MessageValue.Frame frame) throws IOException {
+    private static BrokerRequest decodeProduceBatch(ByteBuffer in, int correlation, MessageValue.Frame frame, Command command) throws IOException {
         String topic = readString(in, frame);
         int partition = in.getInt();
         int count = boundedCount(in.getInt());
@@ -252,15 +284,28 @@ public final class ProtocolCodec {
             if (bytes > MAX_BATCH_BYTES) throw bad("produce batch exceeds maximum bytes", correlation);
             values.add(value);
         }
-        return new BrokerRequest(correlation, Command.PRODUCE_BATCH, topic, partition, -1,
-                -1, MessageValue.empty(), 0, null, null, values, 0);
+        ProducerIdentity producer = null;
+        ConsumerCommit commit = null;
+        AcknowledgementMode mode = AcknowledgementMode.DURABLE;
+        if (command == Command.PRODUCE_CONFIGURED) {
+            int id = Byte.toUnsignedInt(in.get());
+            if (id >= AcknowledgementMode.values().length) throw bad("Unknown acknowledgement mode", correlation);
+            mode = AcknowledgementMode.values()[id];
+        }
+        if (command == Command.PRODUCE_IDEMPOTENT || command == Command.TRANSACT)
+            producer = new ProducerIdentity(readString(in), in.getLong(), in.getLong());
+        if (command == Command.TRANSACT)
+            commit = new ConsumerCommit(readString(in), readString(in), readString(in), in.getInt(), in.getLong(), in.getLong());
+        return new BrokerRequest(correlation, command, topic, partition, -1,
+                -1, MessageValue.empty(), 0, null, null, values, 0,
+                new RequestOptions(producer, commit, mode, -1));
     }
 
-    private static BrokerRequest decodeJoin(ByteBuffer in, int correlation) throws IOException {
+    private static BrokerRequest decodeJoin(ByteBuffer in, int correlation, Command command) throws IOException {
         String group = readString(in);
         String topic = readString(in);
         String member = readString(in);
-        return new BrokerRequest(correlation, Command.JOIN_GROUP, topic, -1, -1, -1,
+        return new BrokerRequest(correlation, command, topic, -1, -1, -1,
                 null, 0, group, member);
     }
 
@@ -270,7 +315,7 @@ public final class ProtocolCodec {
                 requireTopic(request.topic());
                 if (request.partition() < 0) throw bad("partition must be non-negative", request.correlationId());
             }
-            case PRODUCE_BATCH -> {
+            case PRODUCE_BATCH, PRODUCE_IDEMPOTENT, TRANSACT, PRODUCE_CONFIGURED -> {
                 requireTopic(request.topic());
                 if (request.partition() < 0) throw bad("partition must be non-negative", request.correlationId());
                 if (request.valueCount() == 0 || request.valueCount() > MAX_RESPONSE_ITEMS)
@@ -279,6 +324,24 @@ public final class ProtocolCodec {
                 for (int i = 0; i < request.valueCount(); i++) {
                     bytes += request.valueLengthAt(i);
                     if (bytes > MAX_BATCH_BYTES) throw bad("produce batch exceeds maximum bytes", request.correlationId());
+                }
+                if (request.command() == Command.PRODUCE_IDEMPOTENT || request.command() == Command.TRANSACT) {
+                    ProducerIdentity producer = request.options().producer();
+                    if (producer == null) throw bad("Producer identity is required", request.correlationId());
+                    requireString(producer.id(), "producerId", request.correlationId());
+                    if (producer.epoch() < 0 || producer.sequence() < 0)
+                        throw bad("Producer epoch and sequence must be non-negative", request.correlationId());
+                    if (request.options().acknowledgementMode() != AcknowledgementMode.DURABLE)
+                        throw bad("Idempotent writes require durable acknowledgement", request.correlationId());
+                }
+                if (request.command() == Command.TRANSACT) {
+                    ConsumerCommit commit = request.options().commit();
+                    if (commit == null) throw bad("Input commit is required", request.correlationId());
+                    requireTopic(commit.topic());
+                    requireString(commit.groupId(), "groupId", request.correlationId());
+                    requireString(commit.memberId(), "memberId", request.correlationId());
+                    if (commit.partition() < 0 || commit.nextOffset() < 0 || commit.generation() < -1)
+                        throw bad("Invalid input commit boundary", request.correlationId());
                 }
             }
             case FETCH -> {
@@ -310,7 +373,7 @@ public final class ProtocolCodec {
                 if (request.command() == Command.FETCH_OFFSET)
                     requireString(request.memberId(), "memberId", request.correlationId());
             }
-            case JOIN_GROUP -> {
+            case JOIN_GROUP, JOIN_MANAGED_GROUP, GROUP_ASSIGNMENT -> {
                 requireTopic(request.topic());
                 requireString(request.groupId(), "groupId", request.correlationId());
                 requireString(request.memberId(), "memberId", request.correlationId());
@@ -349,7 +412,12 @@ public final class ProtocolCodec {
         long size = 18L + response.errorMessage().getBytes(StandardCharsets.UTF_8).length;
         if (response.errorCode() == ErrorCode.NONE) {
             if (response.command() == Command.PRODUCE || response.command() == Command.PRODUCE_BATCH
-                    || response.command() == Command.FETCH_OFFSET) size += 8;
+                    || response.command() == Command.FETCH_OFFSET || response.command() == Command.PRODUCE_IDEMPOTENT
+                    || response.command() == Command.TRANSACT || response.command() == Command.PRODUCE_CONFIGURED) size += 8;
+            if (response.command() == Command.JOIN_MANAGED_GROUP || response.command() == Command.GROUP_ASSIGNMENT) {
+                if (response.assignment() == null) throw new IOException("Missing group assignment");
+                size += 12L + 12L * response.assignment().nextOffsets().size();
+            }
             if (response.command() == Command.METADATA) {
                 size += 4;
                 for (String topic : response.topics().keySet()) size += 8L + topic.getBytes(StandardCharsets.UTF_8).length;
@@ -363,7 +431,15 @@ public final class ProtocolCodec {
         writeString(out, response.errorMessage());
         if (response.errorCode() != ErrorCode.NONE) return bytes.finish();
         switch (response.command()) {
-            case PRODUCE, PRODUCE_BATCH, FETCH_OFFSET -> out.writeLong(response.offset());
+            case PRODUCE, PRODUCE_BATCH, FETCH_OFFSET, PRODUCE_IDEMPOTENT, TRANSACT, PRODUCE_CONFIGURED -> out.writeLong(response.offset());
+            case JOIN_MANAGED_GROUP, GROUP_ASSIGNMENT -> {
+                out.writeLong(response.assignment().generation());
+                out.writeInt(response.assignment().nextOffsets().size());
+                for (var entry : response.assignment().nextOffsets().entrySet()) {
+                    out.writeInt(entry.getKey());
+                    out.writeLong(entry.getValue());
+                }
+            }
             case METADATA -> {
                 out.writeInt(response.topics().size());
                 for (Map.Entry<String, Integer> topic : response.topics().entrySet()) {
@@ -417,9 +493,23 @@ public final class ProtocolCodec {
             long offset = -1;
             List<ProtocolRecord> records = List.of();
             Map<String, Integer> topics = Map.of();
+            GroupAssignment assignment = null;
             if (errorCode == ErrorCode.NONE) {
                 switch (header.command) {
-                    case PRODUCE, PRODUCE_BATCH, FETCH_OFFSET -> offset = in.getLong();
+                    case PRODUCE, PRODUCE_BATCH, FETCH_OFFSET, PRODUCE_IDEMPOTENT, TRANSACT, PRODUCE_CONFIGURED -> offset = in.getLong();
+                    case JOIN_MANAGED_GROUP, GROUP_ASSIGNMENT -> {
+                        long generation = in.getLong();
+                        int count = boundedCount(in.getInt());
+                        if (count > 1024 || count > in.remaining() / 12) throw new IOException("Invalid assignment count");
+                        Map<Integer, Long> assigned = new LinkedHashMap<>();
+                        for (int index = 0; index < count; index++) {
+                            int partition = in.getInt();
+                            long next = in.getLong();
+                            if (partition < 0 || next < 0 || assigned.put(partition, next) != null)
+                                throw new IOException("Invalid assignment partition or offset");
+                        }
+                        assignment = new GroupAssignment(generation, assigned);
+                    }
                     case FETCH -> {
                         int count = boundedCount(in.getInt());
                         if (count > in.remaining() / 12) throw new EOFException("Truncated record headers");
@@ -449,7 +539,7 @@ public final class ProtocolCodec {
                 }
             }
             if (in.hasRemaining()) throw bad("Trailing bytes in response", correlation);
-            return new BrokerResponse(correlation, header.command, errorCode, message, offset, records, topics);
+            return new BrokerResponse(correlation, header.command, errorCode, message, offset, records, topics, assignment);
         } catch (ProtocolException e) {
             throw e;
         } catch (EOFException | BufferUnderflowException e) {

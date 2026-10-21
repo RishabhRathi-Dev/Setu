@@ -2,6 +2,8 @@
 
 `setu-server` owns TCP connections, framing, buffer admission, secure request dispatch and the standalone broker launcher. Broker operations and wire types live in [setu-core](../setu-core/README.md); [setu-storage](../setu-storage/README.md) owns persistence.
 
+Opt-in [managed groups and transactions](../docs/transactions.md) require FILE storage. Secure idempotent/transactional requests require exact producer identity grants in addition to topic/group grants; duplicate retries are authorized before dispatch. Per-request `ACCEPTED` acknowledgement is weaker than the default force boundary and adds no standalone property.
+
 ## Standalone JAR
 
 From the repository root with Java 26 on `JAVA_HOME` and `PATH`:

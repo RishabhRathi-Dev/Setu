@@ -123,7 +123,21 @@ class TlsBrokerIntegrationTests {
                 assertEquals(ErrorCode.NONE,
                         client.fetch("protected", "member", "orders", 0, 0, 1024).errorCode());
                 assertEquals(ErrorCode.NONE, client.acknowledge("protected", "member", "orders", 0, 1).errorCode());
+                var producerIdentity = new io.setu.core.protocol.ProducerIdentity("orders-producer", 0, 0);
+                assertEquals(ErrorCode.AUTHORIZATION_DENIED,
+                        client.produceIdempotent("orders", 0, List.of(new byte[]{2}), producerIdentity).errorCode());
+                authorizer.grant("orders-service", "producer/orders-producer", Permission.PRODUCE);
+                assertEquals(1, client.produceIdempotent("orders", 0, List.of(new byte[]{2}), producerIdentity).offset());
+                assertEquals(ErrorCode.NONE, client.fetch("protected", "member", "orders", 0, 1, 1024).errorCode());
+                var transactionIdentity = new io.setu.core.protocol.ProducerIdentity("orders-processor", 0, 0);
+                var inputCommit = new io.setu.core.protocol.ConsumerCommit("protected", "member", "orders", 0, 2, -1);
+                assertEquals(ErrorCode.AUTHORIZATION_DENIED,
+                        client.transact("orders", 0, List.of(new byte[]{3}), transactionIdentity, inputCommit).errorCode());
+                authorizer.grant("orders-service", "producer/orders-processor", Permission.PRODUCE);
+                assertEquals(2, client.transact("orders", 0, List.of(new byte[]{3}), transactionIdentity, inputCommit).offset());
                 authorizer.revoke("orders-service", "topic/orders", Permission.CONSUME);
+                assertEquals(ErrorCode.AUTHORIZATION_DENIED,
+                        client.transact("orders", 0, List.of(new byte[]{3}), transactionIdentity, inputCommit).errorCode());
                 assertEquals(ErrorCode.AUTHORIZATION_DENIED,
                         client.fetch("protected", "member", "orders", 0, 0, 1024).errorCode());
                 var denied = client.fetch("orders", 0, 0, 1024);

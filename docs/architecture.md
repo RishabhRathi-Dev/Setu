@@ -92,7 +92,7 @@ On restart, Setu discovers topics and partitions, validates committed documents 
 
 ## Consumer lifecycle
 
-Membership records progress; it does not assign partitions or rebalance clients. Applications decide which partitions to read. File brokers force membership changes and acknowledgements into `@consumer-state/` and recover them on restart; clients query `FETCH_OFFSET` to resume. Leave and expiry remove progress. Memory metadata remains volatile.
+Explicit membership records per-member progress. Opt-in FILE managed groups assign partitions, rebalance on join/leave/expiry and reject stale generation/ownership on fetch and commit. File brokers force membership changes and acknowledgements into `@consumer-state/` and recover them on restart. Explicit members query `FETCH_OFFSET`; managed members query `GROUP_ASSIGNMENT`. Leave and expiry remove explicit member progress but preserve managed group offsets. Memory metadata remains volatile. See [managed groups and transactions](transactions.md).
 
 ```mermaid
 stateDiagram-v2
@@ -141,4 +141,4 @@ Log/write-queue saturation returns `QUOTA_EXCEEDED`. Buffer exhaustion also uses
 | ACL grants and quota registrations | Recreated by embedding application | Recreated by embedding application |
 | Connections, in-flight fetches, waiters | Lost | Lost |
 
-New durable documents validate CRC32C checksums; legacy documents lack this protection. Replication, automatic failover, and exactly-once delivery are not implemented. [Operations](operations.md) explains shutdown, recovery, and migration; [benchmarks](../setu-benchmark/README.md) explains what performance results establish.
+New durable documents validate CRC32C checksums; legacy documents lack this protection. FILE producer sequencing deduplicates the latest batch per producer/partition; one journaled transaction couples one output batch with one input progress advancement. An exclusive transaction gate hides intermediate output/progress; recovery completes committed journal entries before serving requests. External effects are outside this boundary. Replication, automatic failover and multi-output-partition transactions are not implemented. [Operations](operations.md) explains shutdown, recovery, and migration; [benchmarks](../setu-benchmark/README.md) explains what performance results establish.

@@ -128,10 +128,8 @@ FOR /F "usebackq tokens=1,2 delims==" %%A IN ("%MAVEN_PROJECTBASEDIR%\.mvn\wrapp
 @REM Extension to allow automatically downloading the maven-wrapper.jar from Maven-central
 @REM This allows using the maven wrapper in projects that prohibit checking in binary data.
 if exist %WRAPPER_JAR% (
-    if "%MVNW_VERBOSE%" == "true" (
-        echo Found %WRAPPER_JAR%
-    )
-) else (
+    for %%J in (%WRAPPER_JAR%) do if %%~zJ GTR 0 goto wrapperJarReady
+)
     if not "%MVNW_REPOURL%" == "" (
         SET WRAPPER_URL="%MVNW_REPOURL%/org/apache/maven/wrapper/maven-wrapper/3.3.4/maven-wrapper-3.3.4.jar"
     )
@@ -140,17 +138,12 @@ if exist %WRAPPER_JAR% (
         echo Downloading from: %WRAPPER_URL%
     )
 
-    powershell -Command "&{"^
-		"$webclient = new-object System.Net.WebClient;"^
-		"if (-not ([string]::IsNullOrEmpty('%MVNW_USERNAME%') -and [string]::IsNullOrEmpty('%MVNW_PASSWORD%'))) {"^
-		"$webclient.Credentials = new-object System.Net.NetworkCredential('%MVNW_USERNAME%', '%MVNW_PASSWORD%');"^
-		"}"^
-		"[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $webclient.DownloadFile('%WRAPPER_URL%', '%WRAPPER_JAR%')"^
-		"}"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%MAVEN_PROJECTBASEDIR%\.mvn\wrapper\download-wrapper.ps1"
+    if ERRORLEVEL 1 goto error
     if "%MVNW_VERBOSE%" == "true" (
         echo Finished downloading %WRAPPER_JAR%
     )
-)
+:wrapperJarReady
 @REM End of extension
 
 @REM If specified, validate the SHA-256 sum of the Maven wrapper jar file

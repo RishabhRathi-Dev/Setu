@@ -11,6 +11,7 @@ This module verifies broker behavior through public client/server APIs over real
 | Recovery | File memberships and only acknowledged progress survive restart; leave removes saved state |
 | Async client | Concurrent pooled writes, keyed routing, payload ownership, bounded queues, close, read reconnects and no uncertain-write retries |
 | PostgreSQL | Optional database tests for outbox rollback, relay redelivery and atomic inbox/business effects; CI provides PostgreSQL |
+| Transactions and groups | Managed generations, atomic consume/produce, restart retries, accepted acknowledgements, lost-reply retry deduplication and producer ACLs over mTLS |
 | Backpressure | Whole-batch memory admission, quota rejection, reclamation and successful retry |
 | Security | Real mTLS, certificate identity, authenticated broker requests and ACL denial |
 

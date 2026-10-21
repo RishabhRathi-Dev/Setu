@@ -7,6 +7,7 @@ out/
 *.ear
 *.nar
 .mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.jar.tmp.*
 .mvn/timing.properties
 dependency-reduced-pom.xml
 pom.xml.tag

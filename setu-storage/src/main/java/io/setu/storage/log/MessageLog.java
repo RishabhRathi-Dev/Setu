@@ -32,6 +32,12 @@ public interface MessageLog extends AutoCloseable {
         return appendBatch(values.stream().map(MessageValue::copy).toList());
     }
 
+    default java.util.concurrent.CompletableFuture<Long> appendValuesAsync(List<MessageValue> values) throws IOException {
+        return java.util.concurrent.CompletableFuture.completedFuture(appendValues(values));
+    }
+
+    default void awaitPendingWrites() throws IOException { }
+
     long nextOffset();
 
     /** Lowest offset still retained. */

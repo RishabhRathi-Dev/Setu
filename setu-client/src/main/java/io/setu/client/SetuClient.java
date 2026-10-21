@@ -227,6 +227,48 @@ public final class SetuClient implements AutoCloseable {
                 -1, null, 0, null, null));
     }
 
+    public BrokerResponse produceBatch(String topic, int partition, List<byte[]> values,
+                                        io.setu.core.protocol.AcknowledgementMode mode) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.PRODUCE_CONFIGURED, topic, partition, -1, -1,
+                null, 0, null, null, values).withOptions(new io.setu.core.protocol.RequestOptions(
+                null, null, mode, -1)));
+    }
+
+    public BrokerResponse produceIdempotent(String topic, int partition, List<byte[]> values,
+                                             io.setu.core.protocol.ProducerIdentity producer) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.PRODUCE_IDEMPOTENT, topic, partition, -1, -1,
+                null, 0, null, null, values).withOptions(new io.setu.core.protocol.RequestOptions(
+                producer, null, io.setu.core.protocol.AcknowledgementMode.DURABLE, -1)));
+    }
+
+    public BrokerResponse transact(String outputTopic, int outputPartition, List<byte[]> values,
+                                   io.setu.core.protocol.ProducerIdentity producer,
+                                   io.setu.core.protocol.ConsumerCommit inputCommit) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.TRANSACT, outputTopic, outputPartition, -1, -1,
+                null, 0, null, null, values).withOptions(new io.setu.core.protocol.RequestOptions(
+                producer, inputCommit, io.setu.core.protocol.AcknowledgementMode.DURABLE, -1)));
+    }
+
+    public BrokerResponse joinManagedGroup(String group, String topic, String member) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.JOIN_MANAGED_GROUP, topic, -1, -1, -1, null, 0, group, member));
+    }
+
+    public BrokerResponse groupAssignment(String group, String topic, String member) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.GROUP_ASSIGNMENT, topic, -1, -1, -1, null, 0, group, member));
+    }
+
+    public BrokerResponse fetch(String group, String member, String topic, int partition, long offset,
+                                int maxBytes, int waitMillis, long generation) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.FETCH, topic, partition, offset, maxBytes,
+                null, 0, group, member).withWaitMillis(waitMillis).withGeneration(generation));
+    }
+
+    public BrokerResponse acknowledge(String group, String member, String topic, int partition,
+                                      long nextOffset, long generation) throws IOException {
+        return request(new BrokerRequest(nextId(), Command.COMMIT_OFFSET, topic, partition, nextOffset,
+                0, null, 0, group, member).withGeneration(generation));
+    }
+
     private int nextId() {
         return correlationIds.updateAndGet(current -> current == Integer.MAX_VALUE ? 0 : current + 1);
     }

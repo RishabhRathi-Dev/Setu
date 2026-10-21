@@ -88,7 +88,7 @@ Run from the repository root. The final argument is the original maximum record 
 
 New Setu documents use format 2: the existing format/offset/count header followed by a native-endian 32-bit CRC32C of all encoded record lengths and payloads. Recovery and fetch validate this checksum before exposing records. Checksum scans reuse an 8 KiB scratch buffer; writes checksum immutable payload arrays directly. Format 1 documents remain readable without checksum verification, and appending does not rewrite them. Older Setu binaries cannot read format 2; back up before upgrading and do not downgrade a data directory after new writes. CRC32C detects accidental corruption and is not authentication or replication. Core also uses this log implementation for its separate consumer journal.
 
-Replicated storage and configurable acknowledgement modes are not implemented.
+`MessageLog.appendValuesAsync` exposes completion separately from admission; the group-commit implementation admits a complete immutable batch to the existing bounded queue and completes its future only after forcing. `awaitPendingWrites` drains admitted work when callers exclude new admissions. Broker `ACCEPTED` mode can reply after admission, before that future completes; ordinary appends retain their existing force boundary. Clean close still drains accepted writes. Replicated storage is not implemented. See [broker acknowledgement and transaction semantics](../docs/transactions.md).
 
 From the repository root with Java 26:
 

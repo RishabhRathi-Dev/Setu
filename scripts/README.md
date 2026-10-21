@@ -2,6 +2,8 @@
 
 Run tools from the repository root unless a guide specifies otherwise. Java tools require JDK 26. Python tools use Python 3.10+ and the standard library. Generated evidence belongs under ignored `logs/`; certificates belong under `certs/generated/`.
 
+The Maven entry points retry wrapper-JAR bootstrap downloads on HTTP 429 and transient server errors, with at most five attempts. Downloads use temporary sibling files and publish only after a successful nonempty response; exhausted retries stop before Java launches. Windows uses `.mvn/wrapper/download-wrapper.ps1`; Bash uses curl or wget. Existing nonempty wrapper caches avoid that request, and empty cached files are downloaded again. `test_maven_wrapper.py` exercises rate limits, permanent failures, retry exhaustion and cache handling through a local HTTP server. Windows tests need `JAVA_HOME`; Linux tests exercise each available curl/wget path. This does not add retries to Maven's separate dependency-resolution or distribution-download stages.
+
 ## Launch and credentials
 
 | Tool | Purpose |

@@ -10,6 +10,39 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GroupCommitMessageLogTests {
     @TempDir Path directory;
+    @Test void asynchronousAdmissionReturnsBeforeForceAndCloseDrainsAcceptedWork() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        MessageLog blocked = new MessageLog() {
+            private long next;
+            public long append(byte[] value) throws java.io.IOException {
+                entered.countDown();
+                try { release.await(); } catch (InterruptedException failure) { throw new java.io.IOException(failure); }
+                return next++;
+            }
+            public List<LogRecord> read(long offset, int bytes) { return List.of(); }
+            public long nextOffset() { return next; }
+            public void close() { }
+        };
+        var log = new GroupCommitMessageLog(blocked, 1024, 1, 0);
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            try {
+                var accepted = log.appendValuesAsync(List.of(MessageValue.copyOf(new byte[]{1})));
+                assertTrue(entered.await(3, TimeUnit.SECONDS));
+                assertFalse(accepted.isDone());
+                assertThrows(LogCapacityExceededException.class,
+                        () -> log.appendValuesAsync(List.of(MessageValue.copyOf(new byte[]{2}))));
+                var closing = workers.submit(() -> { log.close(); return true; });
+                assertFalse(closing.isDone());
+                release.countDown();
+                assertEquals(0, accepted.get(3, TimeUnit.SECONDS));
+                assertTrue(closing.get(3, TimeUnit.SECONDS));
+            } finally {
+                release.countDown();
+                log.close();
+            }
+        }
+    }
     @Test void fullSizedBatchBypassesLingerWithoutWaitingForAnotherProducer() throws Exception {
         try (var log = new GroupCommitMessageLog(new InMemoryMessageLog(1024),
                 32L * 1024 * 1024, 1024, TimeUnit.SECONDS.toNanos(30));
