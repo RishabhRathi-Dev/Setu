@@ -133,4 +133,16 @@ class TransactionTests {
         assertThrows(java.io.IOException.class, () -> new DefaultBroker(directory, 1024));
         assertThrows(java.io.IOException.class, () -> new DefaultBroker(directory, 1024));
     }
+
+    @Test void rejectedTransactionAndFetchReleaseTheirGatesForOtherThreads() throws Exception {
+        try (var broker = new DefaultBroker(directory, 1024); var workers = Executors.newFixedThreadPool(2)) {
+            initialize(broker);
+            workers.submit(() -> assertThrows(BrokerException.class, () -> broker.execute(
+                    write(Command.PRODUCE_IDEMPOTENT, 0, 2, List.of(new byte[]{1}))))).get(3, TimeUnit.SECONDS);
+            workers.submit(() -> assertThrows(BrokerException.class, () -> broker.execute(
+                    request(Command.FETCH, "output", -1, null)))).get(3, TimeUnit.SECONDS);
+            assertEquals(0, workers.submit(() -> broker.execute(
+                    write(Command.TRANSACT, 0, 0, List.of(new byte[]{1})))).get(3, TimeUnit.SECONDS).offset());
+        }
+    }
 }

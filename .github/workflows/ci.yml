@@ -65,6 +65,9 @@ jobs:
           distribution: temurin
           java-version: '26'
           cache: maven
+      - name: Verify Windows wrapper bootstrap retries and failure handling
+        shell: pwsh
+        run: python -m unittest discover -s scripts -p test_maven_wrapper.py -v
       - name: Run functional TCP, mTLS and filesystem tests on Windows
         shell: pwsh
         run: .\mvnw.cmd --batch-mode --no-transfer-progress -pl setu-integration-tests -am test

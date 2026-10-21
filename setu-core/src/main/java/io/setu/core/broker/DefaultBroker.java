@@ -196,11 +196,12 @@ public final class DefaultBroker implements Broker {
     @Override
     public BrokerResponse execute(BrokerRequest request) throws IOException {
         if (request.command() == Command.FETCH) return fetch(request);
+        if (storageMode != StorageMode.FILE) return dispatch(request);
         var gate = request.command() == Command.TRANSACT || request.command() == Command.PRODUCE_IDEMPOTENT
                 ? transactionGate.writeLock() : transactionGate.readLock();
-        if (storageMode == StorageMode.FILE) gate.lock();
+        gate.lock();
         try { return dispatch(request); }
-        finally { if (storageMode == StorageMode.FILE) gate.unlock(); }
+        finally { gate.unlock(); }
     }
 
     private BrokerResponse dispatch(BrokerRequest request) throws IOException {
@@ -501,13 +502,15 @@ public final class DefaultBroker implements Broker {
                 }
             } finally { progress.waiters--; progress.lock.unlock(); }
         }
-        if (storageMode == StorageMode.FILE) transactionGate.readLock().lock();
+        if (storageMode != StorageMode.FILE) return fetchSnapshot(request, log, startOffset, consumer, progress);
+        var gate = transactionGate.readLock();
+        gate.lock();
         try {
             if (consumer != null && consumer.managed) {
                 synchronized (this) { return fetchSnapshot(request, log, startOffset, consumer, progress); }
             }
             return fetchSnapshot(request, log, startOffset, consumer, progress);
-        } finally { if (storageMode == StorageMode.FILE) transactionGate.readLock().unlock(); }
+        } finally { gate.unlock(); }
     }
 
     private BrokerResponse fetchSnapshot(BrokerRequest request, MessageLog log, long startOffset,
