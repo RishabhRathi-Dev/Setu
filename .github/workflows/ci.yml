@@ -457,6 +457,19 @@ jobs:
       group: benchmark-badges-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
     steps:
+      - name: Generate Bot Token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ steps.generate-token.outputs.token }} # Use the elevated token
+          fetch-depth: 0 # Ensures full history for correct branch targeting
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -481,8 +494,8 @@ jobs:
             echo "A newer commit exists; its workflow will publish the latest measurements."
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "Setu-Pipeline-Bot[bot]"
+          git config --local user.email "Setu-Pipeline-Bot[bot]@users.noreply.github.com"
           git add README.md benchmark-badges/*.json benchmark-badges/*.svg
           if git diff --cached --quiet; then
             exit 0
