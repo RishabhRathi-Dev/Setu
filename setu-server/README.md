@@ -102,7 +102,7 @@ The secure path completes TLS and authenticates the client before protocol proce
 | `COMMIT_OFFSET`, `LEAVE_GROUP`, `HEARTBEAT` | `consumer-group/<group>` | `CONSUMER_GROUP_WRITE` |
 | `METADATA` | `broker` | `VIEW_METADATA` |
 
-After authorization, quotas charge one message per protocol request and the request-body byte count. A batch counts as one request. Denied operations do not reach the broker. Grants, quota registrations and consumer metadata remain process-local.
+After authorization, quotas charge one message per protocol request and the request-body byte count. A batch counts as one request. Denied operations do not reach the broker. Grants and quota registrations remain process-local. FILE consumer metadata recovers from the broker journal; IN_MEMORY metadata is volatile. Managed, identified and transactional command grants are specified in the [transaction security contract](../docs/transactions.md#security-and-verification).
 
 Both transports preserve immutable frame ownership through built-in dispatch. Embedded plaintext pipelines should pass `BrokerRequestHandler` directly or use `RequestProcessor.plaintext(handler)`. Functional byte-array handlers remain supported through defensive compatibility copies. Shared framing and protocol details are in [protocol v1](../setu-core/README.md#protocol-v1).
 
@@ -124,11 +124,11 @@ Request credit is reserved before allocating a frame body and includes decoded p
 
 Fetch waits are capped at 30 seconds; client read timeouts must exceed the requested wait. Expired members must rejoin. Memory or file expiry can produce `OFFSET_OUT_OF_RANGE` with a resume offset. File cleanup runs at startup and every minute, independently of acknowledgements. [Storage](../setu-storage/README.md) documents group-commit limits, durability, recovery and legacy migration.
 
-Malformed frame lengths, partial frames and TLS handshake failures close the connection. Protocol/application errors use structured responses when possible; unexpected I/O/runtime failures become `INTERNAL_ERROR`. A lost produce response has an uncertain outcome because producer deduplication is not implemented.
+Malformed frame lengths, partial frames and TLS handshake failures close the connection. Protocol/application errors use structured responses when possible; unexpected I/O/runtime failures become `INTERNAL_ERROR`. Ordinary produce replies retain uncertain outcomes. FILE identified writes and transactions support retries with the same producer epoch, sequence and contents; see the transaction guide.
 
 ## Logs and tests
 
-[logback.xml](../config/logback.xml) defaults to DEBUG, persists `logs/setu.log`, rotates daily or at 100 MB, retains 14 days and caps archives at 2 GB. Use `SETU_LOG_DIR`, `SETU_LOG_LEVEL`, or `-Dsetu.log.level` to configure logging; the level property takes precedence. Record payloads, passwords and private keys are not logged. Untrusted diagnostic fields escape line separators and backslashes so request identities and error text cannot create forged log lines; protocol values remain unchanged. Connection/session and request diagnostics include correlation IDs and error details.
+[logback.xml](../config/logback.xml) defaults to INFO (enable DEBUG explicitly for per-request diagnostics), persists `logs/setu.log`, rotates daily or at 100 MB, retains 14 days and caps archives at 2 GB. Use `SETU_LOG_DIR`, `SETU_LOG_LEVEL`, or `-Dsetu.log.level` to configure logging; the level property takes precedence. Record payloads, passwords and private keys are not logged. Untrusted diagnostic fields escape line separators and backslashes so request identities and error text cannot create forged log lines; protocol values remain unchanged. Connection/session and request diagnostics include correlation IDs and error details.
 
 From the repository root with Java 26:
 
@@ -138,3 +138,9 @@ From the repository root with Java 26:
 ```
 
 Tests cover framing, dispatch, selector multiplexing, TLS/mTLS, authorization, quotas and admission. There is no selector TLS, persistent policy administration or multi-broker coordination.
+
+## Operations and distributions
+
+`operations.port=-1` disables the optional HTTP endpoint; `0..65535` binds `/metrics` and `/ready` on 127.0.0.1. See [metric definitions and embedding](../docs/observability.md). `journal.compact.bytes=67108864` triggers FILE metadata checkpointing; zero disables the automatic trigger. See [checkpoint publication and compatibility](../docs/journal-checkpoints.md).
+
+After packaging, `python scripts/package-distribution.py` creates a versioned ZIP with adjacent runtime libraries, launchers, configuration and SHA-256 manifests. `python scripts/verify-distribution.py` verifies hashes and runs the shipped launcher from an extracted temporary directory. [Distribution CI](../.github/workflows/distribution.yml) exercises the recovery demo and distribution on Windows and Linux.

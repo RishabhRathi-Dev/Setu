@@ -17,6 +17,8 @@ import java.util.concurrent.locks.LockSupport;
  * Queue operations are lock-free; durability waits and file I/O remain blocking.
  */
 public final class GroupCommitMessageLog implements MessageLog {
+    private final java.util.concurrent.atomic.LongAdder flushNanos = new java.util.concurrent.atomic.LongAdder();
+    private final java.util.concurrent.atomic.LongAdder flushCount = new java.util.concurrent.atomic.LongAdder();
     private static final long TARGET_GROUP_BYTES = 256L * 1024;
     private final MessageLog delegate;
     private final long maximumBytes;
@@ -105,7 +107,10 @@ public final class GroupCommitMessageLog implements MessageLog {
                     values = new ArrayList<>(count);
                     for (Pending pending : group) values.addAll(pending.values);
                 }
-                long offset = delegate.appendValues(values); // forces every touched segment before acknowledgement
+                long flushStarted = System.nanoTime();
+                long offset;
+                try { offset = delegate.appendValues(values); } // forces every touched segment before acknowledgement
+                finally { flushNanos.add(System.nanoTime() - flushStarted); flushCount.increment(); }
                 release(group); // returned callers can immediately reuse the released capacity
                 for (Pending pending : group) {
                     pending.result.complete(offset);
@@ -175,6 +180,9 @@ public final class GroupCommitMessageLog implements MessageLog {
     /** Includes the active durable flush as well as waiting requests. */
     public long outstandingBytes() { return state.get().bytes; }
     public int outstandingRequests() { return state.get().requests; }
+    /** Full delegate append/force time, including failed flush attempts. */
+    public long flushNanos() { return flushNanos.sum(); }
+    public long flushCount() { return flushCount.sum(); }
     public void discardBefore(long offset) throws IOException { delegate.discardBefore(offset); }
     public void discardExpiredFiles(long retentionMillis) throws IOException { delegate.discardExpiredFiles(retentionMillis); }
     public void close() throws IOException {

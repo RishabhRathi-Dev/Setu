@@ -42,7 +42,8 @@ public final class SetuServerMain {
                 "record.max.bytes", "queue.block.bytes", "connections.max", "accept.backlog",
                 "handshake.timeout.millis", "frame.timeout.millis", "consumers.max", "consumer.partitions.max",
                 "socket.timeout.millis", "ack.timeout.millis", "consumer.timeout.millis", "transport", "memory.log.max.bytes",
-                "requests.max.bytes", "responses.max.bytes", "memory.retention.millis", "file.retention.millis", "write.timeout.millis");
+                "requests.max.bytes", "responses.max.bytes", "memory.retention.millis", "file.retention.millis", "write.timeout.millis",
+                "journal.compact.bytes", "operations.port");
         for (String key : properties.stringPropertyNames())
             if (!supported.contains(key)) throw new IllegalArgumentException("Unknown configuration property: " + key);
         StorageMode mode = StorageMode.valueOf(properties.getProperty("storage.mode", "FILE"));
@@ -57,6 +58,10 @@ public final class SetuServerMain {
                 Math.toIntExact(number(properties, "handshake.timeout.millis", 10_000)),
                 Math.toIntExact(number(properties, "frame.timeout.millis", 30_000)));
         String transport = properties.getProperty("transport", "blocking");
+        long compactBytes = number(properties, "journal.compact.bytes", 64L * 1024 * 1024);
+        int operationsPort = Math.toIntExact(number(properties, "operations.port", -1));
+        if (compactBytes < 0 || operationsPort < -1 || operationsPort > 65535)
+            throw new IllegalArgumentException("journal.compact.bytes must be nonnegative; operations.port must be -1..65535");
         if (!Set.of("blocking", "selector").contains(transport))
             throw new IllegalArgumentException("transport must be blocking or selector");
         var logger = LoggerFactory.getLogger(SetuServerMain.class);
@@ -77,16 +82,22 @@ public final class SetuServerMain {
                 new io.setu.core.broker.ConsumerMetadataLimits(
                         Math.toIntExact(number(properties, "consumers.max", 10_000)),
                         Math.toIntExact(number(properties, "consumer.partitions.max", 100_000))))) {
-            BrokerRequestHandler handler = new BrokerRequestHandler(broker);
+            broker.configureJournalCompaction(compactBytes);
+            var metrics = new io.setu.server.observability.BrokerMetrics(broker);
+            BrokerRequestHandler handler = new BrokerRequestHandler(metrics);
             TcpServer blocking = transport.equals("blocking")
                     ? new TcpServer(address, new FramedConnectionHandler(handler), options) : null;
             SelectorTcpServer selector = transport.equals("selector")
                     ? new SelectorTcpServer(address, 16 * 1024 * 1024, options, handler) : null;
-            try (AutoCloseable server = blocking != null ? blocking : selector) {
+            try (AutoCloseable server = blocking != null ? blocking : selector;
+                 var operations = operationsPort < 0 ? null : new io.setu.server.observability.OperationsServer(
+                         new InetSocketAddress("127.0.0.1", operationsPort), metrics,
+                         () -> blocking != null ? blocking.isRunning() : selector.isRunning())) {
                 if (blocking != null) blocking.start(); else selector.start();
                 CountDownLatch stopped = new CountDownLatch(1);
                 Thread shutdown = new Thread(() -> {
                     try {
+                        if (operations != null) operations.close();
                         server.close();
                         broker.close();
                         logger.info("Setu stopped");
@@ -98,6 +109,7 @@ public final class SetuServerMain {
                 try {
                     logger.info("Setu listening on {} with {} storage and {} transport (plaintext)",
                             blocking != null ? blocking.localAddress() : selector.localAddress(), mode, transport);
+                    if (operations != null) logger.info("Setu operations endpoint on {} (/metrics, /ready)", operations.localAddress());
                     stopped.await();
                 } finally {
                     try { Runtime.getRuntime().removeShutdownHook(shutdown); }

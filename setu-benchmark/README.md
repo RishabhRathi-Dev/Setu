@@ -171,3 +171,7 @@ python -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 Bounded tests cover process-kill recovery, malformed frames, record-size limits, expiry, quotas and concurrent consumer progress. `ProgressiveCapacityChaosTests` is a separate failure-seeking diagnostic: it continues doubling load toward runtime limits, counts broadcast fanout and uses a coarse latency histogram. Run it explicitly through `--kind capacity`; its peaks do not qualify sustained throughput or update current badges.
+
+## Mixed identified/ordinary writes
+
+`python examples/recovery-demo/run.py --contention` measures two writers across separate partitions in ordinary, identified and mixed modes, recording per-writer p99 and aggregate FILE gate wait. It is a bounded closed-loop diagnostic with explicit unqualified status, not a replacement for resource-enforced offered-load profiles. See [parameters and evidence](../examples/recovery-demo/README.md#contention-diagnostic).

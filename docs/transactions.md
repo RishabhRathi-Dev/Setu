@@ -12,7 +12,7 @@ Group offsets remain after the last member leaves or expires, and recover on res
 
 Send heartbeats while processing or idle. A fresh generation does not make effects outside the broker transactional. Application code must stop work for revoked partitions; a stale owner cannot commit progress or new transactional output, but the broker cannot undo an external API call. Use PostgreSQL inbox transactions to deduplicate database effects when needed.
 
-Durable managed group counts and their summed partition-offset counts are bounded separately by `ConsumerMetadataLimits.maxMembers` and `maxPartitionMemberships`, with the existing defaults of 10,000 / 100,000. Leaving releases active membership capacity, but retained group offsets continue consuming durable group capacity. There is currently no group deletion/compaction API.
+Durable managed group counts and their summed partition-offset counts are bounded separately by `ConsumerMetadataLimits.maxMembers` and `maxPartitionMemberships`, with the existing defaults of 10,000 / 100,000. Leaving releases active membership capacity, but retained group offsets continue consuming durable group capacity. There is currently no group deletion API; journal compaction preserves retained group identities and offsets.
 
 ## Producer identity and retries
 
@@ -50,7 +50,7 @@ The broker first validates producer sequencing, input ownership/progress and pay
 
 After a committed journal entry, storage failure stops further broker operations and maintenance until restart. Recovery replays entries in order, verifies already present output, completes a missing or partial output suffix, restores progress and producer state, and only then serves requests. Conflicting output or malformed committed journal data fails startup. A failed reply may still correspond to a committed transaction; retry its original producer sequence. There is no rollback after the journal commit decision.
 
-`@consumer-state/` now also contains complete transactional/idempotent payloads. Keep it with all partition files in backups. Topic retention does not prune this journal, and journal compaction is not implemented: disk use and restart time grow with history. These capabilities require the upgraded broker; older binaries cannot interpret these journal entries. Preserve a compatible offline backup for rollback.
+`@consumer-state/` contains complete transactional/idempotent payloads in its journal tail. Automatic [metadata checkpoints](journal-checkpoints.md) replace historical payloads with committed consumer/producer state, then reclaim obsolete generations. Keep the entire directory with all partition files in backups. Topic retention remains independent. The default trigger is 64 MiB of journal payloads, checked every second; peak disk use includes both generations during compaction. Checkpointed directories require the upgraded broker. Preserve a compatible offline backup for rollback.
 
 ## Acknowledgement modes
 

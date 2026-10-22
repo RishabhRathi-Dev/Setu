@@ -12,6 +12,8 @@ The source of defaults and accepted keys is [SetuServerMain.java](../setu-server
 
 ## Network and transport
 
+The optional operations listener uses `operations.port=-1` (disabled), or `0..65535` to bind on 127.0.0.1. Zero selects an ephemeral port. It serves read-only `/metrics` and `/ready`; see [observability](observability.md). It does not change the broker plaintext/TLS boundary.
+
 | Property | Default | Meaning / validation |
 | --- | --- | --- |
 | `bind.host` | `127.0.0.1` | Local bind address |
@@ -94,7 +96,7 @@ When budgets are exhausted, the server returns `QUOTA_EXCEEDED` if it can admit 
 | JVM options | [config/jvm.options](../config/jvm.options) | ZGC, string deduplication, required Chronicle access, analytics disabled |
 | Heap/direct memory | JVM arguments in embedding/direct launches | Use workload-appropriate headroom; no standalone heap property |
 | Log directory | `SETU_LOG_DIR` | Default `logs`; contains `setu.log` and rolling archives |
-| Application log level | `-Dsetu.log.level` or `SETU_LOG_LEVEL` | System property takes precedence; `io.setu` defaults to `DEBUG`, root to `INFO` |
+| Application log level | `-Dsetu.log.level` or `SETU_LOG_LEVEL` | System property takes precedence; `io.setu` defaults to `INFO` (DEBUG is opt-in), root to `INFO` |
 | AOT generation | Launcher `--train-aot` | Creates `setu-server/target/setu-server.aot` using training traffic |
 | AOT bypass | Launcher `--no-aot` before broker arguments | Skips an existing strict-mode cache |
 
@@ -107,3 +109,7 @@ java '@config/jvm.options' -Xms256m -Xmx1g -Dsetu.log.level=INFO -jar setu-serve
 ```
 
 Rebuild AOT caches when JDK, platform, application, or dependency JARs change. [Operations](operations.md) covers launch artifacts and recovery; the [server guide](../setu-server/README.md) covers custom embedded listeners and TLS policy.
+
+## Metadata journal
+
+`journal.compact.bytes` defaults to `67108864` (64 MiB); nonnegative integer bytes are required. Zero disables automatic compaction. FILE maintenance checks appended journal payload bytes once per second and takes a metadata checkpoint after reaching the trigger. This is not a hard disk quota: mapped-file overhead, checkpoint size and the current workload affect physical usage. IN_MEMORY has no journal. See [checkpoint guarantees, pauses and upgrade compatibility](journal-checkpoints.md).

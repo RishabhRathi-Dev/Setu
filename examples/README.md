@@ -12,6 +12,7 @@ On Linux/macOS, use `bash ./mvnw -pl setu-server -am package`. The commands belo
 
 | Example | Demonstrates | Running broker required? |
 | --- | --- | --- |
+| [Recovery demo project](recovery-demo/README.md) | Lost transaction reply, retry, checkpoint and forced-process recovery; optional contention diagnostic | No |
 | [SetuQuickstart.java](SetuQuickstart.java) | Batch produce, member fetch, acknowledgement and leaving a group | Yes |
 | [SetuBatchAndPartitions.java](SetuBatchAndPartitions.java) | Two explicit partitions, independent offsets, paginated fetch and per-partition acknowledgement | Yes |
 | [SetuLongPolling.java](SetuLongPolling.java) | Separate producer/consumer connections, arrival during a waiting fetch and an empty timeout response | Yes |

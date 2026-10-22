@@ -40,7 +40,7 @@
 
     </appender>
 
-    <logger name="io.setu" level="${setu.log.level:-${SETU_LOG_LEVEL:-DEBUG}}"/>
+    <logger name="io.setu" level="${setu.log.level:-${SETU_LOG_LEVEL:-INFO}}"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

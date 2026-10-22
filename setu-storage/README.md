@@ -111,3 +111,7 @@ java --enable-native-access=ALL-UNNAMED -cp "$probe_root/classes" \
 ```
 
 It retains a JFR recording, checks metadata barrier selection and mapped growth/header rewrites through a separate descriptor, and models the scheduling backlog from one 383 ms force delay. The delayed sample and recovery samples remain in the percentiles; this diagnostic is independent of the strict FILE baseline.
+
+## Operational counters
+
+`GroupCommitMessageLog.flushNanos()` and `flushCount()` report cumulative full delegate append/force time and attempts, including failed attempts. They exclude queue waiting and are not isolated `FileChannel.force` timing. Outstanding byte/request gauges continue to include the active flush. The core-owned consumer journal uses versioned checkpoints and generation reclamation; see [journal checkpoints](../docs/journal-checkpoints.md).

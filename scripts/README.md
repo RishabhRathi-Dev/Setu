@@ -62,3 +62,7 @@ The suites cover resource planning/enforcement, parser validation, sustained/tar
 ## Source security gate
 
 `python scripts/check-codeql.py <sarif-directory>` validates CodeQL evidence and fails on security severity >=7 or error-level results. Rule metadata can live in the SARIF tool driver or query-pack extensions; the gate resolves component/rule references before checking severity. Missing, ambiguous or inconsistent metadata fails. The [query suite](../.github/codeql/security.qls) explicitly runs `AlertSuppression.ql`. Accepted `inSource` suppressions from narrowly reviewed `// codeql[query-id]` annotations are honored; external, rejected and under-review suppressions still block. Findings include their source file and line when present. [Security CI](../.github/workflows/security.yml) retains full SARIF, including lower-severity findings. Run `python -m unittest discover -s scripts -p 'test_*.py'` after changing this gate.
+
+## Distribution and source quality
+
+`python scripts/check-source.py` checks tracked/new source formatting without dependencies. The compiler treats selected empty-statement, fallthrough, finally and override warnings as errors. `python scripts/package-distribution.py` packages a built server into a versioned ZIP and SHA-256 manifests. `python scripts/verify-distribution.py` checks hashes and exercises the launcher from an extracted temporary directory. Distribution CI runs these checks and the [recovery demo](../examples/recovery-demo/README.md) on Linux and Windows.
