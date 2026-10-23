@@ -1,0 +1,43 @@
+name: Distribution and recovery demo
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-package:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+        with:
+          distribution: temurin
+          java-version: '26'
+          cache: maven
+      - name: Source formatting
+        run: python scripts/check-source.py
+      - name: Build and demonstrate crash recovery
+        run: python examples/recovery-demo/run.py
+      - name: Package versioned distribution
+        run: python scripts/package-distribution.py
+      - name: Verify archive and packaged launcher
+        run: python scripts/verify-distribution.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: setu-distribution-${{ matrix.os }}
+          path: |
+            target/setu-*.zip*
+            examples/target/recovery-demo-*/metrics.txt
+            examples/target/recovery-demo-*/broker.log
+            examples/target/recovery-demo-*/environment.json
+            examples/target/recovery-demo-*/result.txt
+          retention-days: 14
