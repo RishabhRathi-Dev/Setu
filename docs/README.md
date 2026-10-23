@@ -19,6 +19,8 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | --- | --- |
 | [Architecture](architecture.md) | Module dependencies, request flow, persistence, consumers, and backpressure |
 | [Configuration](configuration.md) | Every standalone property, defaults, validation, and runtime controls |
+| [Journal checkpoints](journal-checkpoints.md) | Compaction publication, fencing, recovery and upgrade compatibility |
+| [Observability](observability.md) | Loopback readiness, bounded metrics and contention diagnostics |
 | [Operations](operations.md) | Packaging, startup, logs, shutdown, recovery, migration, and troubleshooting |
 | [PostgreSQL outbox/inbox](postgres-outbox.md) | Transactional publishing intent, duplicate delivery and database effects |
 | [Managed groups and transactions](transactions.md) | Partition ownership, producer sequencing, atomic consume/produce and acknowledgement modes |

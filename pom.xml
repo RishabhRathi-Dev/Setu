@@ -81,6 +81,10 @@
                     <version>3.15.0</version>
                     <configuration>
                         <release>${maven.compiler.release}</release>
+                        <compilerArgs>
+                            <arg>-Xlint:empty,fallthrough,finally,overrides</arg>
+                            <arg>-Werror</arg>
+                        </compilerArgs>
                         <annotationProcessorPaths>
                             <path>
                                 <groupId>org.projectlombok</groupId>

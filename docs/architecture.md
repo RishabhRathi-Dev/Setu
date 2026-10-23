@@ -1,5 +1,7 @@
 # Architecture
 
+Metadata persistence is split into `BrokerJournal` (generation I/O and locking), `BrokerCheckpoint` (versioned snapshot codec), `ProducerLedger` (sequencing/fencing) and `BrokerState` (state types). `DefaultBroker` owns request semantics and lock ordering. [Checkpoint publication](journal-checkpoints.md) preserves the latest producer results and committed group progress without retaining historical payloads indefinitely. The server's optional [operations endpoint](observability.md) exposes bounded metrics through a broker decorator; core and storage remain independent of HTTP.
+
 Setu is a single-process broker. A topic contains numbered partition logs; each partition assigns dense, monotonically increasing offsets to opaque byte-array records. Clients choose the topic, partition, and fetch offset. Ordering is per partition, with no global ordering across partitions.
 
 This guide describes the implementation in the repository. [Core](../setu-core/README.md), [storage](../setu-storage/README.md), and [server](../setu-server/README.md) document the underlying contracts.

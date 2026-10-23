@@ -76,3 +76,9 @@ Track source, tests, wrapper scripts, configuration defaults, documentation, and
 Performance evidence must identify source revision, JDK, host/resources, storage/filesystem, payload/batch, duration, repetitions, and qualification failures. Distinguish unique consumption from fanout delivery and durable forcing from ingestion-only throughput. Historical results from a different backend do not qualify the current engine.
 
 Before committing, inspect staged and unstaged diffs, run the relevant checks, and use `git diff --check` to catch whitespace errors. Write commit/PR descriptions around the resulting behavior and validation, including any remaining limitation a reviewer needs to assess.
+
+## Source quality and distributions
+
+Run `python scripts/check-source.py` for source formatting. Java compilation enables selected `empty`, `fallthrough`, `finally` and `overrides` diagnostics with warnings treated as errors. Keep API/format changes covered by behavior tests, not just style gates.
+
+For journal or packaging changes, run `python examples/recovery-demo/run.py`, `python scripts/package-distribution.py` and `python scripts/verify-distribution.py`. The demo retains process-kill and retry evidence under `examples/target/`. `--contention` selects the unqualified mixed-write diagnostic. Preserve the existing qualified benchmark criteria.

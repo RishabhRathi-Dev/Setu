@@ -49,6 +49,32 @@ final class ProducerLedger {
         return new BrokerException(ErrorCode.OUT_OF_ORDER_SEQUENCE, "Producer sequences must start at zero and advance by one");
     }
 
+    void write(java.io.DataOutputStream output) throws java.io.IOException {
+        output.writeInt(entries.size());
+        for (var item : entries.entrySet()) {
+            var key = item.getKey();
+            var value = item.getValue();
+            output.writeUTF(key.producer); output.writeUTF(key.topic); output.writeInt(key.partition);
+            output.writeLong(value.epoch); output.writeLong(value.sequence); output.writeLong(value.offset);
+            output.write(value.fingerprint);
+        }
+    }
+
+    void restore(java.io.DataInputStream input, java.util.function.ToLongBiFunction<String, Integer> nextOffset)
+            throws java.io.IOException {
+        int count = input.readInt();
+        if (count < 0 || count > 10_000) throw new java.io.IOException("Invalid checkpoint producer count");
+        for (int i = 0; i < count; i++) {
+            var key = new Key(input.readUTF(), input.readUTF(), input.readInt());
+            long epoch = input.readLong(), sequence = input.readLong(), offset = input.readLong();
+            byte[] fingerprint = input.readNBytes(32);
+            if (key.producer.isBlank() || key.producer.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 4096
+                    || offset >= nextOffset.applyAsLong(key.topic, key.partition) || epoch < 0 || sequence < 0 || offset < 0
+                    || fingerprint.length != 32 || entries.putIfAbsent(key, new Entry(epoch, sequence, fingerprint, offset)) != null)
+                throw new java.io.IOException("Invalid checkpoint producer state");
+        }
+    }
+
     private record Key(String producer, String topic, int partition) { }
     private record Entry(long epoch, long sequence, byte[] fingerprint, long offset) { }
 }
