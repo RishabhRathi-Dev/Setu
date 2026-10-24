@@ -82,13 +82,15 @@ Changing the value back to `0` stops future automatic expiry after restart. It d
 | `ack.timeout.millis` | `30000` | Positive deadline for member acknowledgement of fetched records |
 | `consumer.timeout.millis` | `60000` | Positive member inactivity deadline |
 
-New joins reserve both metadata limits atomically before allocating progress entries. Existing members can refresh at capacity. Leave and expiry release capacity; rejected joins return `QUOTA_EXCEEDED`. Group/member identities are capped at 4 KiB UTF-8 each. A commit without a member validates the offset but stores no state: there is no committed-offset lookup API. Member acknowledgements retain progress only for that membership.
+New joins reserve both metadata limits atomically before allocating progress entries. Existing members can refresh at capacity. Leave and expiry release active membership capacity; rejected joins return `QUOTA_EXCEEDED`. Group/member identities are capped at 4 KiB UTF-8 each. A commit without a member validates the offset but stores no state. `FETCH_OFFSET` returns a registered member's acknowledged next offset; managed members can also query `GROUP_ASSIGNMENT`. Explicit member progress lasts until leave or expiry, while managed group offsets remain after departure. FILE brokers recover memberships and acknowledged progress on restart; IN_MEMORY metadata is volatile. See [consumer semantics](../setu-core/README.md#broker-semantics).
 
 Consumer maintenance runs every 10 ms. An expired member must rejoin. Heartbeats maintain liveness but do not acknowledge processed records. Long-poll wait is a request parameter, capped at 30,000 ms; configure the client's read timeout above the requested wait.
 
 When budgets are exhausted, the server returns `QUOTA_EXCEEDED` if it can admit an error response, otherwise it closes the connection. Budget headroom must allow protocol metadata and accounting, as well as payload bytes. See [admission and failure behavior](../setu-server/README.md#admission-and-failure-behavior).
 
 ## JVM, logging, and AOT
+
+The [IntelliJ development profiles](intellij.md) provide isolated loopback ports, data directories, metrics, and longer breakpoint deadlines using existing properties. The standard launcher defaults remain unchanged.
 
 | Control | Location | Behavior |
 | --- | --- | --- |

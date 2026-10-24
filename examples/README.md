@@ -66,7 +66,7 @@ The memory-retention example configures a 250 ms maximum age and deliberately le
 java '@config/jvm.options' -cp 'setu-server/target/lib/*' examples/SetuFileRecovery.java
 ```
 
-The program creates a unique directory under ignored `examples/target/`, writes records at offsets `0`–`2`, closes the broker, and opens another broker on the same directory. It reads the three recovered records and verifies that the next append receives offset `3`. It prints the directory and partition path and leaves the files available for inspection. Consumer memberships and consumer commits do not survive broker restart.
+The program creates a unique directory under ignored `examples/target/`, writes records at offsets `0`–`2`, closes the broker, and opens another broker on the same directory. It reads the three recovered records and verifies that the next append receives offset `3`. It prints the directory and partition path and leaves the files available for inspection. FILE brokers also recover active consumer memberships and acknowledged progress; this example exercises record recovery without joining a consumer group. See [consumer recovery](../setu-core/README.md#broker-semantics) for the membership lifecycle and restart behavior.
 
 ## File retention
 

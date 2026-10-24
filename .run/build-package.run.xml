@@ -4,6 +4,7 @@
             <option name="myGeneralSettings">
                 <MavenGeneralSettings>
                     <option name="mavenHomeTypeForPersistence" value="WRAPPER" />
+                    <option name="mavenHome" value="Use Maven wrapper" />
                 </MavenGeneralSettings>
             </option>
             <option name="myRunnerSettings">

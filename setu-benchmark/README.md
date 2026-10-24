@@ -90,7 +90,7 @@ HDR histograms retain produce, fetch, acknowledgement and scheduled-completion l
 
 Baseline, target, sustained and steady measurements report unmet performance expectations as warnings by default, while retaining measured values and failures. Baseline/target/sustained results retain their unqualified status; steady reports missed scheduled records separately from delivered records. CI passes completed expectation misses and retains the captures. Crashes, nonzero worker exits, timeouts, request errors, zero producer/consumer progress and incomplete or invalid captures still fail. `--report-only` selects this policy explicitly; `--strict` opts into failing on unmet performance expectations.
 
-Measured JFR stages now include `file_force_count`, `file_force_total_ms`, `file_force_p99_ms` and `file_force_max_ms`. New recordings enable every `jdk.FileForce` event with a zero threshold. Each call's elapsed wait is clipped to the measured interval, excluding warmup and cleanup; concurrent calls are summed separately, so total wait can exceed the stage duration. These are elapsed durability-barrier times, including any scheduling delay during the call. Older recordings can omit fast events, and older summaries without these metrics display `unavailable`. Reports retain the latency components separately so force waits can be compared with produce and scheduled-completion p99. Wait metrics are diagnostic and have no additional qualification threshold.
+Measured JFR stages include `file_force_count`, `file_force_total_ms`, `file_force_p99_ms` and `file_force_max_ms`. New recordings enable every `jdk.FileForce` event with a zero threshold. Each call's elapsed wait is clipped to the measured interval, excluding warmup and cleanup; concurrent calls are summed separately, so total wait can exceed the stage duration. These are elapsed durability-barrier times, including any scheduling delay during the call. Older recordings can omit fast events, and older summaries without these metrics display `unavailable`. Reports retain the latency components separately so force waits can be compared with produce and scheduled-completion p99. Wait metrics are diagnostic and have no additional qualification threshold.
 
 ## Isolated steady throughput
 
@@ -128,15 +128,7 @@ Direct Maven runs do not impose an OS CPU quota. Target defaults are 256 MiB mem
 
 `FILE` measures the production Chronicle Queue 2026.6 adapter directly. It uses JDK mapped-file/channel forces, rather than counting OpenHFT's no-op native Windows sync as durable completion. See [storage guarantees and migration](../setu-storage/README.md).
 
-The 15 October local Windows/NTFS diagnostic used Java 26.0.2.1, eight active processors without an OS CPU quota, 128 MiB heap, 1 KiB records, 256-record batches, JFR, five-second warmup and ten-second stages. All five stages completed without request errors, but results were **unqualified**; half-load p99 exceeded the 10 ms gate.
-
-| Chronicle FILE stage | Pairs | Actual produce/s | p99 ms | Consume ratio |
-| --- | ---: | ---: | ---: | ---: |
-| Unpaced ramp | 1 | 35,404.8 | 12.812 | 0.9928 |
-| Unpaced ramp | 2 | 54,604.8 | 15.884 | 0.9981 |
-| 100% of measured knee | 2 | 54,579.2 | 47.055 scheduled | 1.0005 |
-
-This was substantially slower than the former custom backend on that host; it does not establish attainment of the 250K/s target. The local capture is `logs/benchmarks/sustained/FILE-84f90463-3003-4c54-ab33-beaa184afa6f/worker.log`, with JFR alongside it. Reproduce through `SustainedThroughputBenchmarkTests#file` using `setu.benchmark.cpu.cores=8`, `setu.benchmark.heap.mib=128`, `setu.benchmark.max.concurrency=2`, `setu.benchmark.stage.millis=10000`, `setu.benchmark.warmup.millis=5000` and `setu.benchmark.jfr=true`.
+Use the resource-enforced profiles above to measure this adapter on the intended deployment filesystem. Record the source revision, JDK, host/resource budget, filesystem/media, payload and batch sizes, warmup, measurement duration, repetitions and qualification failures with each published result. Local smoke captures and results from other storage engines do not establish Chronicle Queue capacity. The [main README](../README.md#performance) links CI-maintained results and their qualification status.
 
 ## CI and reports
 
@@ -144,11 +136,9 @@ This was substantially slower than the former custom backend on that host; it do
 
 `scripts/diagnostics/StorageForceProbe.java` measures two mapped writers with full and data-only barriers at any supplied disk path, independently of broker work. Compile it with Java 26 and run `io.setu.storage.log.StorageForceProbe <directory>` with `@config/jvm.options -Xms64m -Xmx128m -XX:ActiveProcessorCount=2`; use the same OS resource limits when comparing it with a baseline. The probe preserves offered-load backlog and rejects RAM filesystems. It diagnoses a storage path; it does not qualify or replace the full benchmark.
 
-An experimental private disk-backed journal improved a [short probe](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39010874823), but **failed the [complete FILE baseline](https://github.com/RishabhRathi-Dev/Setu/actions/runs/39011113017)**. That environment change was removed. The baseline retains the original runner, temp directory, resource limits and qualification criteria; unmet performance expectations now produce warnings and reports.
-
 The optional `trace_file_waits` workflow dispatch runs only the original FILE baseline while sampling worker kernel stacks, per-thread scheduler counters, cgroup CPU/memory/I/O counters and disk statistics. The observer's CPU use is recorded. This is an instrumented investigation run, not evidence that an implementation fix has qualified; the other workflow jobs are intentionally skipped.
 
-Combine it with `trace_storage_only` to trace the short broker-free storage probe instead. Both modes retain their JFR/kernel counters and preserve the normal baseline configuration. The investigation includes an original-runner nine-window passing control and a separate reproduction of 252–361 ms barriers inside kernel writeback/journal waits; those results do not establish a general hosted fix.
+Combine it with `trace_storage_only` to trace the short broker-free storage probe instead. Both modes retain their JFR/kernel counters and preserve the normal baseline configuration. Use these captures to investigate storage stalls; qualification still requires the complete resource-enforced benchmark.
 
 Default-branch publication validates source revision, resources, timing, durability and all measured JFR stages before updating JSON, SVG badges and the [main README](../README.md#performance). Missing captures are labeled incomplete. Older workflows cannot overwrite newer source measurements. `render-benchmark-badges.py` regenerates images/links from committed snapshots; legacy historical sections are optional and remain separate when present.
 

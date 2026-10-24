@@ -22,7 +22,7 @@ Setu is under active development. It runs as one broker process, with no replica
 - **Embedded security:** mTLS identities, default-deny exact ACLs, and per-principal request/byte quotas.
 - **Measured behavior:** functional TCP/mTLS tests, recovery and chaos checks, and benchmark reports that retain qualification failures.
 
-**Watch a guarantee survive failure:** run `python examples/recovery-demo/run.py` with JDK 26 and Python 3.10+. The [recovery demo](examples/recovery-demo/README.md) drops a committed transaction reply, retries, checkpoints, forcibly terminates the broker, and verifies one output and the recovered input offset. It saves logs, metrics and environment evidence in a fresh local directory.
+The [recovery demo](examples/recovery-demo/README.md) exercises transaction retries and process-crash recovery. Run `python examples/recovery-demo/run.py` with JDK 26 and Python 3.10+. It drops a committed transaction reply, retries, checkpoints, forcibly terminates the broker, and verifies one output and the recovered input offset. Logs, metrics and environment evidence are saved in a fresh local directory.
 
 ## Contents
 
@@ -165,7 +165,7 @@ CI also runs Windows functional tests and [a source security gate](.github/workf
 | [setu-core/](setu-core/README.md) | Broker API, topics, partitions, membership, and protocol codec |
 | [setu-storage/](setu-storage/README.md) | Partition logs, group commit, recovery, and migration |
 | [setu-server/](setu-server/README.md) | TCP transports, secure dispatch, standalone launcher, and AOT |
-| [setu-client/](setu-client/README.md) | Synchronous Java client, plaintext and TLS |
+| [setu-client/](setu-client/README.md) | Synchronous and bounded async Java clients, plaintext and TLS |
 | [setu-security/](setu-security/README.md) | Authentication, exact ACLs, certificates, and quotas |
 | [setu-integration-tests/](setu-integration-tests/README.md) | Functional verification over real sockets |
 | [setu-benchmark/](setu-benchmark/README.md) | Throughput, latency, JFR, crash recovery, and chaos |
@@ -194,7 +194,7 @@ The [PostgreSQL outbox/inbox adapter](docs/postgres-outbox.md) supports transact
 
 Reference targets are **500,000 records/s in memory** and **250,000 records/s durable**, with 1 KiB records. These are qualification goals. A completed run must also satisfy consumption, latency, CPU, heap, and error criteria. A smoke run or an unqualified result does not establish sustained capacity.
 
-The [benchmark guide](setu-benchmark/README.md) documents reproducible profiles, strict/report-only policies, host budgets, and JFR interpretation. It also records a local Windows Chronicle diagnostic of approximately 55K durable records/s, which did not qualify. Results from the former custom storage engine do not qualify Chronicle Queue.
+The [benchmark guide](setu-benchmark/README.md) documents reproducible profiles, strict/report-only policies, host budgets, and JFR interpretation. Results from a different storage engine do not qualify Chronicle Queue.
 
 The generated blocks below retain their source revision, host information, and qualification status. Read them against that revision rather than as measurements of the current checkout; CI refreshes them after new runs.
 

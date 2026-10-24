@@ -1,7 +1,5 @@
 # Architecture
 
-Metadata persistence is split into `BrokerJournal` (generation I/O and locking), `BrokerCheckpoint` (versioned snapshot codec), `ProducerLedger` (sequencing/fencing) and `BrokerState` (state types). `DefaultBroker` owns request semantics and lock ordering. [Checkpoint publication](journal-checkpoints.md) preserves the latest producer results and committed group progress without retaining historical payloads indefinitely. The server's optional [operations endpoint](observability.md) exposes bounded metrics through a broker decorator; core and storage remain independent of HTTP.
-
 Setu is a single-process broker. A topic contains numbered partition logs; each partition assigns dense, monotonically increasing offsets to opaque byte-array records. Clients choose the topic, partition, and fetch offset. Ordering is per partition, with no global ordering across partitions.
 
 This guide describes the implementation in the repository. [Core](../setu-core/README.md), [storage](../setu-storage/README.md), and [server](../setu-server/README.md) document the underlying contracts.
@@ -25,13 +23,15 @@ flowchart TD
 
 | Layer | Main types | Owns |
 | --- | --- | --- |
-| Client | `SetuClient` | Serialized request/response exchanges, correlation IDs, TLS hostname verification |
+| Client | `SetuClient`, `AsyncSetuClient` | Serialized exchanges per connection, bounded async pooling, correlation IDs, TLS hostname verification |
 | Transport | `TcpServer`, `SelectorTcpServer`, `FramedConnectionHandler` | Connections, framing, buffer admission, write deadlines |
 | Policy / dispatch | `SecuredRequestProcessor`, `BrokerRequestHandler` | Identity/ACL/quota checks and protocol-to-broker dispatch |
 | Broker | `DefaultBroker` | Topics, partition lookup, explicit membership, acknowledgements, long-poll coordination |
 | Log | `MessageLog`, `MessageLogs` | Logical offsets, immutable values, append/read interface |
 | Durable engine | `GroupCommitMessageLog`, `ChronicleMessageLog`, `ChronicleFileSync` | Bounded write admission, Chronicle documents, force boundary, recovery |
 | Memory engine | `InMemoryMessageLog`, `MemoryLogBudget` | Immutable chunk publication and accounted retained-memory admission |
+
+Metadata persistence is split into `BrokerJournal` (generation I/O and locking), `BrokerCheckpoint` (versioned snapshot codec), `ProducerLedger` (sequencing/fencing) and `BrokerState` (state types). `DefaultBroker` owns request semantics and lock ordering. [Checkpoint publication](journal-checkpoints.md) preserves the latest producer results and committed group progress without retaining historical payloads indefinitely. The server's optional [operations endpoint](observability.md) exposes bounded metrics through a broker decorator; core and storage remain independent of HTTP.
 
 ## Request path
 
@@ -113,7 +113,7 @@ File members start at zero; memory members start at the current partition end. A
 
 In memory mode, retained prefixes are reclaimed through the slowest registered member across groups. Leaving or expiry removes that retention claim. When no members remain, records can be reclaimed immediately, including after append. Join before producing records that must be consumed. Logical offsets keep increasing after reclamation.
 
-Consumer metadata defaults to 10,000 active members and 100,000 summed partition memberships. Group/member IDs are bounded to 4 KiB UTF-8. There is no independent committed-offset map or empty group map: memberless commits validate the boundary without retaining state.
+Consumer metadata defaults to 10,000 active members and 100,000 summed partition memberships. Group/member IDs are bounded to 4 KiB UTF-8. Explicit membership owns its acknowledged offsets; managed groups retain partition offsets after members depart. Separate admission limits bound retained managed groups and their partition offsets. Memberless commits validate the boundary without retaining state.
 
 Maintenance checks consumer deadlines every 10 ms. The defaults are 30 seconds for outstanding acknowledgements and 60 seconds of inactivity. Expired consumers must rejoin. Timed memory expiry can additionally discard old records regardless of progress; it is disabled by default and can yield `OFFSET_OUT_OF_RANGE`.
 

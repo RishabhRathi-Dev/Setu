@@ -31,7 +31,7 @@ The transaction couples one broker output partition and one input offset. It doe
 python examples/recovery-demo/run.py --skip-build --contention
 ```
 
-This compares two ordinary writers, two identified writers, and one of each, on separate partitions. Each writer defaults to 20 warmup operations and 100 measured synchronous single-record operations with 1 KiB records. Use `--warmup` and `--operations` to change these counts. JSON lines report elapsed time, completion throughput, per-writer p99 and aggregate broker gate wait. The current fair broker-wide write gate remains in place to preserve transaction visibility; the diagnostic makes the resulting cross-partition contention measurable before redesigning it.
+This compares two ordinary writers, two identified writers, and one of each, on separate partitions. Each writer defaults to 20 warmup operations and 100 measured synchronous single-record operations with 1 KiB records. Use `--warmup` and `--operations` to change these counts. JSON lines report elapsed time, completion throughput, per-writer p99 and aggregate broker gate wait. The fair broker-wide write gate preserves transaction visibility; the diagnostic measures contention between writers on different partitions.
 
 The probe allows 30 seconds for warmup and 90 seconds per measured writer; the runner allows 300 seconds overall. Large samples or slow durable storage may exceed these bounds and exit nonzero. Partial output and errors remain in `result.txt`. The small default sample is a functional diagnostic; its p99 is not a stable tail-latency estimate.
 

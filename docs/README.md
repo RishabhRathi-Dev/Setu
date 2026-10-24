@@ -19,6 +19,7 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | --- | --- |
 | [Architecture](architecture.md) | Module dependencies, request flow, persistence, consumers, and backpressure |
 | [Configuration](configuration.md) | Every standalone property, defaults, validation, and runtime controls |
+| [IntelliJ development](intellij.md) | Shared run/debug profiles, examples, JUnit suites, Maven builds, and debugger attachment |
 | [Journal checkpoints](journal-checkpoints.md) | Compaction publication, fencing, recovery and upgrade compatibility |
 | [Observability](observability.md) | Loopback readiness, bounded metrics and contention diagnostics |
 | [Operations](operations.md) | Packaging, startup, logs, shutdown, recovery, migration, and troubleshooting |
@@ -36,7 +37,7 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | Core | [Broker semantics and protocol v1](../setu-core/README.md) |
 | Storage | [Durability, ownership, recovery, and legacy migration](../setu-storage/README.md) |
 | Server | [Transports, secure embedding, admission, and AOT](../setu-server/README.md) |
-| Client | [Java API, errors, TLS, and consumer progress](../setu-client/README.md) |
+| Client | [Synchronous and async Java APIs, errors, TLS, and consumer progress](../setu-client/README.md) |
 | Security | [Certificate identities, exact ACLs, and quotas](../setu-security/README.md) |
 | Integration tests | [Functional socket and mTLS coverage](../setu-integration-tests/README.md) |
 | Benchmarks | [Profiles, qualification criteria, and JFR interpretation](../setu-benchmark/README.md) |

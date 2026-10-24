@@ -3,7 +3,9 @@
         <module name="setu-security" />
         <option name="TEST_OBJECT" value="package" />
         <option name="PACKAGE_NAME" value="io.setu.security" />
-        <option name="SEARCH_SCOPE" value="singleModule" />
+        <option name="TEST_SEARCH_SCOPE">
+            <value defaultName="singleModule" />
+        </option>
         <option name="VM_PARAMETERS" value="@config/jvm.options -javaagent:&quot;$MAVEN_REPOSITORY$/org/mockito/mockito-core/5.24.0/mockito-core-5.24.0.jar&quot;" />
         <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
         <method v="2">

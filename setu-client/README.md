@@ -1,6 +1,6 @@
 # setu-client
 
-`SetuClient` is the synchronous Java client for Setu protocol v1. It supports plaintext and TLS/mTLS, shares codecs with [setu-core](../setu-core/README.md#protocol-v1), and uses [setu-security](../setu-security/README.md) for TLS configuration.
+This module provides `SetuClient` for synchronous exchanges and `AsyncSetuClient` for bounded asynchronous requests over pooled connections. Both support Setu protocol v1 over plaintext and TLS/mTLS, share codecs with [setu-core](../setu-core/README.md#protocol-v1), and use [setu-security](../setu-security/README.md) for TLS configuration.
 
 ## Add to a Maven application
 

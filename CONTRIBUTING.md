@@ -15,6 +15,8 @@ Use [SUPPORT.md](SUPPORT.md) for usage questions and bug-report requirements. Re
 3. Install Python 3.10+ for benchmark tooling and report tests; they use the standard library.
 4. Import the root `pom.xml` into your IDE. IDE settings and generated artifacts remain local.
 
+IntelliJ users can use the checked-in [run and debug configurations](docs/intellij.md) under `.run/`. The profiles cover both storage modes and transports, examples, JUnit debugging, and Maven verification; personal `.idea/` settings remain ignored.
+
 Ordinary build and functional checks run on Windows, Linux, and macOS. Resource-enforced benchmark profiles require Linux/WSL with systemd and cgroup v2. All commands below run from the repository root; substitute `bash ./mvnw` for `.\mvnw.cmd` on Linux/macOS.
 
 Confirm the toolchain before building:
