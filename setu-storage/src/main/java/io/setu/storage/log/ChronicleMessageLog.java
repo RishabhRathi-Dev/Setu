@@ -14,7 +14,6 @@ import net.openhft.chronicle.queue.impl.single.SingleChronicleQueue;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
 
 import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -183,11 +182,10 @@ public final class ChronicleMessageLog implements MessageLog {
                             }
                             bytes.writeLong(CHECKSUM_FORMAT).writeLong(first + start).writeInt(end - start)
                                     .writeInt((int) writeChecksum.getValue());
-                            var output = new DataOutputStream(bytes.outputStream());
                             for (int i = start; i < end; i++) {
                                 MessageValue value = owned.get(i);
                                 bytes.writeInt(value.length());
-                                value.writeTo(output);
+                                value.writeTo(bytes);
                             }
                         } catch (Throwable failure) { document.rollbackOnClose(); throw failure; }
                     }

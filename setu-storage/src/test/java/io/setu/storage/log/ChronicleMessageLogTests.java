@@ -28,6 +28,30 @@ class ChronicleMessageLogTests {
     @TempDir Path directory;
     private static final long BLOCK_BYTES = 64L << 20;
 
+    @Test void slicedFramePayloadsSurviveDocumentSplitsAndReopen() throws Exception {
+        byte[] source = new byte[2 * 1024 * 1024 + 97];
+        new java.util.Random(42).nextBytes(source);
+        var frame = MessageValue.Frame.readFrom(new java.io.DataInputStream(
+                new java.io.ByteArrayInputStream(source)), source.length);
+        var values = List.of(frame.valueAt(19, 1024 * 1024 + 3), MessageValue.empty(),
+                frame.valueAt(7, 65539), frame.valueAt(source.length - 1024, 1024),
+                frame.valueAt(31, 1024 * 1024));
+        var expected = values.stream().map(MessageValue::copy).toList();
+        try (var log = new ChronicleMessageLog(directory, 2 * 1024 * 1024, BLOCK_BYTES)) {
+            assertEquals(0, log.appendValues(values));
+        }
+        try (var log = new ChronicleMessageLog(directory, 2 * 1024 * 1024, BLOCK_BYTES)) {
+            assertEquals(values.size(), log.nextOffset());
+            var records = log.read(0, source.length * 2);
+            assertEquals(values.size(), records.size());
+            for (int i = 0; i < records.size(); i++) {
+                assertEquals(i, records.get(i).offset());
+                assertArrayEquals(expected.get(i), records.get(i).value());
+            }
+            assertArrayEquals(source, frame.copy());
+        }
+    }
+
     @Test void preservesDenseOffsetsPayloadBudgetsAndImmutableSnapshotsAfterReopen() throws Exception {
         var expected = new ArrayList<byte[]>();
         for (int i = 0; i < 2500; i++) {
