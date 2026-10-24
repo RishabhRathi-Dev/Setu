@@ -1,0 +1,16 @@
+<component name="ProjectRunConfigurationManager">
+    <configuration default="false" name="Broker - MEMORY blocking (19094)" type="Application" folderName="Setu - Brokers" factoryName="Application">
+        <option name="MAIN_CLASS_NAME" value="io.setu.server.SetuServerMain" />
+        <module name="setu-server" />
+        <option name="VM_PARAMETERS" value="@config/jvm.options -Dsetu.log.level=DEBUG" />
+        <option name="PROGRAM_PARAMETERS" value="--config config/intellij/memory-blocking.properties" />
+        <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+        <envs>
+            <env name="SETU_LOG_DIR" value="logs/intellij/memory-blocking" />
+        </envs>
+        <shortenClasspath name="ARGS_FILE" />
+        <method v="2">
+            <option name="Make" enabled="true" />
+        </method>
+    </configuration>
+</component>

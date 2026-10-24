@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+    <configuration default="false" name="Test - core" type="JUnit" folderName="Setu - Debug tests" factoryName="JUnit">
+        <module name="setu-core" />
+        <option name="TEST_OBJECT" value="package" />
+        <option name="PACKAGE_NAME" value="io.setu.core" />
+        <option name="SEARCH_SCOPE" value="singleModule" />
+        <option name="VM_PARAMETERS" value="@config/jvm.options" />
+        <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+        <method v="2">
+            <option name="Make" enabled="true" />
+        </method>
+    </configuration>
+</component>

@@ -1,0 +1,34 @@
+<component name="ProjectRunConfigurationManager">
+    <configuration default="false" name="Verify - Production and TCP-mTLS tests" type="MavenRunConfiguration" folderName="Setu - Build and verification" factoryName="Maven">
+        <MavenSettings>
+            <option name="myGeneralSettings">
+                <MavenGeneralSettings>
+                    <option name="mavenHomeTypeForPersistence" value="WRAPPER" />
+                </MavenGeneralSettings>
+            </option>
+            <option name="myRunnerSettings">
+                <MavenRunnerSettings>
+                    <option name="jreName" value="#USE_PROJECT_JDK" />
+                    <option name="skipTests" value="false" />
+                </MavenRunnerSettings>
+            </option>
+            <option name="myRunnerParameters">
+                <MavenRunnerParameters>
+                    <option name="workingDirPath" value="$PROJECT_DIR$" />
+                    <option name="multiModuleDir" value="$PROJECT_DIR$" />
+                    <option name="pomFileName" value="pom.xml" />
+                    <option name="resolveToWorkspace" value="false" />
+                    <option name="goals">
+                        <list>
+                            <option value="-pl" />
+                            <option value="setu-integration-tests" />
+                            <option value="-am" />
+                            <option value="test" />
+                        </list>
+                    </option>
+                </MavenRunnerParameters>
+            </option>
+        </MavenSettings>
+        <method v="2" />
+    </configuration>
+</component>

@@ -1,0 +1,16 @@
+<component name="ProjectRunConfigurationManager">
+    <configuration default="false" name="Example - Quickstart - MEMORY selector (19095)" type="Application" folderName="Setu - Examples" factoryName="Application">
+        <option name="MAIN_CLASS_NAME" value="com.sun.tools.javac.launcher.SourceLauncher" />
+        <module name="setu-server" />
+        <option name="VM_PARAMETERS" value="@config/jvm.options -Dsetu.log.level=DEBUG" />
+        <option name="PROGRAM_PARAMETERS" value="examples/SetuQuickstart.java 127.0.0.1 19095" />
+        <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+        <envs>
+            <env name="SETU_LOG_DIR" value="logs/intellij/examples" />
+        </envs>
+        <shortenClasspath name="ARGS_FILE" />
+        <method v="2">
+            <option name="Make" enabled="true" />
+        </method>
+    </configuration>
+</component>
