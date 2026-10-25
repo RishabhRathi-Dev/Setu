@@ -35,6 +35,8 @@ The generated `target/setu-server.aot` is used automatically in strict mode. Reg
 
 ## Transports and lifecycle
 
+The [container guide](../docs/containers.md) covers the source-built JDK 26 image, persistent FILE broker service, health checks and a Compose override for the LGTM stack. The image runs Java as a non-root user and loads the same JVM options as direct launches.
+
 | Transport | Behavior |
 | --- | --- |
 | `TcpServer` / `transport=blocking` | Platform acceptor, virtual thread per connection; supports plaintext and embedded TLS/mTLS |
@@ -104,7 +106,7 @@ The secure path completes TLS and authenticates the client before protocol proce
 
 After authorization, quotas charge one message per protocol request and the request-body byte count. A batch counts as one request. Denied operations do not reach the broker. Grants and quota registrations remain process-local. FILE consumer metadata recovers from the broker journal; IN_MEMORY metadata is volatile. Managed, identified and transactional command grants are specified in the [transaction security contract](../docs/transactions.md#security-and-verification).
 
-Both transports preserve immutable frame ownership through built-in dispatch. Embedded plaintext pipelines should pass `BrokerRequestHandler` directly or use `RequestProcessor.plaintext(handler)`. Functional byte-array handlers remain supported through defensive compatibility copies. Shared framing and protocol details are in [protocol v1](../setu-core/README.md#protocol-v1).
+Both transports preserve immutable frame ownership through built-in dispatch. Embedded plaintext pipelines should pass `BrokerRequestHandler` directly or use `RequestProcessor.plaintext(handler)`. Functional byte-array handlers remain supported through defensive compatibility copies. Shared framing and protocol details are in [protocol](../setu-core/README.md#protocol).
 
 ## Admission and failure behavior
 
@@ -142,5 +144,7 @@ Tests cover framing, dispatch, selector multiplexing, TLS/mTLS, authorization, q
 ## Operations and distributions
 
 `operations.port=-1` disables the optional HTTP endpoint; `0..65535` binds `/metrics` and `/ready` on 127.0.0.1. See [metric definitions and embedding](../docs/observability.md). `journal.compact.bytes=67108864` triggers FILE metadata checkpointing; zero disables the automatic trigger. See [checkpoint publication and compatibility](../docs/journal-checkpoints.md).
+
+The [LGTM setup](../docs/observability.md#local-lgtm-stack) collects broker, transport and JVM metrics into Mimir and optional OTLP logs/traces into Loki/Tempo, with a provisioned Grafana dashboard. `BrokerRequestHandler` creates dispatch spans through the OpenTelemetry API; export requires an external Java agent or an embedding application's SDK. A tracer can be injected through its two-argument constructor. The protocol requires [trace-context fields](../setu-core/README.md#request-trace-context) on every request, propagating W3C parents and vendor state from clients; empty or invalid parents start fresh roots. Propagation cannot be disabled. Trace context grants no permissions and does not bypass authentication, ACLs or quotas. In embedding applications, pass the listener's `operationalGauges` supplier to the four-argument `OperationsServer` constructor to include connection/buffer metrics.
 
 After packaging, `python scripts/package-distribution.py` creates a versioned ZIP with adjacent runtime libraries, launchers, configuration and SHA-256 manifests. `python scripts/verify-distribution.py` verifies hashes and runs the shipped launcher from an extracted temporary directory. [Distribution CI](../.github/workflows/distribution.yml) exercises the recovery demo and distribution on Windows and Linux.

@@ -59,7 +59,7 @@ On startup, Setu validates committed documents and rebuilds its logical-offset i
 
 For a consistent offline copy, stop the broker cleanly and copy the complete data root, including `@consumer-state/`, metadata and all partition files. Active-file snapshot/backup coordination is not implemented. Restore into a separate root with one owner, use a compatible application/JDK, and verify recovered topics, records, memberships and acknowledged offsets before switching applications. File consumer state recovers with fresh inactivity deadlines; ACLs and quotas must be recreated by applications. The consumer journal supports [automatic metadata checkpoints](journal-checkpoints.md); include its CURRENT pointer and selected generation in the offline copy and do not downgrade a checkpointed directory. Monitor its disk usage and recovery time. New writes use checksummed format 2, which older binaries cannot read; preserve a pre-upgrade backup if rollback is required.
 
-Older length-prefixed `.log` partitions require the [offline migration procedure](../setu-storage/README.md#migrating-existing-data). Import into a new, nonexistent directory outside the source root; the importer preserves the source. Verify the import before changing `data.dir`.
+Older length-prefixed `.log` partitions require the [offline migration procedure](../setu-storage/README.md#migrating-existing-data). Import into a new, nonexistent directory outside the original data directory; the importer preserves the source. Verify the import before changing `data.dir`.
 
 Monitor disk space: daily roll and mapping block size do not cap disk usage. Set `file.retention.millis` to enable automatic age-based pruning of completed daily files; zero disables it. Cleanup runs at startup and every minute and always keeps the newest populated file, including on idle partitions. Age is measured from the end of a daily cycle, so individual records can remain up to an extra day plus the sweep delay. Consumer acknowledgements do not delay expiry. Fetching expired data returns `OFFSET_OUT_OF_RANGE` with the earliest retained offset. Cleanup briefly pauses partition I/O while releasing mappings and reopening the queue. Deletion failures are logged and retried on later sweeps. Preserve `.setu-retention` alongside queue files in backups; do not manually delete or edit it. There is no supported online topic-deletion API. A durable success means the local force boundary completed; it does not provide replication or protection against a failed device. Lost replies can leave writes with uncertain outcomes.
 
@@ -125,6 +125,8 @@ Use the corresponding Bash launcher on Linux/macOS. Training generates `setu-ser
 On the tested JDK, Chronicle's module flags disable AOT class linking; shared application classes still load from the cache. JIT compilation remains responsible for native application code. See [the server guide](../setu-server/README.md#standalone-jar) for training and CI details.
 
 ## Metrics and packaged distributions
+
+The [container guide](containers.md) describes the Docker image and Compose services, persistent data/log volumes, SIGTERM grace period, health checks and the LGTM override.
 
 Enable `operations.port` for the read-only loopback [metrics/readiness endpoint](observability.md). Normal logging defaults to INFO; DEBUG request diagnostics are opt-in.
 

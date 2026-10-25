@@ -16,6 +16,18 @@
     </properties>
 
     <dependencies>
+        <!-- API only: no exporter or background threads unless an embedding SDK/agent installs them. -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <version>${opentelemetry.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
+            <version>${opentelemetry.version}</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.rishabh</groupId>
             <artifactId>setu-core</artifactId>

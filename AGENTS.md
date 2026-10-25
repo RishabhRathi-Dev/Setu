@@ -96,7 +96,7 @@ Maven's own JVM flags are in [.mvn/jvm.config](.mvn/jvm.config). Surefire and th
 
 - Cross-cutting guides live under [docs/](docs/README.md); subsystem contracts live beside their module. Update both when a change crosses boundaries.
 - Configuration changes must update `SetuServerMain`, `config/server.properties`, [docs/configuration.md](docs/configuration.md), and affected examples/guides together.
-- Protocol changes must update codec validation, public client/server behavior, tests, and the [protocol reference](setu-core/README.md#protocol-v1).
+- Protocol changes must update codec validation, public client/server behavior, tests, and the [protocol reference](setu-core/README.md#protocol).
 - Keep Windows and Bash entry points aligned. Preserve LF in shell scripts and CRLF in `.cmd` files as defined in [.gitattributes](.gitattributes).
 - `benchmark-badges/` contains tracked CI evidence, not disposable generated builds. Do not replace it with invented or stale performance claims.
 - Preserve exactly one start/end pair for each root README marker: `benchmark-metrics-badges`, `benchmark-target-diagnostics`, and `benchmark-capacity-details`. Publication scripts own their contents; put manual prose outside them.

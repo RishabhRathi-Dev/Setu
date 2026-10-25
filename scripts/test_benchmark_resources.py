@@ -4,6 +4,8 @@ from pathlib import Path
 import sys
 import signal
 import json
+import math
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -18,6 +20,31 @@ class ResourceBudgetTests(unittest.TestCase):
     def host(self, cores=12, available=16 * resources.GIB):
         return dict(available_cpu_cores=cores, memory_available_bytes=available,
                     filesystem_free_bytes=100 * resources.GIB, affinity=list(range(int(cores))))
+
+    def test_docker_defaults_match_rounded_file_ci_baseline(self):
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        argv = ['run-benchmarks', '--kind', 'baseline', '--measurement', 'full', '--storage-mode', 'FILE',
+                '--payload-sizes', '1024', '--data-directory', str(Path(__file__).parent), '--dry-run']
+        with patch.object(resources, 'detect_host', return_value=self.host()), \
+             patch.object(sys, 'argv', argv), patch('builtins.print') as output:
+            resources.main()
+        budget = json.loads(output.call_args.args[0].split(' ', 1)[1])['budget']
+        root = Path(__file__).resolve().parents[1]
+        compose = (root / 'compose.yaml').read_text(encoding='utf-8')
+        cpus = int(re.search(r'^    cpus: (\d+)$', compose, re.M).group(1))
+        self.assertEqual(math.ceil(budget['cpu_cores']), cpus)
+        for setting in ('mem_limit', 'memswap_limit'):
+            gib = int(re.search(rf'^    {setting}: (\d+)g$', compose, re.M).group(1))
+            self.assertEqual(math.ceil(budget['memory_bytes'] / resources.GIB), gib)
+        for source in (compose, (root / 'Dockerfile').read_text(encoding='utf-8')):
+            self.assertIn(f'-Xmx{math.ceil(budget["heap_mib"])}m', source)
+            self.assertIn(f'-XX:MaxDirectMemorySize={math.ceil(budget["direct_mib"])}m', source)
+            self.assertIn(f'-XX:ActiveProcessorCount={cpus}', source)
+            self.assertIn('-Xms64m', source)
+        properties = (root / 'docker' / 'server.properties').read_text(encoding='utf-8')
+        retained = int(re.search(r'^memory.log.max.bytes=(\d+)$', properties, re.M).group(1))
+        self.assertEqual(budget['memory_log_bytes'], retained)
 
     def test_baseline_has_fixed_envelope_and_reports_expectations_by_default(self):
         old_handler = signal.getsignal(signal.SIGTERM)

@@ -14,6 +14,10 @@ The source of defaults and accepted keys is [SetuServerMain.java](../setu-server
 
 The optional operations listener uses `operations.port=-1` (disabled), or `0..65535` to bind on 127.0.0.1. Zero selects an ephemeral port. It serves read-only `/metrics` and `/ready`; see [observability](observability.md). It does not change the broker plaintext/TLS boundary.
 
+The [LGTM walkthrough](observability.md#local-lgtm-stack) supplies a dedicated development properties file, host-local Alloy scraping and optional OpenTelemetry Java agent configuration. OTLP export and sampling use the agent's `otel.*` settings, not broker properties. The standard launcher keeps export disabled unless an SDK/agent is installed. Logs include `trace_id` and `span_id` when the agent supplies trace context.
+
+The [container profile](containers.md) uses existing broker properties from `docker/server.properties`: TCP binds to container interfaces, FILE data goes to `/var/lib/setu`, and operations stays on loopback port 9093. Compose supplies process resource limits and JVM/agent environment settings without adding broker property names.
+
 | Property | Default | Meaning / validation |
 | --- | --- | --- |
 | `bind.host` | `127.0.0.1` | Local bind address |

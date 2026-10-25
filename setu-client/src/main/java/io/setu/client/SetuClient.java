@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Synchronous Setu protocol v1 client. Calls on one instance are serialized. */
+/** Synchronous Setu protocol client with W3C trace propagation. Calls on one instance are serialized. */
 public final class SetuClient implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(SetuClient.class);
     private final Socket socket;
@@ -37,6 +37,7 @@ public final class SetuClient implements AutoCloseable {
     private final AtomicInteger correlationIds = new AtomicInteger();
     private final ProtocolCodec.ProduceBatchEncoder batchEncoder = new ProtocolCodec.ProduceBatchEncoder();
     private final ProtocolCodec.ResponseReader responseReader = new ProtocolCodec.ResponseReader();
+    private io.opentelemetry.api.trace.Tracer tracer = io.opentelemetry.api.GlobalOpenTelemetry.getTracer("io.setu.client");
 
     private SetuClient(Socket socket, int maxFrameSize) throws IOException {
         if (maxFrameSize < 0) throw new IllegalArgumentException("maxFrameSize must be non-negative");
@@ -113,8 +114,19 @@ public final class SetuClient implements AutoCloseable {
     }
 
     public synchronized BrokerResponse request(BrokerRequest request) throws IOException {
-        return exchange(request.command(), request.correlationId(), request.topic(), request.partition(),
-                request.offset(), ProtocolCodec.encodeRequest(request));
+        try (var telemetry = new ClientTelemetry(tracer, request.command(), request.traceContext())) {
+            var traced = request.withTraceContext(telemetry.propagation());
+            var response = exchange(request.command(), request.correlationId(), request.topic(), request.partition(),
+                    request.offset(), ProtocolCodec.encodeRequest(traced));
+            telemetry.outcome(response.errorCode());
+            return response;
+        }
+    }
+
+    /** Use an embedding SDK's tracer without registering a global SDK. */
+    public synchronized SetuClient withTracer(io.opentelemetry.api.trace.Tracer tracer) {
+        this.tracer = Objects.requireNonNull(tracer, "tracer");
+        return this;
     }
 
     private synchronized BrokerResponse exchange(Command command, int correlation, String topic, int partition,
@@ -167,8 +179,12 @@ public final class SetuClient implements AutoCloseable {
     /** Writes a contiguous batch; the response offset is the first assigned offset. */
     public synchronized BrokerResponse produceBatch(String topic, int partition, List<byte[]> values) throws IOException {
         int correlation = nextId();
-        return exchange(Command.PRODUCE_BATCH, correlation, topic, partition, -1,
-                batchEncoder.encode(correlation, topic, partition, values));
+        try (var telemetry = new ClientTelemetry(tracer, Command.PRODUCE_BATCH, io.setu.core.protocol.TraceContext.NONE)) {
+            var response = exchange(Command.PRODUCE_BATCH, correlation, topic, partition, -1,
+                    batchEncoder.encode(correlation, topic, partition, values, telemetry.propagation()));
+            telemetry.outcome(response.errorCode());
+            return response;
+        }
     }
 
     public BrokerResponse fetch(String topic, int partition, long offset, int maxBytes) throws IOException {

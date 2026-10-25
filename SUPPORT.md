@@ -5,6 +5,7 @@ Use the [quickstart](README.md#quick-start) to verify your local setup. The [doc
 | Need | Start here |
 | --- | --- |
 | Build or start the broker | [Quickstart](README.md#quick-start) and [operations](docs/operations.md) |
+| Build or run the Docker image | [Containers, resource limits and publication](docs/containers.md) |
 | Understand a property or default | [Configuration reference](docs/configuration.md) |
 | Diagnose errors, timeouts, or missing records | [Troubleshooting](docs/operations.md#logs-and-diagnosis) and [client behavior](setu-client/README.md) |
 | Understand durability or retention | [Storage guide](setu-storage/README.md) and [retention timeline](docs/operations.md#file-retention-timeline) |

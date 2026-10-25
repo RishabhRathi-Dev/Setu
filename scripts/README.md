@@ -66,3 +66,7 @@ The suites cover resource planning/enforcement, parser validation, sustained/tar
 ## Distribution and source quality
 
 `python scripts/check-source.py` checks tracked/new source formatting without dependencies. The compiler treats selected empty-statement, fallthrough, finally and override warnings as errors. `python scripts/package-distribution.py` packages a built server into a versioned ZIP and SHA-256 manifests. `python scripts/verify-distribution.py` checks hashes and exercises the launcher from an extracted temporary directory. Distribution CI runs these checks and the [recovery demo](../examples/recovery-demo/README.md) on Linux and Windows.
+
+`python scripts/check-docs.py` validates repository Markdown file links, heading anchors and the three generated root README marker pairs. It ignores example links inside fenced code blocks and leaves remote URL availability to the owning service.
+
+`python scripts/verify-container.py --image setu:local` exercises a built Docker image with the packaged Java client, verifies health and durable records after restart, and retains logs/inspection results under `target/container-smoke/`. Docker Engine must run Linux containers. The tool creates and removes only uniquely named test containers and volumes; existing application data is untouched. [Container CI](../.github/workflows/container.yml) runs it before retaining or publishing the image. See [container setup](../docs/containers.md) for defaults and registry use.

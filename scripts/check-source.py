@@ -4,7 +4,8 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SUFFIXES = {".java", ".py", ".sh", ".xml", ".yml", ".yaml", ".properties", ".ps1"}
+SUFFIXES = {".java", ".py", ".sh", ".xml", ".yml", ".yaml", ".properties", ".ps1", ".alloy"}
+NAMES = {"Dockerfile", ".dockerignore"}
 
 
 def main():
@@ -12,7 +13,7 @@ def main():
     errors = []
     for name in sorted(set(paths)):
         path = ROOT / name
-        if not name or path.suffix not in SUFFIXES or not path.is_file():
+        if not name or (path.suffix not in SUFFIXES and path.name not in NAMES) or not path.is_file():
             continue
         data = path.read_bytes()
         text = data.decode("utf-8")

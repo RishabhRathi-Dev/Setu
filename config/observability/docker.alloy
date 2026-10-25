@@ -1,0 +1,19 @@
+// This container shares the broker's network namespace, so loopback reaches its private operations endpoint.
+prometheus.scrape "setu" {
+  targets = [{
+    "__address__" = "127.0.0.1:9093",
+    "job" = "setu",
+    "instance" = "local-setu",
+    "service_name" = "setu",
+    "service_instance_id" = "local-setu",
+  }]
+  scrape_interval = "5s"
+  scrape_timeout = "3s"
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.remote_write "mimir" {
+  endpoint {
+    url = "http://mimir:9009/api/v1/push"
+  }
+}

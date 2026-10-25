@@ -24,6 +24,8 @@ jobs:
           cache: maven
       - name: Source formatting
         run: python scripts/check-source.py
+      - name: Documentation links and generated markers
+        run: python scripts/check-docs.py
       - name: Build and demonstrate crash recovery
         run: python examples/recovery-demo/run.py
       - name: Package versioned distribution

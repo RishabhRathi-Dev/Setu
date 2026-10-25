@@ -100,7 +100,12 @@ class TlsBrokerIntegrationTests {
                 try { assertEquals(-1, stalled.getInputStream().read()); }
                 catch (java.net.SocketException reset) { /* The OS may report a reset. */ }
             }
-            try (io.setu.client.SetuClient client = io.setu.client.SetuClient.connectTls(
+            var remoteTrace = io.opentelemetry.api.trace.SpanContext.createFromRemoteParent(
+                    "0123456789abcdef0123456789abcdef", "0123456789abcdef",
+                    io.opentelemetry.api.trace.TraceFlags.getSampled(), io.opentelemetry.api.trace.TraceState.getDefault());
+            // A valid parent also propagates through a no-op client tracer over mTLS.
+            try (var traceScope = io.opentelemetry.context.Context.root().with(io.opentelemetry.api.trace.Span.wrap(remoteTrace)).makeCurrent();
+                 io.setu.client.SetuClient client = io.setu.client.SetuClient.connectTls(
                     "localhost", port, clientTls, tlsContexts,
                     5_000, 5_000, 16 * 1024 * 1024)) {
                 assertEquals(ErrorCode.NONE, client.createTopic("orders", 1).errorCode());

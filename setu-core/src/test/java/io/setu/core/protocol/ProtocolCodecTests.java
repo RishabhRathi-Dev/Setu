@@ -42,7 +42,7 @@ class ProtocolCodecTests {
         assertEquals(request.groupId(), decoded.groupId());
         assertEquals(request.memberId(), decoded.memberId());
         byte[] invalid = ProtocolCodec.encodeProduceBatch(1, "a", 0, java.util.List.of(new byte[0]));
-        invalid[16] = (byte) 0xff;
+        invalid[23] = (byte) 0xff;
         org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class, () -> ProtocolCodec.decodeRequest(invalid));
     }
 
@@ -77,7 +77,7 @@ class ProtocolCodecTests {
             var failure = org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
                     () -> ProtocolCodec.decodeRequest(truncated), "prefix length " + length);
             assertEquals(ErrorCode.BAD_REQUEST, failure.errorCode());
-            if (length >= 12) assertEquals(37, failure.correlationId());
+            if (length >= 11) assertEquals(37, failure.correlationId());
         }
         var decoded = ProtocolCodec.decodeRequest(encoded);
         java.util.Arrays.fill(encoded, (byte) 99);
@@ -142,7 +142,7 @@ class ProtocolCodecTests {
             var failure = org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
                     () -> ProtocolCodec.decodeResponse(truncated), "prefix length " + length);
             assertEquals(ErrorCode.BAD_REQUEST, failure.errorCode());
-            if (length >= 12) assertEquals(23, failure.correlationId());
+            if (length >= 11) assertEquals(23, failure.correlationId());
             var ownedFailure = org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
                     () -> ProtocolCodec.decodeResponse(owned(truncated)), "owned prefix length " + length);
             assertEquals(failure.errorCode(), ownedFailure.errorCode());
@@ -160,20 +160,20 @@ class ProtocolCodecTests {
                 "", -1, java.util.List.of(new ProtocolRecord(7, new byte[]{1, 2, 3})), java.util.Map.of()));
         for (int count : new int[]{-1, 2, 10_001, Integer.MAX_VALUE}) {
             byte[] invalid = encoded.clone();
-            java.nio.ByteBuffer.wrap(invalid).putInt(18, count);
+            java.nio.ByteBuffer.wrap(invalid).putInt(17, count);
             assertBadResponse(invalid);
         }
         for (int length : new int[]{-1, 4, 16 * 1024 * 1024 + 1}) {
             byte[] invalid = encoded.clone();
-            java.nio.ByteBuffer.wrap(invalid).putInt(30, length);
+            java.nio.ByteBuffer.wrap(invalid).putInt(29, length);
             assertBadResponse(invalid);
         }
         byte[] invalidOffset = encoded.clone();
-        java.nio.ByteBuffer.wrap(invalidOffset).putLong(22, -1);
+        java.nio.ByteBuffer.wrap(invalidOffset).putLong(21, -1);
         assertBadResponse(invalidOffset);
         byte[] invalidText = ProtocolCodec.encodeResponse(BrokerResponse.error(23, Command.FETCH,
                 ErrorCode.INTERNAL_ERROR, "x"));
-        invalidText[18] = (byte) 0xff;
+        invalidText[17] = (byte) 0xff;
         assertBadResponse(invalidText);
     }
 
@@ -208,7 +208,7 @@ class ProtocolCodecTests {
     }
 
     @Test
-    void fetchEncodingMatchesV1BytesAndDecodedRecordsOwnTheirPayloads() throws Exception {
+    void fetchEncodingMatchesProtocolBytesAndDecodedRecordsOwnTheirPayloads() throws Exception {
         var logRecord = new io.setu.storage.log.LogRecord(5, new byte[]{0, -1, 2});
         var records = java.util.List.of(new ProtocolRecord(5, logRecord.payload()),
                 new ProtocolRecord(6, new byte[0]));
@@ -218,7 +218,6 @@ class ProtocolCodecTests {
         var expected = new java.io.ByteArrayOutputStream();
         var out = new java.io.DataOutputStream(expected);
         out.writeInt(ProtocolCodec.MAGIC);
-        out.writeByte(ProtocolCodec.VERSION);
         out.writeByte(1);
         out.writeShort(Command.FETCH.id());
         out.writeInt(17);

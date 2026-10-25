@@ -18,7 +18,7 @@ Setu is under active development. It runs as one broker process, with no replica
 - **Two storage modes:** durable daily Chronicle logs with group commit and optional file retention, or bounded memory with consumer-driven reclamation.
 - **Recovery and processing:** managed-group generation fencing, idempotent producers, atomic consume/produce, and checksummed metadata checkpoints.
 - **Java integration:** synchronous and bounded async clients, a PostgreSQL outbox/inbox adapter, and an embeddable broker.
-- **Operations:** optional loopback Prometheus metrics/readiness, automatic journal compaction, and versioned distributions.
+- **Operations:** [Docker and Compose](docs/containers.md), loopback Prometheus metrics/readiness, [LGTM collection and propagated request traces](docs/observability.md), automatic journal compaction, and packaged distributions.
 - **Embedded security:** mTLS identities, default-deny exact ACLs, and per-principal request/byte quotas.
 - **Measured behavior:** functional TCP/mTLS tests, recovery and chaos checks, and benchmark reports that retain qualification failures.
 
@@ -38,6 +38,18 @@ The [recovery demo](examples/recovery-demo/README.md) exercises transaction retr
 - [Help and contributions](#help-and-contributions)
 
 ## Quick start
+
+### Containers
+
+Build and start the broker with JDK 26 included:
+
+```text
+docker compose up --build -d
+```
+
+For Grafana, Loki, Tempo, Mimir and Alloy, use `docker compose -f compose.yaml -f compose.lgtm.yaml up --build -d`. [Container setup](docs/containers.md) covers client examples inside the image, CI-aligned resource limits, persistent storage, health checks and the [published-image workflow](.github/workflows/container.yml).
+
+The native setup follows for development with a host JDK.
 
 ### 1. Build and start the broker
 
@@ -86,7 +98,7 @@ To use Setu in an application, [install the client modules locally and add the M
 flowchart LR
     app[Java application] --> client[SetuClient]
     client --> transport["TCP transport<br/>Blocking or selector"]
-    transport --> framing["Frame admission<br/>and protocol v1"]
+    transport --> framing["Frame admission<br/>and protocol"]
     framing --> dispatch[Request dispatch]
     dispatch --> broker[DefaultBroker]
     broker --> topics["Topics and partitions<br/>Consumer progress"]
@@ -98,7 +110,7 @@ flowchart LR
 
 Transport manages sockets and buffer admission; core owns protocol and broker semantics; storage maps logical offsets to physical records. The embedded secure server authenticates connections and authorizes requests before dispatch. The standalone properties launcher serves plaintext.
 
-The [architecture guide](docs/architecture.md) includes module dependencies, a durable-write sequence, consumer lifecycle, backpressure, and restart behavior. The [wire reference](setu-core/README.md#protocol-v1) describes framing and command IDs.
+The [architecture guide](docs/architecture.md) includes module dependencies, a durable-write sequence, consumer lifecycle, backpressure, and restart behavior. The [wire reference](setu-core/README.md#protocol) describes framing and command IDs.
 
 ## Messaging and storage
 

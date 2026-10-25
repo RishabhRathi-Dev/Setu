@@ -1,0 +1,35 @@
+name: setu
+services:
+  setu:
+    image: ${SETU_IMAGE:-setu:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:9092:9092"
+    environment:
+      JDK_JAVA_OPTIONS: "-Xms64m -Xmx128m -XX:MaxDirectMemorySize=128m -XX:ActiveProcessorCount=2"
+    volumes:
+      - setu-data:/var/lib/setu
+      - setu-logs:/var/log/setu
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Fixed FILE CI baseline: ceil(1.6) CPUs, 5 GiB memory, no swap.
+    cpus: 2
+    mem_limit: 5g
+    memswap_limit: 5g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 60s
+    restart: unless-stopped
+volumes:
+  setu-data:
+  setu-logs:
