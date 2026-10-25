@@ -36,14 +36,27 @@ Compose mounts persistent named volumes at `/var/lib/setu` and `/var/log/setu`, 
 
 The image health check runs a small compiled Java probe against `http://127.0.0.1:9093/ready`. It requires HTTP 200 and the exact readiness body, with bounded connection/read timeouts; redirects fail. It does not attach the telemetry agent to the probe JVM. `docker compose ps` shows health. A failed health check alone does not trigger Compose's restart policy; process exits do. Stop sends SIGTERM directly to the broker, with a 60-second grace period for draining accepted storage work. Increase that period for deployments with longer shutdown requirements.
 
-To generate traffic without installing Java on the host, copy and run the existing example inside the broker container:
+To generate traffic without installing Java on the host, stream the existing example into the broker's writable `/tmp` mount. Use the command for your shell:
+
+**PowerShell**
+
+```powershell
+Get-Content -Raw examples/SetuQuickstart.java | docker compose exec -T setu sh -c 'cat > /tmp/SetuQuickstart.java'
+```
+
+**Bash**
+
+```bash
+docker compose exec -T setu sh -c 'cat > /tmp/SetuQuickstart.java' < examples/SetuQuickstart.java
+```
+
+Then run the example (PowerShell and Bash):
 
 ```text
-docker compose cp examples/SetuQuickstart.java setu:/tmp/SetuQuickstart.java
 docker compose exec setu java '@/opt/setu/config/jvm.options' -cp '/opt/setu/lib/*' /tmp/SetuQuickstart.java 127.0.0.1 9092
 ```
 
-The example checks broker error codes, produces two records and acknowledges them. It can be rerun; offsets increase in FILE storage. Single quotes in these commands work in PowerShell and Bash.
+The example checks broker error codes, produces two records and acknowledges them. It can be rerun; offsets increase in FILE storage. Single quotes in these commands work in PowerShell and Bash. `docker cp` cannot upload to this read-only container root filesystem; streaming through `exec` writes inside the running container's writable tmpfs. Repeat the transfer after a container restart, which clears `/tmp`.
 
 ## Published image
 
@@ -78,7 +91,7 @@ The image contains the pinned OpenTelemetry Java agent **2.33.0**. The LGTM over
 
 Alloy **1.21.2** shares the broker's network namespace with `network_mode: service:setu`, scraping **127.0.0.1:9093** and remote-writing to **http://mimir:9009/api/v1/push**. It waits for broker health before starting. This keeps the operations listener private and works without host networking or a native Alloy installation. Alloy's queue data uses its own persistent volume. The observability UI/exporter ports remain bound to host loopback by the included development Compose file.
 
-For traffic, use the same `cp`/`exec` commands above with `-f compose.yaml -f compose.lgtm.yaml`. See [observability](observability.md) for query meanings, sampling, request trace propagation and correlation. The separately documented host-broker/native-Alloy setup remains available; do not run it alongside this stack on the same host ports. This Compose stack is a local development setup, not a production LGTM installation.
+For traffic, use the same transfer and `exec` commands above with `-f compose.yaml -f compose.lgtm.yaml`. See [observability](observability.md) for query meanings, sampling, request trace propagation and correlation. The separately documented host-broker/native-Alloy setup remains available; do not run it alongside this stack on the same host ports. This Compose stack is a local development setup, not a production LGTM installation.
 
 ## Configuration and lifecycle
 

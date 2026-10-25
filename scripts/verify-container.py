@@ -10,8 +10,9 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def docker(*args, timeout=180):
-    result = subprocess.run(["docker", *args], cwd=ROOT, text=True, capture_output=True, timeout=timeout)
+def docker(*args, timeout=180, input_text=None):
+    result = subprocess.run(["docker", *args], cwd=ROOT, text=True, encoding="utf-8", input=input_text,
+                            capture_output=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError(f"docker {' '.join(args)} failed:\n{result.stdout}{result.stderr}")
     return result.stdout + result.stderr if args[0] == "logs" else result.stdout
@@ -74,7 +75,10 @@ def main():
                     raise RuntimeError(f"Broker failed graceful shutdown: {stopped}")
                 docker("start", name)
                 wait_healthy(name)
-            docker("cp", str(ROOT / "docker" / "ContainerSmoke.java"), f"{name}:/tmp/ContainerSmoke.java")
+            # Write through the running container's mount namespace into its writable tmpfs.
+            # Docker's archive-copy API rejects writes when the root filesystem is read-only.
+            docker("exec", "-i", name, "sh", "-c", "cat > /tmp/ContainerSmoke.java",
+                   input_text=(ROOT / "docker" / "ContainerSmoke.java").read_text(encoding="utf-8"))
             output = docker("exec", name, "java", "@/opt/setu/config/jvm.options", "-cp", "/opt/setu/lib/*",
                             "/tmp/ContainerSmoke.java", phase)
             (output_directory / f"{phase}.log").write_text(output, encoding="utf-8")
