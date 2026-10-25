@@ -4,6 +4,8 @@ FILE brokers checkpoint consumer and producer metadata after 64 MiB of journal p
 
 The checkpoint contains active explicit memberships, retained managed groups and offsets, exact assignment generations, and the latest producer/partition epoch, sequence, fingerprint and result offset. It excludes payload history, fetched positions and wall-clock liveness. The current journal tail retains complete transaction payloads until the next successful checkpoint. Topics retain their independent storage/retention policy. Producer and group capacity limits still apply; compaction does not expire identities or weaken fencing.
 
+Request trace context is transient transport metadata. It is stripped from consumer-state and transaction journal records and from producer fingerprints; changing trace IDs between retries does not change the identified operation. Checkpoints do not retain trace parents or vendor state. Journal request records and canonical producer requests use the same protocol with both trace fields empty.
+
 ## Publication protocol
 
 1. Acquire the broker transaction write gate, then the broker metadata monitor. This excludes requests and membership maintenance. Completed transactional writes have already forced their output.

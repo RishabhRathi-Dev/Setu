@@ -92,7 +92,8 @@ public final class SetuServerMain {
             try (AutoCloseable server = blocking != null ? blocking : selector;
                  var operations = operationsPort < 0 ? null : new io.setu.server.observability.OperationsServer(
                          new InetSocketAddress("127.0.0.1", operationsPort), metrics,
-                         () -> blocking != null ? blocking.isRunning() : selector.isRunning())) {
+                         () -> blocking != null ? blocking.isRunning() : selector.isRunning(),
+                         () -> blocking != null ? blocking.operationalGauges() : selector.operationalGauges())) {
                 if (blocking != null) blocking.start(); else selector.start();
                 CountDownLatch stopped = new CountDownLatch(1);
                 Thread shutdown = new Thread(() -> {

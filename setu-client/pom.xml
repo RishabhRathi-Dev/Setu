@@ -13,6 +13,11 @@
 
     <dependencies>
         <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <version>${opentelemetry.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.rishabh</groupId>
             <artifactId>setu-core</artifactId>
             <version>${project.version}</version>

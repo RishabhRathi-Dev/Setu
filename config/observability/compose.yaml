@@ -1,0 +1,24 @@
+# Local development backends. Use host-local Alloy or the root Compose override to scrape broker loopback.
+name: setu-observability
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.37.0
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:4318:4318"
+    volumes:
+      - lgtm-data:/data
+      - ./datasources.yaml:/otel-lgtm/grafana/conf/provisioning/datasources/setu.yaml:ro
+      - ./dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/setu.yaml:ro
+      - ./setu-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/setu/overview.json:ro
+  mimir:
+    image: grafana/mimir:3.2.2
+    command: ["-config.file=/etc/mimir.yaml"]
+    ports:
+      - "127.0.0.1:9009:9009"
+    volumes:
+      - ./mimir.yaml:/etc/mimir.yaml:ro
+      - mimir-data:/data
+volumes:
+  lgtm-data:
+  mimir-data:

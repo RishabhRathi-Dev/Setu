@@ -41,6 +41,7 @@ public final class AsyncSetuClient implements AutoCloseable {
 
     public CompletableFuture<BrokerResponse> request(BrokerRequest request) {
         Objects.requireNonNull(request, "request");
+        var submissionContext = io.opentelemetry.context.Context.current();
         var future = new CompletableFuture<BrokerResponse>();
         pending.add(future);
         future.whenComplete((response, failure) -> pending.remove(future));
@@ -51,7 +52,7 @@ public final class AsyncSetuClient implements AutoCloseable {
         try {
             executor.execute(() -> {
                 if (future.isDone()) return;
-                try { future.complete(exchange(request)); }
+                try (var scope = submissionContext.makeCurrent()) { future.complete(exchange(request)); }
                 catch (IOException | RuntimeException failure) { future.completeExceptionally(failure); }
             });
         } catch (RejectedExecutionException failure) {

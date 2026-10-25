@@ -1,0 +1,36 @@
+# Combine with compose.yaml. Includes the existing development LGTM backends without duplicating them.
+include:
+  - path: ./config/observability/compose.yaml
+services:
+  setu:
+    environment:
+      JAVA_TOOL_OPTIONS: >-
+        -javaagent:/opt/setu/otel/opentelemetry-javaagent.jar
+        -Dotel.javaagent.configuration-file=/opt/setu/config/observability/otel-agent.properties
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
+      OTEL_SERVICE_NAME: setu
+      OTEL_RESOURCE_ATTRIBUTES: service.instance.id=local-setu,deployment.environment.name=development
+    depends_on:
+      lgtm:
+        condition: service_started
+  alloy:
+    image: grafana/alloy:v1.21.2
+    # Scrape 127.0.0.1:9093 inside the broker's namespace; no public operations listener is needed.
+    network_mode: service:setu
+    command:
+      - run
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./config/observability/docker.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      setu:
+        condition: service_healthy
+        restart: true
+      mimir:
+        condition: service_started
+    restart: unless-stopped
+volumes:
+  alloy-data:

@@ -1,0 +1,5 @@
+# Pull the CI-published image; use with compose.yaml and `up --no-build`.
+services:
+  setu:
+    image: ${SETU_IMAGE:-ghcr.io/rishabhrathi-dev/setu:latest}
+    pull_policy: always

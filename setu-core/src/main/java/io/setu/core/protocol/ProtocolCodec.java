@@ -18,10 +18,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Binary Setu protocol v1 codec. Frame boundaries are provided by setu-server. */
+/** Binary Setu protocol codec. Every request carries trace-context fields. */
 public final class ProtocolCodec {
     public static final int MAGIC = 0x53455455; // SETU
-    public static final int VERSION = 1;
+    private static final int HEADER_BYTES = 11;
+    private static final int COMMAND_OFFSET = 5;
+    private static final int CORRELATION_OFFSET = 7;
     private static final int REQUEST = 0;
     private static final int RESPONSE = 1;
     private static final int MAX_STRING_BYTES = 4_096;
@@ -55,7 +57,7 @@ public final class ProtocolCodec {
             // The copying decoder also handles an unexpected FETCH safely before the client
             // rejects its command: none of its records can reference the scratch buffer.
             ByteBuffer cursor = ByteBuffer.wrap(buffer, 0, length);
-            int correlation = length >= 12 ? cursor.getInt(8) : -1;
+            int correlation = length >= HEADER_BYTES ? cursor.getInt(CORRELATION_OFFSET) : -1;
             return decodeResponse(cursor, correlation, null);
         }
 
@@ -65,7 +67,7 @@ public final class ProtocolCodec {
 
     /** Copies caller payloads directly into their final wire frame. */
     public static byte[] encodeProduceBatch(int correlation, String topic, int partition, List<byte[]> values) throws IOException {
-        return encodeProduceBatch(correlation, topic, partition, values, null);
+        return encodeProduceBatch(correlation, topic, partition, values, null, TraceContext.NONE);
     }
 
     /**
@@ -77,7 +79,12 @@ public final class ProtocolCodec {
         private byte[] buffer;
 
         public byte[] encode(int correlation, String topic, int partition, List<byte[]> values) throws IOException {
-            return encodeProduceBatch(correlation, topic, partition, values, this);
+            return encode(correlation, topic, partition, values, TraceContext.NONE);
+        }
+
+        public byte[] encode(int correlation, String topic, int partition, List<byte[]> values,
+                             TraceContext traceContext) throws IOException {
+            return encodeProduceBatch(correlation, topic, partition, values, this, traceContext);
         }
 
         private byte[] allocate(int size) {
@@ -91,7 +98,7 @@ public final class ProtocolCodec {
     }
 
     private static byte[] encodeProduceBatch(int correlation, String topic, int partition,
-                                             List<byte[]> values, ProduceBatchEncoder encoder) throws IOException {
+                                             List<byte[]> values, ProduceBatchEncoder encoder, TraceContext traceContext) throws IOException {
         requireTopic(topic);
         if (correlation < 0 || partition < 0) throw bad("correlation and partition must be non-negative", correlation);
         List<byte[]> snapshot = List.copyOf(values);
@@ -101,9 +108,13 @@ public final class ProtocolCodec {
         for (byte[] value : snapshot) payloadBytes += value.length;
         if (payloadBytes > MAX_BATCH_BYTES) throw bad("produce batch exceeds maximum bytes", correlation);
         byte[] name = topic.getBytes(StandardCharsets.UTF_8);
-        int size = Math.toIntExact(24L + name.length + 4L * snapshot.size() + payloadBytes);
+        int traceBytes = 8 + traceContext.traceparent().length() + traceContext.tracestate().length();
+        int size = Math.toIntExact(HEADER_BYTES + 12L + name.length + 4L * snapshot.size() + payloadBytes + traceBytes);
         ByteBuffer out = ByteBuffer.wrap(encoder == null ? new byte[size] : encoder.allocate(size));
-        out.putInt(MAGIC).put((byte) VERSION).put((byte) REQUEST).putShort((short) Command.PRODUCE_BATCH.id()).putInt(correlation);
+        out.putInt(MAGIC).put((byte) REQUEST).putShort((short) Command.PRODUCE_BATCH.id()).putInt(correlation);
+        byte[] parent = traceContext.traceparent().getBytes(StandardCharsets.US_ASCII);
+        byte[] state = traceContext.tracestate().getBytes(StandardCharsets.US_ASCII);
+        out.putInt(parent.length).put(parent).putInt(state.length).put(state);
         out.putInt(name.length).put(name).putInt(partition).putInt(snapshot.size());
         for (byte[] value : snapshot) out.putInt(value.length).put(value);
         return out.array();
@@ -112,11 +123,11 @@ public final class ProtocolCodec {
     public static byte[] encodeRequest(BrokerRequest request) throws IOException {
         validateRequest(request);
         int capacity = 32;
-        if (request.command() == Command.PRODUCE) capacity = 24 + request.topic().length() + request.valueLength();
+        if (request.command() == Command.PRODUCE) capacity = HEADER_BYTES + 12 + request.topic().length() + request.valueLength();
         if (request.command() == Command.PRODUCE_BATCH || request.command() == Command.PRODUCE_IDEMPOTENT
                 || request.command() == Command.TRANSACT || request.command() == Command.PRODUCE_CONFIGURED) {
             // Validated topic names are ASCII; the complete batch is already bounded to 14 MiB.
-            capacity = 24 + request.topic().length();
+            capacity = HEADER_BYTES + 12 + request.topic().length();
             for (int i = 0; i < request.valueCount(); i++) capacity += Integer.BYTES + request.valueLengthAt(i);
             if (request.command() == Command.PRODUCE_CONFIGURED) capacity++;
             if (request.command() == Command.PRODUCE_IDEMPOTENT || request.command() == Command.TRANSACT)
@@ -128,9 +139,12 @@ public final class ProtocolCodec {
                         + commit.topic().length();
             }
         }
+        capacity += 8 + request.traceContext().traceparent().length() + request.traceContext().tracestate().length();
         EncodingBuffer bytes = new EncodingBuffer(capacity);
         DataOutputStream out = new DataOutputStream(bytes);
         writeHeader(out, REQUEST, request.command(), request.correlationId());
+        writeString(out, request.traceContext().traceparent());
+        writeString(out, request.traceContext().tracestate());
         switch (request.command()) {
             case PRODUCE -> {
                 writeString(out, request.topic());
@@ -205,7 +219,7 @@ public final class ProtocolCodec {
     /** Immutable transport-owned frames can be retained by storage without copying payloads. */
     public static BrokerRequest decodeRequest(MessageValue.Frame frame) throws ProtocolException {
         ByteBuffer cursor = frame.cursor();
-        int correlation = cursor.remaining() >= 12 ? cursor.getInt(8) : -1;
+        int correlation = cursor.remaining() >= HEADER_BYTES ? cursor.getInt(CORRELATION_OFFSET) : -1;
         return decodeRequest(cursor, correlation, frame);
     }
 
@@ -213,6 +227,8 @@ public final class ProtocolCodec {
         try {
             Header header = readHeader(in, REQUEST);
             correlation = header.correlationId;
+            TraceContext trace = new TraceContext(readString(in, null, TraceContext.MAX_FIELD_BYTES),
+                    readString(in, null, TraceContext.MAX_FIELD_BYTES));
             BrokerRequest request = switch (header.command) {
                 case PRODUCE -> new BrokerRequest(correlation, header.command, readString(in, frame), in.getInt(),
                         -1, -1, readValue(in, frame), 0, null, null, List.of(), 0);
@@ -230,7 +246,7 @@ public final class ProtocolCodec {
             };
             if (in.hasRemaining()) throw bad("Trailing bytes in request", correlation);
             validateRequest(request);
-            return request;
+            return trace.isEmpty() ? request : request.withTraceContext(trace);
         } catch (ProtocolException e) {
             throw e;
         } catch (BufferBudget.Exhausted e) {
@@ -409,7 +425,7 @@ public final class ProtocolCodec {
     public static byte[] encodeResponse(BrokerResponse response) throws IOException {
         if (response.errorCode() == ErrorCode.NONE && response.command() == Command.FETCH)
             return encodeFetchResponse(response);
-        long size = 18L + response.errorMessage().getBytes(StandardCharsets.UTF_8).length;
+        long size = HEADER_BYTES + 6L + response.errorMessage().getBytes(StandardCharsets.UTF_8).length;
         if (response.errorCode() == ErrorCode.NONE) {
             if (response.command() == Command.PRODUCE || response.command() == Command.PRODUCE_BATCH
                     || response.command() == Command.FETCH_OFFSET || response.command() == Command.PRODUCE_IDEMPOTENT
@@ -456,12 +472,12 @@ public final class ProtocolCodec {
         byte[] message = response.errorMessage().getBytes(StandardCharsets.UTF_8);
         if (message.length > MAX_STRING_BYTES)
             throw new IOException("String field exceeds " + MAX_STRING_BYTES + " bytes");
-        long required = 22L + message.length;
+        long required = HEADER_BYTES + 10L + message.length;
         for (ProtocolRecord record : response.records()) required += 12L + record.valueLength();
         if (required > Integer.MAX_VALUE) throw new IOException("Fetch response is too large to encode");
         ResponseBuffers.reserve(required);
         ByteBuffer output = ByteBuffer.allocate((int) required);
-        output.putInt(MAGIC).put((byte) VERSION).put((byte) RESPONSE)
+        output.putInt(MAGIC).put((byte) RESPONSE)
                 .putShort((short) response.command().id()).putInt(response.correlationId())
                 .putShort((short) response.errorCode().id()).putInt(message.length).put(message)
                 .putInt(response.records().size());
@@ -479,7 +495,7 @@ public final class ProtocolCodec {
     /** Decodes immutable slices; retaining a record also retains its response frame. */
     public static BrokerResponse decodeResponse(MessageValue.Frame frame) throws ProtocolException {
         ByteBuffer cursor = frame.cursor();
-        int correlation = cursor.remaining() >= 12 ? cursor.getInt(8) : -1;
+        int correlation = cursor.remaining() >= HEADER_BYTES ? cursor.getInt(CORRELATION_OFFSET) : -1;
         return decodeResponse(cursor, correlation, frame);
     }
 
@@ -569,7 +585,6 @@ public final class ProtocolCodec {
 
     private static void writeHeader(DataOutputStream out, int kind, Command command, int correlation) throws IOException {
         out.writeInt(MAGIC);
-        out.writeByte(VERSION);
         out.writeByte(kind);
         out.writeShort(command.id());
         out.writeInt(correlation);
@@ -577,9 +592,6 @@ public final class ProtocolCodec {
 
     private static Header readHeader(ByteBuffer in, int expectedKind) throws IOException {
         if (in.getInt() != MAGIC) throw bad("Invalid protocol magic", -1);
-        int version = Byte.toUnsignedInt(in.get());
-        if (version != VERSION) throw new ProtocolException(ErrorCode.UNSUPPORTED_VERSION,
-                "Unsupported protocol version: " + version);
         if (Byte.toUnsignedInt(in.get()) != expectedKind) throw bad("Unexpected message kind", -1);
         Command command = Command.fromId(Short.toUnsignedInt(in.getShort()));
         int correlation = in.getInt();
@@ -613,8 +625,12 @@ public final class ProtocolCodec {
     }
 
     private static String readString(ByteBuffer in, MessageValue.Frame frame) throws IOException {
+        return readString(in, frame, MAX_STRING_BYTES);
+    }
+
+    private static String readString(ByteBuffer in, MessageValue.Frame frame, int maxBytes) throws IOException {
         int length = in.getInt();
-        if (length < 0 || length > MAX_STRING_BYTES || length > in.remaining())
+        if (length < 0 || length > maxBytes || length > in.remaining())
             throw new IOException("Invalid byte field length: " + length);
         if (length == 0) return "";
         // Topics and most group/member identifiers are ASCII. Decode them directly while
@@ -656,11 +672,11 @@ public final class ProtocolCodec {
     }
 
     private static HeaderParts extractHeader(byte[] payload) {
-        if (payload == null || payload.length < 12) return new HeaderParts(Command.METADATA, 0);
+        if (payload == null || payload.length < HEADER_BYTES) return new HeaderParts(Command.METADATA, 0);
         ByteBufferReader reader = new ByteBufferReader(payload);
         int magic = reader.intAt(0);
-        int commandId = reader.unsignedShortAt(6);
-        int correlation = reader.intAt(8);
+        int commandId = reader.unsignedShortAt(COMMAND_OFFSET);
+        int correlation = reader.intAt(CORRELATION_OFFSET);
         Command command = Command.METADATA;
         if (magic == MAGIC) {
             try { command = Command.fromId(commandId); }

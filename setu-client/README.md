@@ -1,6 +1,6 @@
 # setu-client
 
-This module provides `SetuClient` for synchronous exchanges and `AsyncSetuClient` for bounded asynchronous requests over pooled connections. Both support Setu protocol v1 over plaintext and TLS/mTLS, share codecs with [setu-core](../setu-core/README.md#protocol-v1), and use [setu-security](../setu-security/README.md) for TLS configuration.
+This module provides `SetuClient` for synchronous exchanges and `AsyncSetuClient` for bounded asynchronous requests over pooled connections. Both use the Setu protocol with mandatory trace-context fields over plaintext and TLS/mTLS, share codecs with [setu-core](../setu-core/README.md#protocol), and use [setu-security](../setu-security/README.md) for TLS configuration.
 
 ## Add to a Maven application
 
@@ -89,7 +89,7 @@ The connection factory arguments are host, port, connect timeout, read timeout a
 
 Every request receives a correlation ID; responses must match both command and correlation. Broker denials return `BrokerResponse.errorCode()` rather than automatically throwing. Socket, framing, decoding and response-matching failures throw exceptions, close the socket, and permanently invalidate the connection. Subsequent calls fail locally; create a new client explicitly. Normal broker error responses keep the connection reusable. The client does not retry or reconnect; a failed produce can still have an uncertain outcome.
 
-Calls on one instance are serialized. Another thread can call `close()` to close the socket and cancel a blocked read or write, including when the read timeout is zero. Codec buffers are cleared under the request lock after socket cancellation. `produceBatch` requires a nonempty batch within the [protocol limits](../setu-core/README.md#protocol-v1); offsets follow list order. Durable acknowledgements follow the broker's [force boundary](../setu-storage/README.md#durability-and-recovery).
+Calls on one instance are serialized. Another thread can call `close()` to close the socket and cancel a blocked read or write, including when the read timeout is zero. Codec buffers are cleared under the request lock after socket cancellation. `produceBatch` requires a nonempty batch within the [protocol limits](../setu-core/README.md#protocol); offsets follow list order. Durable acknowledgements follow the broker's [force boundary](../setu-storage/README.md#durability-and-recovery).
 
 Batch encoding copies caller bytes into the final wire frame. Fetched records share immutable slices of their response frame; `value()` returns a defensive copy. Keeping one slice can keep the complete frame alive. Copy values when retaining only a small subset for a long time.
 
@@ -158,6 +158,18 @@ The keyed overload queries and caches immutable topic partition counts, routing 
 ## Managed and transactional APIs
 
 `joinManagedGroup` / `groupAssignment` return generation-bearing assignments; pass the generation to the managed fetch/acknowledgement overloads. `produceIdempotent` takes `ProducerIdentity`; `transact` additionally takes `ConsumerCommit`. `produceBatch(..., AcknowledgementMode)` selects default durable completion or weaker queue admission. FILE-only producer/transaction/group semantics, sequencing responsibilities, retry limits, ACL grants and runnable API examples are in [managed groups and transactions](../docs/transactions.md). `AsyncSetuClient` provides typed idempotent/transactional methods as well as `request` for the other commands.
+
+## Distributed request tracing
+
+Each synchronous wire attempt creates an OpenTelemetry `CLIENT` span under the caller's current context and injects W3C `traceparent`/`tracestate` into the [required request fields](../setu-core/README.md#request-trace-context). The server's `SERVER` span becomes its remote child, allowing caller, client and broker operations to appear in one Tempo trace. Sample flags and valid vendor state propagate. All APIs, including the scratch batch encoder, use this path. Uninstrumented requests still carry both fields with empty values when no valid context exists.
+
+The client includes only the stable OpenTelemetry API. Use the external Java agent or your application's SDK to record/export spans. `client.withTracer(sdk.getTracer("application"))` supplies a tracer without installing a global SDK. If the application only supplies an active valid span context, the no-op client API can forward that parent even without recording its own span. No SDK, exporter threads or vendor backend is installed by the library.
+
+`AsyncSetuClient` captures the submitting context before scheduling, restores it on pooled workers, and keeps keyed metadata lookup and routed writes under that context. Each permitted retry creates a separate client attempt span under the same caller. Request completion/error paths restore the previous context; connections do not retain a request's trace context.
+
+Propagation is mandatory and has no disable option. All requests use the same format. Structured broker errors are never retried. Ordinary writes still have uncertain outcomes and are never retried automatically. Client exception spans do not attach exception messages or payloads.
+
+Explicit `BrokerRequest.withTraceContext(...)` supplies the remote parent of that client's attempt. The client injects its new attempt context rather than forwarding a stale parent span ID. Context strings are bounded; oversized vendor state generated by a local SDK is omitted while retaining the trace parent. Baggage, message-level producer-to-consumer propagation and payload mutation are not part of this transport envelope. See the [LGTM guide](../docs/observability.md).
 
 ## Build and verification
 

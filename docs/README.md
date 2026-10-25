@@ -19,9 +19,10 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | --- | --- |
 | [Architecture](architecture.md) | Module dependencies, request flow, persistence, consumers, and backpressure |
 | [Configuration](configuration.md) | Every standalone property, defaults, validation, and runtime controls |
+| [Containers](containers.md) | Broker image builds/publication, CI-aligned limits, persistent Compose service, health checks and a local LGTM stack |
 | [IntelliJ development](intellij.md) | Shared run/debug profiles, examples, JUnit suites, Maven builds, and debugger attachment |
 | [Journal checkpoints](journal-checkpoints.md) | Compaction publication, fencing, recovery and upgrade compatibility |
-| [Observability](observability.md) | Loopback readiness, bounded metrics and contention diagnostics |
+| [Observability](observability.md) | Loopback readiness, broker/transport/JVM metrics, LGTM collection, logs and dispatch traces |
 | [Operations](operations.md) | Packaging, startup, logs, shutdown, recovery, migration, and troubleshooting |
 | [PostgreSQL outbox/inbox](postgres-outbox.md) | Transactional publishing intent, duplicate delivery and database effects |
 | [Managed groups and transactions](transactions.md) | Partition ownership, producer sequencing, atomic consume/produce and acknowledgement modes |
@@ -34,7 +35,7 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 
 | Module | Reference |
 | --- | --- |
-| Core | [Broker semantics and protocol v1](../setu-core/README.md) |
+| Core | [Broker semantics and protocol](../setu-core/README.md) |
 | Storage | [Durability, ownership, recovery, and legacy migration](../setu-storage/README.md) |
 | Server | [Transports, secure embedding, admission, and AOT](../setu-server/README.md) |
 | Client | [Synchronous and async Java APIs, errors, TLS, and consumer progress](../setu-client/README.md) |

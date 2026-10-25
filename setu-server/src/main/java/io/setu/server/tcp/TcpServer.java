@@ -24,6 +24,8 @@ public final class TcpServer implements AutoCloseable {
     private final TcpServerOptions options;
     private final AtomicBoolean running = new AtomicBoolean();
     private final Set<SocketChannel> clients = ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.atomic.LongAdder acceptedConnections = new java.util.concurrent.atomic.LongAdder();
+    private final java.util.concurrent.atomic.LongAdder rejectedConnections = new java.util.concurrent.atomic.LongAdder();
     private volatile ExecutorService connectionExecutor;
 
     private volatile ServerSocketChannel serverChannel;
@@ -71,6 +73,21 @@ public final class TcpServer implements AutoCloseable {
         return running.get();
     }
 
+    public java.util.Map<String, Long> operationalGauges() {
+        var samples = new java.util.HashMap<String, Long>();
+        samples.put("connections_active", (long) clients.size());
+        samples.put("connections_accepted_total", acceptedConnections.sum());
+        samples.put("connections_limit_rejections_total", rejectedConnections.sum());
+        samples.put("connections_max", (long) options.maxConnections());
+        samples.put("request_buffer_max_bytes", options.requestBufferBytes());
+        samples.put("response_buffer_max_bytes", options.responseBufferBytes());
+        if (connectionHandler instanceof io.setu.server.connection.FramedConnectionHandler framed) {
+            samples.put("request_buffer_used_bytes", framed.inFlightRequestBytes());
+            samples.put("response_buffer_used_bytes", framed.inFlightResponseBytes());
+        }
+        return java.util.Map.copyOf(samples);
+    }
+
     /** The actual bound address, useful when binding to port zero. */
     public InetSocketAddress localAddress() {
         ServerSocketChannel channel = serverChannel;
@@ -88,8 +105,10 @@ public final class TcpServer implements AutoCloseable {
         try {
             while (running.get()) {
                 SocketChannel client = serverChannel.accept();
+                acceptedConnections.increment();
                 clients.add(client);
                 if (clients.size() > options.maxConnections()) {
+                    rejectedConnections.increment();
                     log.warn("Connection rejected: active_connections={} max_connections={}", clients.size(), options.maxConnections());
                     clients.remove(client);
                     closeQuietly(client);

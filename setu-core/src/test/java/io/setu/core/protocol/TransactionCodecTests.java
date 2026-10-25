@@ -27,7 +27,7 @@ class TransactionCodecTests {
                 new GroupAssignment(Long.MAX_VALUE, Map.of(3, Long.MAX_VALUE)));
         assertEquals(response, ProtocolCodec.decodeResponse(ProtocolCodec.encodeResponse(response)));
         byte[] encoded = ProtocolCodec.encodeResponse(response);
-        java.nio.ByteBuffer.wrap(encoded).putInt(26, 1025);
+        java.nio.ByteBuffer.wrap(encoded).putInt(25, 1025);
         assertThrows(ProtocolException.class, () -> ProtocolCodec.decodeResponse(encoded));
     }
 

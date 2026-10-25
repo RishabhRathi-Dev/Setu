@@ -48,9 +48,9 @@ class BufferAdmissionTests {
             try (var context = scope.activate()) {
                 assertThrows(BufferBudget.Exhausted.class, () -> ProtocolCodec.encodeResponse(response));
                 ProtocolCodec.encodeResponse(BrokerResponse.ok(1, Command.CREATE_TOPIC));
-                assertEquals(18, budget.usedBytes());
+                assertEquals(17, budget.usedBytes());
             }
-            assertEquals(18, budget.usedBytes(), "socket writer still owns the response after context exit");
+            assertEquals(17, budget.usedBytes(), "socket writer still owns the response after context exit");
         }
         assertEquals(0, budget.usedBytes());
     }

@@ -5,7 +5,7 @@ import io.setu.core.protocol.Command;
 import io.setu.core.protocol.ProtocolCodec;
 import io.setu.security.authorization.Permission;
 
-/** Resolves the resource and least-privilege permission for each v1 broker command. */
+/** Resolves the resource and least-privilege permission for each broker command. */
 public final class ProtocolRequestAuthorizationMetadataResolver implements RequestAuthorizationMetadataResolver {
     @Override
     public RequestAuthorizationMetadata resolve(byte[] request) throws java.io.IOException {

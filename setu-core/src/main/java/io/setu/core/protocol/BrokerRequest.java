@@ -6,7 +6,13 @@ import java.util.List;
 public record BrokerRequest(int correlationId, Command command, String topic, int partition,
                             long offset, int maxBytes, MessageValue payload, int partitionCount,
                             String groupId, String memberId, List<MessageValue> payloads, int waitMillis,
-                            RequestOptions options) {
+                            RequestOptions options, TraceContext traceContext) {
+    public BrokerRequest(int correlationId, Command command, String topic, int partition, long offset, int maxBytes,
+                         MessageValue payload, int partitionCount, String groupId, String memberId,
+                         List<MessageValue> payloads, int waitMillis, RequestOptions options) {
+        this(correlationId, command, topic, partition, offset, maxBytes, payload, partitionCount,
+                groupId, memberId, payloads, waitMillis, options, TraceContext.NONE);
+    }
     public BrokerRequest(int correlationId, Command command, String topic, int partition, long offset, int maxBytes,
                          MessageValue payload, int partitionCount, String groupId, String memberId,
                          List<MessageValue> payloads, int waitMillis) {
@@ -33,6 +39,7 @@ public record BrokerRequest(int correlationId, Command command, String topic, in
         payload = payload == null ? MessageValue.empty() : payload;
         payloads = payloads == null ? List.of() : List.copyOf(payloads);
         options = options == null ? RequestOptions.DEFAULT : options;
+        traceContext = traceContext == null ? TraceContext.NONE : traceContext;
         if (waitMillis < 0 || waitMillis > 30_000) throw new IllegalArgumentException("waitMillis must be 0..30000");
     }
 
@@ -50,12 +57,17 @@ public record BrokerRequest(int correlationId, Command command, String topic, in
 
     public BrokerRequest withWaitMillis(int millis) {
         return new BrokerRequest(correlationId, command, topic, partition, offset, maxBytes, payload,
-                partitionCount, groupId, memberId, payloads, millis, options);
+                partitionCount, groupId, memberId, payloads, millis, options, traceContext);
     }
 
     public BrokerRequest withOptions(RequestOptions updated) {
         return new BrokerRequest(correlationId, command, topic, partition, offset, maxBytes, payload,
-                partitionCount, groupId, memberId, payloads, waitMillis, updated);
+                partitionCount, groupId, memberId, payloads, waitMillis, updated, traceContext);
+    }
+
+    public BrokerRequest withTraceContext(TraceContext context) {
+        return new BrokerRequest(correlationId, command, topic, partition, offset, maxBytes, payload,
+                partitionCount, groupId, memberId, payloads, waitMillis, options, context);
     }
 
     public BrokerRequest withGeneration(long generation) {

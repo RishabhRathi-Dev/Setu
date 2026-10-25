@@ -1,0 +1,45 @@
+# Single-process, filesystem-backed development instance using classic ingestion.
+multitenancy_enabled: false
+target: all
+server:
+  http_listen_port: 9009
+ingest_storage:
+  enabled: false
+distributor:
+  ring:
+    kvstore:
+      store: inmemory
+ingester:
+  ring:
+    instance_addr: 127.0.0.1
+    min_ready_duration: 0s
+    final_sleep: 0s
+    kvstore:
+      store: inmemory
+    replication_factor: 1
+blocks_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/blocks
+  tsdb:
+    dir: /data/tsdb
+  bucket_store:
+    sync_dir: /data/tsdb-sync
+compactor:
+  data_dir: /data/compactor
+  sharding_ring:
+    kvstore:
+      store: inmemory
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+    kvstore:
+      store: inmemory
+ruler_storage:
+  backend: local
+  local:
+    directory: /data/rules
+activity_tracker:
+  filepath: /data/metrics-activity.log
+analytics:
+  reporting_enabled: false

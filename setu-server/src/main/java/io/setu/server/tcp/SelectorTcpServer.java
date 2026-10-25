@@ -28,6 +28,8 @@ public final class SelectorTcpServer implements AutoCloseable {
     private final BufferBudget responses;
     private final AtomicBoolean running = new AtomicBoolean();
     private final Set<Client> clients = ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.atomic.LongAdder acceptedConnections = new java.util.concurrent.atomic.LongAdder();
+    private final java.util.concurrent.atomic.LongAdder rejectedConnections = new java.util.concurrent.atomic.LongAdder();
     private final ConcurrentLinkedQueue<Runnable> completions = new ConcurrentLinkedQueue<>();
     private Selector selector;
     private ServerSocketChannel listener;
@@ -65,6 +67,14 @@ public final class SelectorTcpServer implements AutoCloseable {
     public boolean isRunning() { return running.get(); }
     public long inFlightRequestBytes() { return requests.usedBytes(); }
     public long inFlightResponseBytes() { return responses.usedBytes(); }
+    public java.util.Map<String, Long> operationalGauges() {
+        return java.util.Map.of("connections_active", (long) clients.size(),
+                "connections_accepted_total", acceptedConnections.sum(),
+                "connections_limit_rejections_total", rejectedConnections.sum(),
+                "connections_max", (long) options.maxConnections(),
+                "request_buffer_used_bytes", requests.usedBytes(), "request_buffer_max_bytes", requests.maximumBytes(),
+                "response_buffer_used_bytes", responses.usedBytes(), "response_buffer_max_bytes", responses.maximumBytes());
+    }
     public InetSocketAddress localAddress() {
         if (listener == null || !listener.isOpen()) throw new IllegalStateException("Server has not been started");
         try { return (InetSocketAddress) listener.getLocalAddress(); }
@@ -112,7 +122,8 @@ public final class SelectorTcpServer implements AutoCloseable {
     private void accept() throws IOException {
         SocketChannel channel;
         while ((channel = listener.accept()) != null) {
-            if (clients.size() >= options.maxConnections()) { channel.close(); continue; }
+            acceptedConnections.increment();
+            if (clients.size() >= options.maxConnections()) { rejectedConnections.increment(); channel.close(); continue; }
             BufferBudget.Lease connectionCredit = null;
             try {
                 connectionCredit = requests.reserve(1024);

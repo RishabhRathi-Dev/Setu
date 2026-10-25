@@ -45,7 +45,7 @@ flowchart TD
     admission -->|No| reject[Structured rejection if possible; otherwise close]
     frame --> policy{Embedded secure listener?}
     policy -->|Yes| acl[Authenticated principal: exact ACL and quota checks]
-    policy -->|No| decode[Decode and validate protocol v1]
+    policy -->|No| decode[Decode and validate protocol]
     acl -->|Allowed| decode
     acl -->|Denied| error[Error response]
     decode --> broker[Execute broker operation]
@@ -57,7 +57,7 @@ flowchart TD
 
 Secure connections complete the TLS handshake and certificate authentication before this frame-processing path. Quotas charge one message per request and its frame-body bytes; a produce batch is one quota message. [Command-to-permission mappings](../setu-server/README.md#request-authorization-contract) specify exact resource strings.
 
-Protocol v1 uses a four-byte big-endian body length followed by a 12-byte header: magic, version, request/response kind, command ID, and correlation ID. The codec validates lengths, UTF-8, command fields, and trailing bytes. Replies echo command and correlation and include a structured error code. [The wire reference](../setu-core/README.md#protocol-v1) lists commands and limits; the codec is the field-order authority.
+The protocol uses a four-byte big-endian body length followed by an 11-byte header: magic, request/response kind, command ID, and correlation ID. Every request then carries bounded `traceparent` and `tracestate` strings, with empty values when no trace context exists, followed by command fields. The codec validates lengths, UTF-8, command fields, and trailing bytes. Replies echo command and correlation and include a structured error code. [The wire reference](../setu-core/README.md#protocol) lists commands and limits; the codec is the field-order authority.
 
 ## Durable produce and recovery
 

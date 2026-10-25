@@ -7,6 +7,7 @@ import io.setu.core.protocol.BrokerResponse;
 import io.setu.core.protocol.ErrorCode;
 import io.setu.core.protocol.ProtocolRecord;
 import io.setu.core.protocol.ProtocolCodec;
+import io.setu.core.protocol.TraceContext;
 import io.setu.core.protocol.Command;
 import io.setu.core.protocol.ConsumerCommit;
 import io.setu.core.protocol.GroupAssignment;
@@ -379,6 +380,7 @@ public final class DefaultBroker implements Broker {
     }
 
     private static byte[] canonicalRequest(BrokerRequest request) throws IOException {
+        // Trace context describes a wire attempt, never the producer operation or durable journal contents.
         return ProtocolCodec.encodeRequest(new BrokerRequest(0, request.command(), request.topic(), request.partition(),
                 request.offset(), request.maxBytes(), request.payload(), request.partitionCount(), request.groupId(),
                 request.memberId(), request.payloads(), request.waitMillis(), request.options()));
@@ -853,7 +855,7 @@ public final class DefaultBroker implements Broker {
 
     private void persistConsumer(BrokerRequest request) throws IOException {
         if (consumerJournal != null) {
-            byte[] encoded = ProtocolCodec.encodeRequest(request);
+            byte[] encoded = ProtocolCodec.encodeRequest(request.withTraceContext(TraceContext.NONE));
             try { consumerJournal.append(encoded); }
             catch (LogCapacityExceededException exhausted) {
                 throw new BrokerException(ErrorCode.QUOTA_EXCEEDED, exhausted.getMessage(), exhausted);

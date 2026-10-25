@@ -1,0 +1,19 @@
+// Run natively on the broker host, not in Docker: operations binds to loopback.
+prometheus.scrape "setu" {
+  targets = [{
+    "__address__" = "127.0.0.1:9093",
+    "job" = "setu",
+    "instance" = "local-setu",
+    "service_name" = "setu",
+    "service_instance_id" = "local-setu",
+  }]
+  scrape_interval = "5s"
+  scrape_timeout = "3s"
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.remote_write "mimir" {
+  endpoint {
+    url = "http://127.0.0.1:9009/api/v1/push"
+  }
+}

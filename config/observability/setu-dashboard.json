@@ -1,0 +1,686 @@
+{
+  "uid": "setu-overview",
+  "title": "Setu broker overview",
+  "schemaVersion": 39,
+  "tags": [
+    "setu"
+  ],
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Scrape reachable",
+      "description": "0 means Alloy cannot scrape the broker. Missing data can mean the collector is down.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"setu\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Broker and transport ready",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "setu_ready{job=\"setu\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Broker requests / second",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (command) (rate(setu_requests_total{job=\"setu\",instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{command}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Broker errors / second",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (command,error) (rate(setu_requests_total{job=\"setu\",instance=~\"$instance\",error!=\"NONE\"}[$__rate_interval]))",
+          "legendFormat": "{{command}} {{error}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Produce response records / second",
+      "description": "Counts records in successful broker responses, including identified retries. ACCEPTED is not durable completion. IN_MEMORY is volatile in either acknowledgement mode.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (command,acknowledgement) (rate(setu_produce_response_records_total{job=\"setu\",instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{command}} {{acknowledgement}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Fetch response records / second",
+      "description": "Counts records materialized in successful fetch responses, including repeated fetches. Does not prove client delivery or acknowledgement.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(setu_fetch_response_records_total{job=\"setu\",instance=~\"$instance\"}[$__rate_interval])",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Broker execution p99 by command",
+      "description": "Bucket estimate around broker.execute; includes long-poll waits, excludes codec/network. Keep client HDR latency for benchmark qualification.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le,command) (rate(setu_request_duration_seconds_bucket{job=\"setu\",instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "{{command}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Process CPU usage in cores",
+      "description": "CPU seconds / wall second. 1 means one busy core. Not percent of the benchmark cgroup budget.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(setu_process_cpu_seconds_total{job=\"setu\",instance=~\"$instance\"}[$__rate_interval])",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Used JVM heap",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "setu_jvm_heap_used_bytes{job=\"setu\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "GC collection elapsed seconds / second",
+      "description": "MXBean collection time; not a GC pause histogram. Concurrent collector cycles may overlap.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(setu_jvm_gc_collection_seconds_total{job=\"setu\",instance=~\"$instance\"}[$__rate_interval])",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Active TCP connections",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "setu_connections_active{job=\"setu\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Connection limit rejections / second",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(setu_connections_limit_rejections_total{job=\"setu\",instance=~\"$instance\"}[$__rate_interval])",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Request buffer budget used",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "setu_request_buffer_used_bytes{job=\"setu\",instance=~\"$instance\"} / setu_request_buffer_max_bytes{job=\"setu\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Response buffer budget used",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "setu_response_buffer_used_bytes{job=\"setu\",instance=~\"$instance\"} / setu_response_buffer_max_bytes{job=\"setu\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Outstanding FILE write bytes",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "setu_outstanding_write_bytes{job=\"setu\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Mean partition append / force duration",
+      "description": "Includes append work and failures, excludes metadata journal; not pure FileChannel.force time. Empty when no flushes occur.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(setu_partition_flush_nanoseconds_total{job=\"setu\",instance=~\"$instance\"}[$__rate_interval]) / rate(setu_partition_flushes_total{job=\"setu\",instance=~\"$instance\"}[$__rate_interval]) / 1e9",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Summed member lag",
+      "description": "End minus committed offsets, summed across retained members. May count multiple consumer groups.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "setu_member_lag_records{job=\"setu\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Retained IN_MEMORY log accounting",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "setu-mimir"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "setu_retained_memory_bytes{job=\"setu\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "logs",
+      "title": "Setu logs (Loki)",
+      "datasource": {
+        "type": "loki",
+        "uid": "setu-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=\"setu\"} | service_instance_id=~\"$instance\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      },
+      "description": "OTLP Logback events. Expand a request log and follow TraceID to Tempo. With default INFO logging, successful requests do not emit individual logs."
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "Broker instance",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "setu-mimir"
+        },
+        "query": "label_values(setu_ready{job=\"setu\"}, instance)",
+        "refresh": 1,
+        "current": {
+          "text": "local-setu",
+          "value": "local-setu"
+        },
+        "multi": false,
+        "includeAll": false
+      }
+    ]
+  }
+}

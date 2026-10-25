@@ -76,7 +76,7 @@ Append failure poisons subsequent operations until reopen. Unacknowledged commit
 
 ## Migrating existing data
 
-Old `.log` partitions fail startup with an offline migration message. Stop the old broker and preserve its data root. After packaging the server, import into a **new, nonexistent directory outside the source root**:
+Old `.log` partitions fail startup with an offline migration message. Stop the old broker and preserve its data root. After packaging the server, import into a **new, nonexistent directory outside the original data directory**:
 
 ```powershell
 java '@config/jvm.options' -cp 'setu-server/target/lib/*' io.setu.storage.log.LegacyLogMigration data data-chronicle 1048576

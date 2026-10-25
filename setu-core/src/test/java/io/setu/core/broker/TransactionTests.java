@@ -56,6 +56,31 @@ class TransactionTests {
         }
     }
 
+    @Test void traceContextDoesNotChangeTransactionIdentityOrEnterTheDurableJournal() throws Exception {
+        var first = new TraceContext("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01", "vendor=private-marker");
+        var retry = new TraceContext("00-1123456789abcdef0123456789abcdef-1123456789abcdef-01", "vendor=retry-marker");
+        var transaction = write(Command.TRANSACT, 0, 0, List.of(new byte[]{1}));
+        try (var broker = new DefaultBroker(directory, 1024)) {
+            initialize(broker);
+            broker.execute(request(Command.JOIN_GROUP, "input", 0, "traced-member").withTraceContext(first));
+            assertEquals(0, broker.execute(transaction.withTraceContext(first)).offset());
+            assertEquals(0, broker.execute(transaction.withTraceContext(retry)).offset());
+        }
+        try (var journal = MessageLogs.open(StorageMode.FILE, directory.resolve("@consumer-state"), 15 * 1024 * 1024)) {
+            for (var entry : journal.read(0, 15 * 1024 * 1024)) {
+                String bytes = new String(entry.value(), java.nio.charset.StandardCharsets.ISO_8859_1);
+                assertFalse(bytes.contains(first.traceparent()));
+                assertFalse(bytes.contains("private-marker"));
+                assertFalse(bytes.contains("retry-marker"));
+            }
+        }
+        try (var broker = new DefaultBroker(directory, 1024)) {
+            assertEquals(0, broker.execute(transaction.withTraceContext(retry)).offset());
+            assertEquals(1, broker.execute(request(Command.FETCH, "output", 0, null)).records().size());
+            assertEquals(1, broker.execute(request(Command.FETCH_OFFSET, "input", 0, "member")).offset());
+        }
+    }
+
     @Test void consumeProduceCommitIsAtomicAndRetryDoesNotRepeatOutputs() throws Exception {
         var transaction = write(Command.TRANSACT, 0, 0, List.of(new byte[]{1}, new byte[]{2}));
         try (var broker = new DefaultBroker(directory, 1024)) {

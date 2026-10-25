@@ -1,6 +1,6 @@
 # setu-core
 
-`setu-core` owns the single-process broker and protocol v1 types shared by client and server. It uses [setu-storage](../setu-storage/README.md) for partition logs; transport and security enforcement belong to [setu-server](../setu-server/README.md).
+`setu-core` owns the single-process broker and protocol types shared by client and server. It uses [setu-storage](../setu-storage/README.md) for partition logs; transport and security enforcement belong to [setu-server](../setu-server/README.md).
 
 ## Broker usage
 
@@ -74,9 +74,9 @@ Memory brokers share a 256 MiB retained-log budget by default. Whole-batch admis
 
 Memory fetches use immutable snapshots outside the membership/long-poll lock. Durable storage serializes native I/O, while membership, acknowledgement and waiter coordination retain locks. CAS publication does not make the entire broker lock-free.
 
-## Protocol v1
+## Protocol
 
-`FrameCodec` adds a signed, big-endian four-byte body length. `ProtocolCodec` encodes a 12-byte body header: `SETU` magic (4 bytes), version (1), kind (1), command ID (2) and correlation ID (4). Strings are UTF-8 with signed four-byte lengths; integers are big-endian.
+`FrameCodec` adds a signed, big-endian four-byte body length. `ProtocolCodec` encodes an 11-byte body header: `SETU` magic (4 bytes), kind (1), command ID (2) and correlation ID (4). Strings are UTF-8 with signed four-byte lengths; integers are big-endian.
 
 | ID | Command | Successful result |
 | ---: | --- | --- |
@@ -98,15 +98,23 @@ Memory fetches use immutable snapshots outside the membership/long-poll lock. Du
 
 Responses repeat command and correlation ID, then carry a 16-bit error code and length-prefixed error message. Success adds the command's result; failures omit it. See [ErrorCode.java](src/main/java/io/setu/core/protocol/ErrorCode.java) for the error IDs and [ProtocolCodec.java](src/main/java/io/setu/core/protocol/ProtocolCodec.java) for field order.
 
-Decoding validates version, command, correlation ID, strict UTF-8, lengths, required fields and trailing bytes. String fields are capped at 4 KiB, batch payloads at 14 MiB / 10,000 records, and fetch payload budgets at 15 MiB. Transport and broker limits can be lower. Grouped fetches require both topic `CONSUME` and group `CONSUMER_GROUP_WRITE` permission on secure servers; ordinary fetches require only topic permission. Optional member and long-poll fields extend v1 requests; unsupported versions are rejected rather than negotiated.
+Decoding validates magic, message kind, command, correlation ID, strict UTF-8, lengths, required fields and trailing bytes. String fields are capped at 4 KiB, batch payloads at 14 MiB / 10,000 records, and fetch payload budgets at 15 MiB. Transport and broker limits can be lower. Grouped fetches require both topic `CONSUME` and group `CONSUMER_GROUP_WRITE` permission on secure servers; ordinary fetches require only topic permission. Member, long-poll and generation fields remain optional where applicable.
+
+### Request trace context
+
+Every request includes two length-prefixed printable ASCII strings immediately after the 11-byte header: W3C `traceparent`, then `tracestate`. Each is limited to **512 bytes**, validated before string allocation. When no trace context exists, both fields are still present with zero lengths, making the minimum request body 19 bytes. Nonempty `tracestate` requires `traceparent`. Command fields follow these mandatory trace fields, including any applicable member, wait or generation fields. No trailing extension data is accepted. Responses carry command/correlation, error and result fields without request trace strings.
+
+Propagation is always enabled in the Java clients over blocking, selector and TLS/mTLS transports. There is no propagation switch, alternate wire format or downgrade/replay path. The trace strings consume existing frame/admission limits and secure request-byte quotas. Recording/export still requires an application SDK or Java agent; a client without one sends the same required fields with empty values when it has no valid parent.
+
+Core carries bounded metadata in `BrokerRequest.traceContext()` / `withTraceContext(TraceContext)` without an OpenTelemetry dependency. W3C semantic validation belongs to client/server instrumentation: bounded but invalid trace parents start a fresh server trace, and invalid vendor state is discarded by the propagator. Trace metadata is not authentication or authorization data. It is excluded from producer fingerprints, transaction journal entries and consumer-state journal records. It is not stored with record payloads or returned by fetches. See [trace propagation](../docs/observability.md#logs-and-request-traces).
 
 Public byte-array APIs copy payloads. Internal `MessageValue.Frame` overloads share immutable slices between protocol and storage, with admission before materialization. Retaining a slice can retain its backing frame.
 
 ## Limits and tests
 
-`FETCH_OFFSET` uses the `COMMIT_OFFSET` field layout with a required member and a nonnegative placeholder offset (the Java client sends zero). Secure servers require group `CONSUMER_GROUP_WRITE`. Older brokers reject command 10; there is no version negotiation.
+`FETCH_OFFSET` uses the `COMMIT_OFFSET` field layout with a required member and a nonnegative placeholder offset (the Java client sends zero). Secure servers require group `CONSUMER_GROUP_WRITE`.
 
-New batch commands start with `PRODUCE_BATCH`'s topic/partition/count/values layout. Command 15 appends one byte (`0=DURABLE`, `1=ACCEPTED`). Commands 11/12 append a producer string, signed 64-bit epoch and sequence. Command 12 then appends input group/member/topic strings, 32-bit partition, 64-bit next offset and generation (`-1` for explicit membership). Managed commands use the join request layout; success returns a 64-bit generation, 32-bit count and `(32-bit partition, 64-bit next offset)` entries. Managed fetch adds generation after the wait field (send wait zero if needed); member commit/offset lookup can append generation after member. Older brokers reject new commands/extensions. `STALE_GENERATION=13`, `PRODUCER_FENCED=14` and `OUT_OF_ORDER_SEQUENCE=15` extend error IDs. See [transaction contracts, bounds, recovery and permissions](../docs/transactions.md).
+Batch commands start with `PRODUCE_BATCH`'s topic/partition/count/values layout. Command 15 appends one byte (`0=DURABLE`, `1=ACCEPTED`). Commands 11/12 append a producer string, signed 64-bit epoch and sequence. Command 12 then appends input group/member/topic strings, 32-bit partition, 64-bit next offset and generation (`-1` for explicit membership). Managed commands use the join request layout; success returns a 64-bit generation, 32-bit count and `(32-bit partition, 64-bit next offset)` entries. Managed fetch adds generation after the wait field (send wait zero if needed); member commit/offset lookup can append generation after member. `STALE_GENERATION=13`, `PRODUCER_FENCED=14` and `OUT_OF_ORDER_SEQUENCE=15` are error IDs. See [transaction contracts, bounds, recovery and permissions](../docs/transactions.md).
 
 Replication, failover and multi-output-partition transactions are not implemented. FILE journals support automatic or explicit `compactJournal()` checkpoints; `configureJournalCompaction(bytes)` controls the automatic trigger (64 MiB by default, zero disables it). Storage migration and persistence boundaries are documented in the [storage guide](../setu-storage/README.md).
 
