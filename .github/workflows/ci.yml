@@ -468,7 +468,7 @@ jobs:
 
       # Only one checkout; retain App credentials for git push.
       - name: Checkout with bot credentials
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           token: ${{ steps.generate-token.outputs.token }}
           ref: ${{ github.sha }}
