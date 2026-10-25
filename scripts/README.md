@@ -4,6 +4,8 @@ Run tools from the repository root unless a guide specifies otherwise. Java tool
 
 The Maven entry points retry wrapper-JAR bootstrap downloads on HTTP 429 and transient server errors, with at most five attempts. Downloads use temporary sibling files and publish only after a successful nonempty response; exhausted retries stop before Java launches. Windows uses `.mvn/wrapper/download-wrapper.ps1`; Bash uses curl or wget. Existing nonempty wrapper caches avoid that request, and empty cached files are downloaded again. `test_maven_wrapper.py` exercises rate limits, permanent failures, retry exhaustion and cache handling through a local HTTP server. Windows tests need `JAVA_HOME`; Linux tests exercise each available curl/wget path. This does not add retries to Maven's separate dependency-resolution or distribution-download stages.
 
+Wrapper metadata declares the `script` distribution type because the launchers download and run `maven-wrapper.jar`. When upgrading Maven, update `distributionUrl` in `.mvn/wrapper/maven-wrapper.properties` and preserve the customized `mvnw` and `mvnw.cmd` bootstrap logic. Regenerating stock launchers can remove the retry handling; run the wrapper tests on Windows and Linux after wrapper changes.
+
 ## Launch and credentials
 
 | Tool | Purpose |
