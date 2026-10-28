@@ -60,7 +60,7 @@ with JDK 26 to query native capabilities. Add a fresh output-directory path to
 run four alternating flush comparisons; it retains eight 64 MiB test files.
 The experiment requires Windows I/O-ring API version 300 or newer. It preserves
 mapped writes and full durability barriers, reports flushes/s, and does not
-measure broker throughput. See [FILE I/O measurements](../docs/file-io-benchmarks.md#windows-flush-experiment).
+measure broker throughput. See [FILE I/O measurements](diagnostics/io-comparison/README.md#windows-flush-experiment).
 
 ## Tests
 

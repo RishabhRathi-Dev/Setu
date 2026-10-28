@@ -23,8 +23,6 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | [IntelliJ development](intellij.md) | Shared run/debug profiles, examples, JUnit suites, Maven builds, and debugger attachment |
 | [Journal checkpoints](journal-checkpoints.md) | Compaction publication, fencing, recovery and upgrade compatibility |
 | [Observability](observability.md) | Loopback readiness, broker/transport/JVM metrics, LGTM collection, logs and dispatch traces |
-| [FILE I/O](file-io.md) | Platform selection, durability, native I/O ownership and limits |
-| [FILE I/O measurements](file-io-benchmarks.md) | Linux backend comparisons, default validation, Windows experiment and qualification limits |
 | [Operations](operations.md) | Packaging, startup, logs, shutdown, recovery, migration, and troubleshooting |
 | [PostgreSQL outbox/inbox](postgres-outbox.md) | Transactional publishing intent, duplicate delivery and database effects |
 | [Managed groups and transactions](transactions.md) | Partition ownership, producer sequencing, atomic consume/produce and acknowledgement modes |

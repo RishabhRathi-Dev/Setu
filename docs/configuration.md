@@ -39,7 +39,7 @@ Linux. Other platforms retain the existing portable backend. Unsupported or
 policy-denied Linux ring setup logs a warning and falls back at startup;
 resource, write and durability failures remain errors. No backend-selector,
 native-library path or ring-tuning property is required. Keep the shared JVM
-native-access options. See [FILE I/O ownership and limits](file-io.md).
+native-access options. See [FILE I/O ownership and limits](../setu-storage/README.md#file-io).
 
 | Property | Default | Meaning / validation |
 | --- | --- | --- |

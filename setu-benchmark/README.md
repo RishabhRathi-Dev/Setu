@@ -2,7 +2,7 @@
 
 This module measures the broker through real TCP traffic and exercises crashes, limits and concurrent progress. Functional requirements belong to [setu-integration-tests](../setu-integration-tests/README.md). Short smoke runs validate mechanics; throughput claims require qualified full measurements.
 
-[FILE I/O measurements](../docs/file-io-benchmarks.md) consolidate backend
+[FILE I/O measurements](../scripts/diagnostics/io-comparison/README.md#recorded-measurements) consolidate backend
 comparisons, integrated-default validation and the Windows flush experiment.
 The [comparison harness](../scripts/diagnostics/io-comparison/README.md) supports
 `--production` for the integrated default, `--owned` for FileChannel versus

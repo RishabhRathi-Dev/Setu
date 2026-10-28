@@ -90,7 +90,7 @@ Run from the repository root. The final argument is the original maximum record 
 
 New Setu documents use format 2: the existing format/offset/count header followed by a native-endian 32-bit CRC32C of all encoded record lengths and payloads. Recovery and fetch validate this checksum before exposing records. Read checksum scans reuse an 8 KiB scratch buffer; writes checksum the assembled document payload in one pass. Format 1 documents remain readable without checksum verification, and appending does not rewrite them. Older Setu binaries cannot read format 2; back up before upgrading and do not downgrade a data directory after new writes. CRC32C detects accidental corruption and is not authentication or replication. Core also uses this log implementation for its separate consumer journal.
 
-`MessageLog.appendValuesAsync` exposes completion separately from admission; the group-commit implementation admits a complete immutable batch to the existing bounded queue and completes its future only after forcing. `awaitPendingWrites` drains admitted work when callers exclude new admissions. Broker `ACCEPTED` mode can reply after admission, before that future completes; ordinary appends retain their existing force boundary. Clean close still drains accepted writes. Replicated storage is not implemented. See [broker acknowledgement and transaction semantics](../docs/transactions.md).
+`MessageLog.appendValuesAsync` exposes completion separately from admission; the group-commit implementation admits a complete immutable batch to the existing bounded queue and completes its future only after forcing. Public async futures receive success or failure on independent virtual threads, so completion callbacks can synchronously append or close the log without blocking its writer. Callback execution order is unspecified; append offsets still follow admission order. Close drains accepted writes and releases storage resources without waiting for caller callbacks; async completion delivery may finish after close returns. Callback work is outside the outstanding-write budget. Synchronous appends await the internal durability result directly. `awaitPendingWrites` drains admitted work when callers exclude new admissions. Broker `ACCEPTED` mode can reply after admission, before that future completes; ordinary appends retain their existing force boundary. Replicated storage is not implemented. See [broker acknowledgement and transaction semantics](../docs/transactions.md).
 
 From the repository root with Java 26:
 
@@ -114,22 +114,158 @@ java --enable-native-access=ALL-UNNAMED -cp "$probe_root/classes:setu-server/tar
 
 This probe exercises the portable FileChannel fallback. It retains a JFR recording, checks metadata barrier selection and mapped growth/header rewrites through a separate descriptor, and models the scheduling backlog from one 383 ms force delay. The delayed sample and recovery samples remain in the percentiles; this diagnostic is independent of the strict FILE baseline.
 
-## Automatic io_uring selection
+## FILE I/O
 
-The [Setu-owned io_uring package](../docs/file-io.md) provides the default FILE
-write/data-force path on supported Linux through Java 26 FFM, without an external
-Java/native dependency. No backend or ring-tuning properties are required.
-Unsupported platforms retain the portable path; unsupported or policy-denied
-ring setup logs a warning and falls back before I/O. Other setup and runtime
-I/O failures propagate. The file format and durability boundary are unchanged.
-One bounded owner is shared across open files; the final close joins it.
-Global request/byte saturation applies backpressure to virtual callers. Native
-force events remain visible in JFR and benchmark reports.
-Virtual-thread callers wait on private completion futures while one platform
-thread owns the native ring. Its direct-buffer allocator permits submission
-without an extra payload copy; arbitrary heap/native inputs retain copy semantics.
-See [default validation](../docs/file-io-benchmarks.md) for repeatability,
-native/recovery tests and the remaining throughput-target deficit.
+FILE storage uses Chronicle Queue with platform-specific payload writes and
+durability barriers. Backend selection is automatic; no backend selector,
+native-library path or ring-tuning property is required. Use JDK 26 and the
+shared [JVM options](../config/jvm.options), including native access.
+
+| Platform | Payload writes | Durability barrier |
+| --- | --- | --- |
+| Supported Linux | Setu-owned Panama/io_uring with owned direct buffers | JDK full metadata force on first use/growth, then io_uring data force |
+| Linux with unavailable ring setup | Positional FileChannel writes | JDK full metadata force on first use/growth, then data force |
+| Windows and other platforms | Buffered payloads copied into Chronicle's mappings | Force mapped contents, then full FileChannel force |
+
+All platforms preserve the record format, CRC, dense offsets and committed
+boundary described under [durability and recovery](#durability-and-recovery).
+
+### Linux backend
+
+`io.setu.storage.uring.UringFileIo` uses Java 26's Foreign Function and Memory API
+to call Linux system calls and libc. It requires no jasyncfio, JNI shim, C++
+build, liburing installation or additional Maven dependency. Its ABI supports
+little-endian Linux x86-64 and AArch64; native validation currently covers x86-64
+under WSL2. AArch64 has not been exercised on hardware.
+
+If ring setup is unsupported or denied (EPERM, EACCES, ENOSYS, EOPNOTSUPP), the
+broker logs one warning and uses FileChannel for the process. Other setup errors,
+including resource exhaustion, fail explicitly. Once a ring is acquired,
+open/write/force failures propagate without retrying through another backend.
+
+One non-daemon platform thread owns the shared ring, mappings and descriptors.
+Existing virtual partition writers submit work and await private completion
+futures. Calls serialize per file; independent files can remain in flight and
+complete independently. An MPSC queue carries submissions; producers coalesce
+eventfd wakeups, and the owner drains ready work before sleeping. There is no
+SQPOLL, IOPOLL, O_DIRECT or busy idle loop. The last file close drains and joins
+the owner; reopening later starts a fresh owner.
+
+The architecture takes inspiration from
+[jasyncfio](https://github.com/ikorennoy/jasyncfio), inspected at Apache-2.0
+revision `165fe7f6a5a5f7ade45b33872e8e6207f99ecc17`. Setu's implementation is
+independently written against the Linux UAPI; upstream sources and binaries
+are not bundled. Setu's [Apache-2.0 licence](../LICENSE) applies.
+
+### Windows backend
+
+Windows uses the same batched payload encoding, virtual partition writers,
+backpressure and durable acknowledgement contract. It keeps payload writes in
+Chronicle's mappings: Microsoft does not guarantee coherence between mapped
+views and ordinary file I/O. A Windows I/O-ring write cannot therefore replace
+the Linux write path without changing how Chronicle accesses the file.
+[Mapped-view coherence](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile).
+
+Windows requires flushing dirty mapped pages and then file buffers for durable
+storage. The current backend uses scoped JDK mappings followed by full
+FileChannel force. The scopes release each extra mapping before the next force,
+including when another descriptor grows the file.
+[FlushViewOfFile contract](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-flushviewoffile).
+
+A local Java FFM experiment confirmed Windows 11 ring write/flush support, but
+substituting ring flushes while preserving mapped writes showed similar rates
+with no consistent advantage. Windows retains its existing backend; no experimental Windows
+native dependency or configuration is shipped. See the
+[measurements and limitations](../scripts/diagnostics/io-comparison/README.md#windows-flush-experiment).
+
+### Ownership and bounds
+
+Linux payload staging uses `UringFileIo.allocateBuffer(capacity)`. These are
+GC-managed JDK direct buffers whose scopes remain eligible through slices and
+read-only views. The native owner retains them until kernel completion, avoiding
+an extra staging copy. A weak scope registry does not retain unused allocations.
+Heap buffers use native scratch slots. Other direct buffers, including confined
+arenas, are copied on the caller before submission so an exceptional return
+cannot expose freed memory to an unresolved request. Callers must keep contents
+unchanged until the call returns.
+
+| Bound | Broker default |
+| --- | ---: |
+| Ring entries | 16, including one wakeup poll |
+| Write chunk | 1 MiB |
+| Outstanding requests | 1,024 |
+| Outstanding payload references | 32 MiB |
+| Native scratch | 16 MiB, plus ring mappings and small wakeup buffers |
+| Retained payload staging per log | At most 1 MiB; larger records use temporary buffers |
+
+Admission includes queued and active work. The broker waits for request/byte
+credit; explicit standalone `create` calls retain fail-fast admission. Native
+scratch is outside `MaxDirectMemorySize` but inside process/cgroup memory usage.
+Owned direct source buffers count toward the JDK direct-memory limit. Retained
+views can keep larger backing allocations alive than their submitted range.
+These bounds are not a whole-process memory limit.
+
+Accepted operations finish despite interruption, then restore the caller's
+interrupt flag. File close waits for earlier operations; owner close rejects
+new work, drains admitted work and joins its thread. Close is idempotent. A
+blocked device can delay shutdown. Failed writes/forces poison that file until
+close/reopen. Short writes are retried; zero progress and negative completions
+fail, and a large write may have a completed prefix on failure.
+
+Completions are matched by unique identifiers using release/acquire publication.
+A fatal submission/protocol failure stops the executor and fails queued callers.
+If kernel requests remain unresolved, their ring, descriptors and buffers are
+retained until process exit to prevent use-after-free. This exceptional state
+is reported as a close failure and requires a process restart.
+
+### Standalone API
+
+The standalone API opens existing files; it never creates or truncates them.
+Explicit creation fails on unsupported/denied systems. Automatic fallback is a
+broker policy, and `isSupportedPlatform()` checks only OS/architecture.
+
+```java
+import io.setu.storage.uring.UringFileIo;
+import java.nio.ByteBuffer;
+import java.nio.file.Path;
+
+try (var io = UringFileIo.create();
+     var file = io.open(Path.of("existing-file"))) {
+    ByteBuffer data = UringFileIo.allocateBuffer(4096);
+    data.putLong(42).flip();
+    file.writeFully(data, 0);
+    file.force(true);
+}
+```
+
+`force(true)` performs fsync and `force(false)` performs fdatasync. Writes alone
+are not durable. Callers own file creation/directory durability; close adds no
+implicit force. Virtual threads may call this synchronous API directly. Private
+completion futures cannot be cancelled externally. `Options` supports bounded
+standalone configuration with a 64 MiB native-scratch ceiling; broker defaults
+are fixed internals, not server properties.
+
+### Verification
+
+Native Linux coverage is opt-in and fails on unsupported/denied kernels:
+
+```bash
+bash ./mvnw -pl setu-integration-tests -am -Dsetu.uring.tests=true test
+```
+
+Coverage includes admission, independent completion, interruption, shutdown,
+startup/fatal errors, mapped headers, growth, CRC/readback and recovery. Native
+barriers emit `io.setu.storage.FileForce`; benchmark recordings combine these
+with `jdk.FileForce` metadata barriers without double counting.
+
+The [benchmark report](../scripts/diagnostics/io-comparison/README.md#recorded-measurements) records results and qualification
+limits. The [comparison harness](../scripts/diagnostics/io-comparison/README.md)
+provides `--production`, `--owned` and `--parity` modes. Single-load comparisons
+do not establish sustained capacity or change published badges.
+
+ABI references: [Linux io_uring UAPI](https://github.com/torvalds/linux/blob/master/include/uapi/linux/io_uring.h),
+[setup](https://man7.org/linux/man-pages/man2/io_uring_setup.2.html),
+[submission/completion](https://man7.org/linux/man-pages/man2/io_uring_enter.2.html).
 
 ## Operational counters
 
