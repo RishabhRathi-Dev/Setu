@@ -30,6 +30,7 @@ final class CapacityJfr {
         recording.setDumpOnExit(false);
         recording.enable(Stage.class).withThreshold(java.time.Duration.ZERO);
         recording.enable("jdk.FileForce").withThreshold(java.time.Duration.ZERO);
+        recording.enable("io.setu.storage.FileForce").withThreshold(java.time.Duration.ZERO);
         recording.start();
     }
 
@@ -81,6 +82,7 @@ final class CapacityJfr {
         final long consumed;
         long samples;
         final ForceWaits forceWaits = new ForceWaits();
+        final Map<String, ForceWaits> forceFiles = new java.util.TreeMap<>();
         final Map<String, Long> methods = new HashMap<>();
 
         Summary(RecordedEvent event) {
@@ -131,10 +133,13 @@ final class CapacityJfr {
                 String type = event.getEventType().getName();
                 if (!type.equals("jdk.ObjectAllocationSample") && !type.equals("jdk.ExecutionSample")
                         && !type.equals("jdk.GCPhasePause") && !type.equals("jdk.GarbageCollection")
-                        && !type.equals("jdk.FileForce")) continue;
+                        && !isForce(type)) continue;
                 for (Summary stage : stages) {
-                    if (type.equals("jdk.FileForce")) {
+                    if (isForce(type)) {
                         stage.forceWaits.add(event.getStartTime(), event.getEndTime(), stage.start, stage.end);
+                        String key = forceScope(event.getString("path")) + " metadata=" + event.getBoolean("metaData");
+                        stage.forceFiles.computeIfAbsent(key, ignored -> new ForceWaits())
+                                .add(event.getStartTime(), event.getEndTime(), stage.start, stage.end);
                     } else if (type.equals("jdk.GCPhasePause") || type.equals("jdk.GarbageCollection")) {
                         Instant start = event.getStartTime().isAfter(stage.start) ? event.getStartTime() : stage.start;
                         Instant end = event.getEndTime().isBefore(stage.end) ? event.getEndTime() : stage.end;
@@ -174,8 +179,28 @@ final class CapacityJfr {
                     stage.consumed == 0 ? 0 : (double) stage.allocationBytes / stage.consumed,
                     stage.gcCycleMillis, stage.forceWaits.count(), stage.forceWaits.totalNanos / 1e6,
                     stage.forceWaits.p99Millis(), stage.forceWaits.maxNanos / 1e6);
+            for (var entry : stage.forceFiles.entrySet()) {
+                ForceWaits waits = entry.getValue();
+                if (waits.count() == 0) continue;
+                System.out.printf(Locale.ROOT, "CAPACITY_FORCE mode=%s stage=%d scope=%s count=%d total_ms=%.6f p99_ms=%.6f max_ms=%.6f%n",
+                        stage.mode, stage.stage, entry.getKey(), waits.count(), waits.totalNanos / 1e6,
+                        waits.p99Millis(), waits.maxNanos / 1e6);
+            }
         }
         if (stages.isEmpty()) throw new java.io.IOException("JFR capture contains no completed measured stage: " + path);
         return stages.stream().map(stage -> stage.stage).collect(java.util.stream.Collectors.toSet());
+    }
+
+    private static boolean isForce(String type) {
+        return type.equals("jdk.FileForce") || type.equals("io.setu.storage.FileForce");
+    }
+
+    private static String forceScope(String path) {
+        if (path == null) return "other";
+        String normalized = path.replace('\\', '/');
+        String owner = normalized.contains("/@consumer-state/") ? "consumer_journal" : "partition";
+        if (normalized.endsWith("/metadata.cq4t")) return owner + "_metadata";
+        if (normalized.endsWith(".cq4")) return owner + "_data";
+        return "other";
     }
 }

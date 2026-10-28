@@ -34,6 +34,13 @@ The properties launcher is plaintext. TLS/mTLS requires [secure embedding](../se
 
 ## Storage and retention
 
+FILE automatically selects Setu's Java FFM io_uring implementation on supported
+Linux. Other platforms retain the existing portable backend. Unsupported or
+policy-denied Linux ring setup logs a warning and falls back at startup;
+resource, write and durability failures remain errors. No backend-selector,
+native-library path or ring-tuning property is required. Keep the shared JVM
+native-access options. See [FILE I/O ownership and limits](file-io.md).
+
 | Property | Default | Meaning / validation |
 | --- | --- | --- |
 | `storage.mode` | `FILE` | Exact uppercase `FILE` or `IN_MEMORY` |

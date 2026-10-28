@@ -58,9 +58,11 @@ Stop any broker that owns the partition before running this example. A newly cre
 
 The MPSC writer admits up to 32 MiB / 1,024 outstanding requests, including the active flush. Adjacent requests share an append. Groups linger up to 250 microseconds; 256 KiB of accounted bytes triggers an immediate flush. Close drains accepted requests. Interrupted callers still receive their accepted write's durability result.
 
-Acknowledgement follows a JDK file force on every touched queue file and roll metadata, covering native index/header changes. Linux uses `FileChannel.force(true)` (`fsync`) for the first force and changes in file size, then `force(false)` (`fdatasync`) for writes within the same size. Both flush dirty shared mappings; `fdatasync` also persists allocation/size metadata needed to retrieve the data, while avoiding timestamp-only journal commits that can wait for unrelated ordered writes on ext4. Chronicle indexes, headers and `metadata.cq4t` are file contents and remain covered. See the [Linux fsync/fdatasync contract](https://man7.org/linux/man-pages/man2/fsync.2.html), [ext4 journal synchronization](https://github.com/torvalds/linux/blob/master/fs/ext4/fsync.c) and [OpenJDK force implementation](https://github.com/openjdk/jdk/blob/master/src/java.base/unix/native/libnio/ch/UnixFileDispatcherImpl.c). Other platforms call `MemorySegment.force()` through a view scoped to each force, followed by `FileChannel.force(true)`. Chronicle's own sync is disabled because the resolved OpenHFT native Windows `msync` returns success without a flush. This is a local OS force boundary, without replication or protection against faulty devices.
+Acknowledgement follows a durability barrier on every touched queue file and roll metadata, covering native index/header changes. Supported Linux uses the Setu-owned io_uring implementation by default, with JDK `FileChannel.force(true)` (`fsync`) for the first force and file growth, then io_uring `fdatasync` for writes within the same size. Both flush dirty shared mappings; `fdatasync` also persists allocation/size metadata needed to retrieve the data, while avoiding timestamp-only journal commits that can wait for unrelated ordered writes on ext4. Chronicle indexes, headers and `metadata.cq4t` are file contents and remain covered. See the [Linux fsync/fdatasync contract](https://man7.org/linux/man-pages/man2/fsync.2.html), [ext4 journal synchronization](https://github.com/torvalds/linux/blob/master/fs/ext4/fsync.c) and [OpenJDK force implementation](https://github.com/openjdk/jdk/blob/master/src/java.base/unix/native/libnio/ch/UnixFileDispatcherImpl.c). Other platforms call `MemorySegment.force()` through a view scoped to each force, followed by `FileChannel.force(true)`. Chronicle's own sync is disabled because the resolved OpenHFT native Windows `msync` returns success without a flush. This is a local OS force boundary, without replication or protection against faulty devices.
 
-Appends and close serialize across the complete force. The committed offset and document boundary publish together only after forcing succeeds. Reads of the previously committed prefix can proceed during JDK forcing; offset checks do not acquire the I/O monitor. Sequential reads reuse the tailer's current index, while partial reads and rewinds seek as needed.
+Document payloads use a reusable owned direct buffer on supported Linux, retained through io_uring write completion. Startup fallback uses positional FileChannel writes with the same direct buffer. Other platforms assemble payloads in a reusable heap buffer. Linux uses the [shared page cache for ordinary writes and mappings](https://docs.kernel.org/6.11/mm/page_cache.html); other platforms retain Chronicle's mapped writes because [Windows does not guarantee coherence between mapped views and channel writes](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile). Chronicle still writes and publishes its document headers and indexes through its mappings. This preserves format 2 and its native-endian lengths while avoiding a mapped payload write per record. Each active log retains at most 1 MiB of payload scratch space; an oversized individual record uses a temporary larger buffer. Close releases the retained scratch reference. The JDK may also use temporary direct buffers for heap-to-channel writes; these and scratch space are outside the outstanding-request accounting.
+
+Appends and close serialize across the complete force. The committed offset and document boundary publish together only after forcing succeeds. Reads of the previously committed prefix can proceed during forcing; offset checks do not acquire the I/O monitor. Sequential reads reuse the tailer's current index, while partial reads and rewinds seek as needed.
 
 Recovery validates committed headers, counts, lengths and dense offsets, then rebuilds Setu's sparse logical index starting at the persisted retention boundary when present. Chronicle's native indexes are persisted. Incomplete native documents do not consume recovered offsets; malformed committed documents fail startup without silently discarding later data.
 
@@ -86,7 +88,7 @@ Run from the repository root. The final argument is the original maximum record 
 
 ## Limits and tests
 
-New Setu documents use format 2: the existing format/offset/count header followed by a native-endian 32-bit CRC32C of all encoded record lengths and payloads. Recovery and fetch validate this checksum before exposing records. Checksum scans reuse an 8 KiB scratch buffer; writes checksum immutable payload arrays directly. Format 1 documents remain readable without checksum verification, and appending does not rewrite them. Older Setu binaries cannot read format 2; back up before upgrading and do not downgrade a data directory after new writes. CRC32C detects accidental corruption and is not authentication or replication. Core also uses this log implementation for its separate consumer journal.
+New Setu documents use format 2: the existing format/offset/count header followed by a native-endian 32-bit CRC32C of all encoded record lengths and payloads. Recovery and fetch validate this checksum before exposing records. Read checksum scans reuse an 8 KiB scratch buffer; writes checksum the assembled document payload in one pass. Format 1 documents remain readable without checksum verification, and appending does not rewrite them. Older Setu binaries cannot read format 2; back up before upgrading and do not downgrade a data directory after new writes. CRC32C detects accidental corruption and is not authentication or replication. Core also uses this log implementation for its separate consumer journal.
 
 `MessageLog.appendValuesAsync` exposes completion separately from admission; the group-commit implementation admits a complete immutable batch to the existing bounded queue and completes its future only after forcing. `awaitPendingWrites` drains admitted work when callers exclude new admissions. Broker `ACCEPTED` mode can reply after admission, before that future completes; ordinary appends retain their existing force boundary. Clean close still drains accepted writes. Replicated storage is not implemented. See [broker acknowledgement and transaction semantics](../docs/transactions.md).
 
@@ -103,14 +105,31 @@ CI also runs a standalone Linux force diagnostic without changing the throughput
 ```bash
 probe_root=$(mktemp -d)
 mkdir -p "$probe_root/classes"
-javac -d "$probe_root/classes" \
-  setu-storage/src/main/java/io/setu/storage/log/ChronicleFileSync.java \
+bash ./mvnw -pl setu-server -am -DskipTests package
+javac -cp "setu-server/target/lib/*" -d "$probe_root/classes" \
   scripts/diagnostics/FileForceProbe.java
-java --enable-native-access=ALL-UNNAMED -cp "$probe_root/classes" \
+java --enable-native-access=ALL-UNNAMED -cp "$probe_root/classes:setu-server/target/lib/*" \
   io.setu.storage.log.FileForceProbe "$probe_root"
 ```
 
-It retains a JFR recording, checks metadata barrier selection and mapped growth/header rewrites through a separate descriptor, and models the scheduling backlog from one 383 ms force delay. The delayed sample and recovery samples remain in the percentiles; this diagnostic is independent of the strict FILE baseline.
+This probe exercises the portable FileChannel fallback. It retains a JFR recording, checks metadata barrier selection and mapped growth/header rewrites through a separate descriptor, and models the scheduling backlog from one 383 ms force delay. The delayed sample and recovery samples remain in the percentiles; this diagnostic is independent of the strict FILE baseline.
+
+## Automatic io_uring selection
+
+The [Setu-owned io_uring package](../docs/file-io.md) provides the default FILE
+write/data-force path on supported Linux through Java 26 FFM, without an external
+Java/native dependency. No backend or ring-tuning properties are required.
+Unsupported platforms retain the portable path; unsupported or policy-denied
+ring setup logs a warning and falls back before I/O. Other setup and runtime
+I/O failures propagate. The file format and durability boundary are unchanged.
+One bounded owner is shared across open files; the final close joins it.
+Global request/byte saturation applies backpressure to virtual callers. Native
+force events remain visible in JFR and benchmark reports.
+Virtual-thread callers wait on private completion futures while one platform
+thread owns the native ring. Its direct-buffer allocator permits submission
+without an extra payload copy; arbitrary heap/native inputs retain copy semantics.
+See [default validation](../docs/file-io-benchmarks.md) for repeatability,
+native/recovery tests and the remaining throughput-target deficit.
 
 ## Operational counters
 

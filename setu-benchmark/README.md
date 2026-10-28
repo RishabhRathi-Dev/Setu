@@ -2,6 +2,13 @@
 
 This module measures the broker through real TCP traffic and exercises crashes, limits and concurrent progress. Functional requirements belong to [setu-integration-tests](../setu-integration-tests/README.md). Short smoke runs validate mechanics; throughput claims require qualified full measurements.
 
+[FILE I/O measurements](../docs/file-io-benchmarks.md) consolidate backend
+comparisons, integrated-default validation and the Windows flush experiment.
+The [comparison harness](../scripts/diagnostics/io-comparison/README.md) supports
+`--production` for the integrated default, `--owned` for FileChannel versus
+Setu, and `--parity` to include jasyncfio. Experimental dependencies stay outside
+production packaging. Qualification criteria and published badges are unchanged.
+
 ## Local JFR capture
 
 Use [run-jfr.py](../scripts/run-jfr.py) to build and run the existing TCP workload with JFR on Windows, Linux or macOS. Requires Python 3.10+ and JDK 26 (`JAVA_HOME`, `--java-home` or `java` on `PATH`). The PowerShell entry point forwards the same options:
@@ -23,6 +30,8 @@ Defaults are 1 KiB records, 256-record batches, at most two producer/consumer pa
 The launcher verifies successful worker completion, traffic without request errors, readable JFR and matching measured-stage markers. It leaves performance analysis to you and does not run the report generators. These are diagnostic smoke captures with broker and clients in the same JVM and no OS resource quota; `qualified=false` is expected. Use the resource-enforced profiles below for qualified measurements.
 
 `CAPACITY_JFR` summaries include measured-stage produced/consumed counts and estimated allocation bytes per produced/consumed record, alongside allocation MiB, GC pause time and GC cycle time. Both allocation ratios use the entire broker-and-client JVM estimate; they do not attribute bytes to individual roles. A zero count reports a zero ratio, and older recordings without counts report zero counts. GC cycle time sums each cycle's overlap with the stage, including concurrent work; overlapping cycles can exceed the stage duration. It is elapsed cycle duration rather than GC CPU time; pause time remains separate. Compare these with the matching stage's latency percentiles, excluding warmup and cleanup.
+
+`CAPACITY_FORCE` lines additionally split measured JFR force events into partition data, consumer-journal data, their roll metadata, and other files, separately for full-metadata and data-only barriers. Counts and elapsed-time percentiles use the same stage clipping as the aggregate force metrics. This classification runs after recording and adds no broker instrumentation. It distinguishes journal work from partition work without using individual file paths as report labels; aggregate qualification remains unchanged.
 
 ## Run profiles
 
@@ -90,7 +99,7 @@ HDR histograms retain produce, fetch, acknowledgement and scheduled-completion l
 
 Baseline, target, sustained and steady measurements report unmet performance expectations as warnings by default, while retaining measured values and failures. Baseline/target/sustained results retain their unqualified status; steady reports missed scheduled records separately from delivered records. CI passes completed expectation misses and retains the captures. Crashes, nonzero worker exits, timeouts, request errors, zero producer/consumer progress and incomplete or invalid captures still fail. `--report-only` selects this policy explicitly; `--strict` opts into failing on unmet performance expectations.
 
-Measured JFR stages include `file_force_count`, `file_force_total_ms`, `file_force_p99_ms` and `file_force_max_ms`. New recordings enable every `jdk.FileForce` event with a zero threshold. Each call's elapsed wait is clipped to the measured interval, excluding warmup and cleanup; concurrent calls are summed separately, so total wait can exceed the stage duration. These are elapsed durability-barrier times, including any scheduling delay during the call. Older recordings can omit fast events, and older summaries without these metrics display `unavailable`. Reports retain the latency components separately so force waits can be compared with produce and scheduled-completion p99. Wait metrics are diagnostic and have no additional qualification threshold.
+Measured JFR stages include `file_force_count`, `file_force_total_ms`, `file_force_p99_ms` and `file_force_max_ms`. New recordings enable every `jdk.FileForce` and `io.setu.storage.FileForce` event with a zero threshold, combining JDK metadata forces and native data forces without double counting. Each call's elapsed wait is clipped to the measured interval, excluding warmup and cleanup; concurrent calls are summed separately, so total wait can exceed the stage duration. These are elapsed durability-barrier times, including any scheduling delay during the call. Older recordings can omit fast events, and older summaries without these metrics display `unavailable`. Reports retain the latency components separately so force waits can be compared with produce and scheduled-completion p99. Wait metrics are diagnostic and have no additional qualification threshold.
 
 ## Isolated steady throughput
 
