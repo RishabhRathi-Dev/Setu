@@ -27,7 +27,7 @@ Each new `logs/jfr/<timestamp>-<id>/` contains `build.log`, `run.json` (settings
 
 Defaults are 1 KiB records, 256-record batches, at most two producer/consumer pairs, 512 MiB heap, 128 MiB direct memory, 64 MiB retained memory log, two-second warmup and three-second measurement per stage. Each worker ramps concurrency, then runs 50%/80%/100% of its healthy knee when one exists. An unhealthy ramp can end the run early; inspect `worker.log` for which stages ran. JFR uses the worker's existing `profile` configuration and 128 MiB rolling size limit; long captures can lose earlier events and fail the completeness check.
 
-The launcher verifies successful worker completion, traffic without request errors, readable JFR and matching measured-stage markers. It leaves performance analysis to you and does not run the report generators. These are diagnostic smoke captures with broker and clients in the same JVM and no OS resource quota; `qualified=false` is expected. Use the resource-enforced profiles below for qualified measurements.
+The launcher verifies successful worker completion, traffic without request errors, readable JFR and matching measured-stage markers. Add `--analyze` to save measured-stage `CAPACITY_JFR` and `CAPACITY_FORCE` summaries in `write-path.txt`; without it, analysis remains a separate step. These are diagnostic smoke captures with broker and clients in the same JVM and no OS resource quota; `qualified=false` is expected. Use the resource-enforced profiles below for qualified measurements.
 
 `CAPACITY_JFR` summaries include measured-stage produced/consumed counts and estimated allocation bytes per produced/consumed record, alongside allocation MiB, GC pause time and GC cycle time. Both allocation ratios use the entire broker-and-client JVM estimate; they do not attribute bytes to individual roles. A zero count reports a zero ratio, and older recordings without counts report zero counts. GC cycle time sums each cycle's overlap with the stage, including concurrent work; overlapping cycles can exceed the stage duration. It is elapsed cycle duration rather than GC CPU time; pause time remains separate. Compare these with the matching stage's latency percentiles, excluding warmup and cleanup.
 
@@ -135,7 +135,7 @@ Direct Maven runs do not impose an OS CPU quota. Target defaults are 256 MiB mem
 
 ## Default OpenHFT storage
 
-`FILE` measures the production Chronicle Queue 2026.6 adapter directly. It uses JDK mapped-file/channel forces, rather than counting OpenHFT's no-op native Windows sync as durable completion. See [storage guarantees and migration](../setu-storage/README.md).
+`FILE` measures the production Chronicle Queue 2026.7 adapter directly. Supported Linux uses the Setu-owned io_uring path with full metadata barriers on first use/growth; other platforms use the portable mapped-file/channel path. OpenHFT's no-op native Windows sync is not counted as durable completion. See [storage guarantees and migration](../setu-storage/README.md).
 
 Use the resource-enforced profiles above to measure this adapter on the intended deployment filesystem. Record the source revision, JDK, host/resource budget, filesystem/media, payload and batch sizes, warmup, measurement duration, repetitions and qualification failures with each published result. Local smoke captures and results from other storage engines do not establish Chronicle Queue capacity. The [main README](../README.md#performance) links CI-maintained results and their qualification status.
 

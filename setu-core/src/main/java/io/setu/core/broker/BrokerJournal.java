@@ -91,6 +91,7 @@ final class BrokerJournal implements AutoCloseable {
                 long checksum = checked.getChecksum().getValue();
                 output.writeLong(checksum);
             }
+            fault.at("checkpoint-written");
             force(checkpoint);
             replacement = MessageLogs.open(StorageMode.FILE, next, 15 * 1024 * 1024, blockBytes);
             // The empty queue must have a durable initialized document before it becomes authoritative.
@@ -100,6 +101,7 @@ final class BrokerJournal implements AutoCloseable {
             Path temporary = root.resolve("CURRENT.tmp");
             Files.writeString(temporary, next.getFileName().toString(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             force(temporary);
+            fault.at("manifest-forced");
             Files.move(temporary, root.resolve("CURRENT"), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             forceDirectory(root);
             fault.at("manifest-published");
@@ -116,7 +118,9 @@ final class BrokerJournal implements AutoCloseable {
             force(marker);
             forceDirectory(root);
             // Only recognized journal-owned files are removed, never arbitrary files under the data root.
+            fault.at("before-cleanup");
             cleanupObsolete();
+            fault.at("after-cleanup");
             refreshDiskBytes();
         } finally {
             if (replacement != null) replacement.close();

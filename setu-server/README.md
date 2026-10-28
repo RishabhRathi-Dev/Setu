@@ -130,6 +130,8 @@ Malformed frame lengths, partial frames and TLS handshake failures close the con
 
 ## Logs and tests
 
+`TransportLifecycleTests` repeatedly disconnects incomplete frames, fails dispatch after reserving response credit, and shuts down active dispatch on both transports, checking zero remaining credits/connections. `CommandAuthorizationTests` covers every command through byte-array and owned-frame APIs, denies each missing exact grant and wrong principal, and verifies denied requests do not consume quota or reach dispatch. Real mTLS coverage remains in the integration reactor.
+
 [logback.xml](../config/logback.xml) defaults to INFO (enable DEBUG explicitly for per-request diagnostics), persists `logs/setu.log`, rotates daily or at 100 MB, retains 14 days and caps archives at 2 GB. Use `SETU_LOG_DIR`, `SETU_LOG_LEVEL`, or `-Dsetu.log.level` to configure logging; the level property takes precedence. Record payloads, passwords and private keys are not logged. Untrusted diagnostic fields escape line separators and backslashes so request identities and error text cannot create forged log lines; protocol values remain unchanged. Connection/session and request diagnostics include correlation IDs and error details.
 
 From the repository root with Java 26:

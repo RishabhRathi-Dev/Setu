@@ -23,6 +23,11 @@ final class CapacityJfr {
     private static Recording recording;
     private static Path destination;
 
+    public static void main(String[] args) throws java.io.IOException {
+        if (args.length != 1) throw new IllegalArgumentException("Usage: CapacityJfr <recording.jfr>");
+        report(Path.of(args[0]));
+    }
+
     static void start(Path path) throws Exception {
         destination = path;
         recording = new Recording(Configuration.getConfiguration("profile"));

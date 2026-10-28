@@ -63,6 +63,10 @@ public final class DefaultBroker implements Broker {
     private int managedPartitionOffsets;
     private volatile IOException failed;
     private static final int TRANSACTION_ENTRY = 0x53545831;
+    // Package-scoped test seam only; never configured by clients or launcher properties.
+    enum TransactionStage { BEFORE_JOURNAL, JOURNAL_FORCED, OUTPUT_FORCED, INPUT_APPLIED, BEFORE_REPLY }
+    @FunctionalInterface interface TransactionFault { void at(TransactionStage stage) throws IOException; }
+    private TransactionFault transactionFault = stage -> { };
     private final java.util.concurrent.ScheduledExecutorService maintenance;
     private final long memoryRetentionNanos;
 
@@ -360,6 +364,7 @@ public final class DefaultBroker implements Broker {
         Math.addExact(firstOffset, request.valueCount());
         byte[] entry = java.nio.ByteBuffer.allocate(12 + canonical.length)
                 .putInt(TRANSACTION_ENTRY).putLong(firstOffset).put(canonical).array();
+        transactionFault.at(TransactionStage.BEFORE_JOURNAL);
         try { consumerJournal.append(entry); }
         catch (LogCapacityExceededException exhausted) {
             throw new BrokerException(ErrorCode.QUOTA_EXCEEDED, exhausted.getMessage(), exhausted);
@@ -368,7 +373,9 @@ public final class DefaultBroker implements Broker {
             throw failed;
         }
         try {
+            transactionFault.at(TransactionStage.JOURNAL_FORCED);
             applyTransaction(request, firstOffset, fingerprint);
+            transactionFault.at(TransactionStage.BEFORE_REPLY);
         } catch (IOException | RuntimeException failure) {
             failed = new IOException("Committed transaction requires recovery; restart the broker", failure);
             throw failed;
@@ -439,7 +446,9 @@ public final class DefaultBroker implements Broker {
             int written = Math.toIntExact(output.nextOffset() - firstOffset);
             output.appendValues(request.payloads().subList(written, request.valueCount()));
         }
+        transactionFault.at(TransactionStage.OUTPUT_FORCED);
         if (request.command() == Command.TRANSACT) applyRecoveredCommit(commitRequest(request.options().commit()));
+        transactionFault.at(TransactionStage.INPUT_APPLIED);
         producers.record(request, fingerprint, firstOffset);
         signalData(request.topic(), request.partition());
     }
@@ -973,6 +982,7 @@ public final class DefaultBroker implements Broker {
 
     // Package-scoped deterministic failure seam; never exposed by the wire protocol or launcher.
     void journalFault(BrokerJournal.Fault fault) { consumerJournal.fault(fault); }
+    synchronized void transactionFault(TransactionFault fault) { transactionFault = Objects.requireNonNull(fault); }
 
     public boolean isReady() { return !closed && failed == null; }
     public long recoveryNanos() { return recoveryNanos; }

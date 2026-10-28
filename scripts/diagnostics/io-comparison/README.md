@@ -147,10 +147,18 @@ The public APIs were checked against the
 
 ## Recorded measurements
 
-The integrated Linux Panama/io_uring default produced a median **183,691
+The later [master CI qualification](../../../README.md#performance), revision
+`fb8305b864a1d7334e69a0538526a90cee2a61b2`, achieved a **249,975 records/s FILE
+median** with worst target p99 **5.181 ms**. Both storage targets qualified across
+three repetitions of 50%/80%/100% load. Its host, workload, resource budgets and
+full reports are retained in the published snapshot. This supersedes the target
+status reported by the earlier diagnostic sessions below, without turning them
+into controlled before/after comparisons.
+
+The earlier integrated Linux Panama/io_uring default produced a median **183,691
 records/s** across four one-minute windows on 28 October 2026. Every run had
 zero request/force failures and exited naturally, but consumer backlog grew in
-every window. **The 250,000 records/s target remains unmet.** These diagnostics
+every window. **That diagnostic session did not meet the 250,000 records/s target.** These diagnostics
 do not qualify sustained capacity or change published benchmark badges.
 
 The [storage guide](../../../setu-storage/README.md#file-io) describes automatic

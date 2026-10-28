@@ -118,7 +118,7 @@ Records are opaque byte arrays. Ordering and dense, zero-based offsets apply **w
 
 | Behavior | `FILE` (default) | `IN_MEMORY` |
 | --- | --- | --- |
-| Engine | Chronicle Queue 2026.6 with bounded group commit | Immutable chunks published with CAS |
+| Engine | Chronicle Queue 2026.7 with bounded group commit | Immutable chunks published with CAS |
 | Successful produce | Touched queue and metadata files have completed the force boundary | Complete batch published in memory |
 | Restart | Topics and records recover from disk | Topics and records are lost |
 | Consumer join | Starts at offset zero | Starts at the current partition end |
