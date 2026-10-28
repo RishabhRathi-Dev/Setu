@@ -57,6 +57,7 @@ public final class ChronicleMessageLog implements MessageLog {
     private final byte[] checksumBuffer = new byte[8192];
     private final java.util.zip.CRC32C readChecksum = new java.util.zip.CRC32C();
     private final java.util.zip.CRC32C writeChecksum = new java.util.zip.CRC32C();
+    private ByteBuffer writeBuffer;
     private long[] offsets = new long[128];
     private long[] indexes = new long[128];
     private int documents;
@@ -76,7 +77,7 @@ public final class ChronicleMessageLog implements MessageLog {
 
     ChronicleMessageLog(Path directory, int maxRecordBytes, long blockBytes, RollCycle rollCycle,
                         TimeProvider timeProvider) throws IOException {
-        this(directory, maxRecordBytes, blockBytes, rollCycle, timeProvider, ChronicleFileSync::new);
+        this(directory, maxRecordBytes, blockBytes, rollCycle, timeProvider, FileSyncs::open);
     }
 
     ChronicleMessageLog(Path directory, int maxRecordBytes, long blockBytes, RollCycle rollCycle,
@@ -166,27 +167,20 @@ public final class ChronicleMessageLog implements MessageLog {
                     }
                     reserveIndex();
                     if (activeFile != null) dirtyFiles.add(activeFile);
+                    int payloadBytes = Math.toIntExact(encoded - HEADER_BYTES);
+                    ByteBuffer payload = encodePayload(owned, start, end, payloadBytes);
+                    writeChecksum.reset();
+                    writeChecksum.update(payload.duplicate());
                     try (var document = appender.writingDocument()) {
                         try {
                             Bytes<?> bytes = document.wire().bytes();
-                            writeChecksum.reset();
-                            for (int i = start; i < end; i++) {
-                                MessageValue value = owned.get(i);
-                                int length = value.length();
-                                if (java.nio.ByteOrder.nativeOrder() == java.nio.ByteOrder.LITTLE_ENDIAN) {
-                                    for (int shift = 0; shift < 32; shift += 8) writeChecksum.update(length >>> shift);
-                                } else {
-                                    for (int shift = 24; shift >= 0; shift -= 8) writeChecksum.update(length >>> shift);
-                                }
-                                value.updateChecksum(writeChecksum);
-                            }
                             bytes.writeLong(CHECKSUM_FORMAT).writeLong(first + start).writeInt(end - start)
                                     .writeInt((int) writeChecksum.getValue());
-                            for (int i = start; i < end; i++) {
-                                MessageValue value = owned.get(i);
-                                bytes.writeInt(value.length());
-                                value.writeTo(bytes);
-                            }
+                            Path file = ((MappedBytes) bytes).mappedFile().file().toPath();
+                            if (!syncFiles.containsKey(file)) syncFiles.put(file, syncFactory.open(file));
+                            // Chronicle still owns the document header/index publication;
+                            // every touched file is forced before the committed boundary moves.
+                            syncFiles.get(file).write(bytes, payload);
                         } catch (Throwable failure) { document.rollbackOnClose(); throw failure; }
                     }
                     offsets[documents] = first + start;
@@ -223,6 +217,24 @@ public final class ChronicleMessageLog implements MessageLog {
             if (failure instanceof Error error) throw error;
             throw ioFailure;
         }
+    }
+
+    private ByteBuffer encodePayload(List<MessageValue> values, int start, int end, int size) {
+        ByteBuffer buffer;
+        if (size > TARGET_DOCUMENT_BYTES) {
+            // An oversized individual record must not permanently enlarge the scratch buffer.
+            buffer = FileSyncs.allocatePayload(size).order(java.nio.ByteOrder.nativeOrder());
+        } else {
+            if (writeBuffer == null || writeBuffer.capacity() < size)
+                writeBuffer = FileSyncs.allocatePayload(size).order(java.nio.ByteOrder.nativeOrder());
+            buffer = writeBuffer.clear();
+        }
+        for (int i = start; i < end; i++) {
+            MessageValue value = values.get(i);
+            buffer.putInt(value.length());
+            value.copyTo(buffer);
+        }
+        return buffer.flip();
     }
 
     @Override public synchronized List<LogRecord> read(long offset, int maxBytes) throws IOException {
@@ -484,6 +496,7 @@ public final class ChronicleMessageLog implements MessageLog {
     private synchronized void closeResources() throws IOException {
         if (closed) return;
         closed = true;
+        writeBuffer = null;
         IOException failure = null;
         var resources = new ArrayList<AutoCloseable>(List.of(tailer, appender, queue));
         resources.addAll(syncFiles.values());

@@ -186,6 +186,42 @@ class ChronicleMessageLogTests {
         }
     }
 
+    @Test void partialPayloadWriteFailureRollsBackTheDocumentAndPoisonsFurtherOperations() throws Exception {
+        var fail = new AtomicBoolean();
+        var forces = new java.util.concurrent.atomic.AtomicInteger();
+        try (var log = new ChronicleMessageLog(directory, 4, BLOCK_BYTES, RollCycles.FAST_DAILY,
+                System::currentTimeMillis, path -> new ChronicleFileSync(path) {
+                    @Override void write(net.openhft.chronicle.bytes.Bytes<?> destination,
+                                         java.nio.ByteBuffer payload) throws IOException {
+                        if (!fail.get()) { super.write(destination, payload); return; }
+                        int limit = payload.limit();
+                        payload.limit(payload.position() + payload.remaining() / 2);
+                        super.write(destination, payload);
+                        payload.limit(limit);
+                        throw new IOException("injected partial payload write");
+                    }
+                    @Override void force() throws IOException {
+                        forces.incrementAndGet();
+                        super.force();
+                    }
+                })) {
+            log.append(integerBytes(0));
+            int before = forces.get();
+            fail.set(true);
+            assertThrows(IOException.class, () -> log.appendBatch(List.of(integerBytes(1), integerBytes(2))));
+            assertEquals(before, forces.get(), "a failed payload write must not reach the force boundary");
+            assertEquals(1, log.nextOffset());
+            assertThrows(IOException.class, () -> log.read(0, 12));
+            assertThrows(IOException.class, () -> log.append(integerBytes(3)));
+        }
+        try (var reopened = new ChronicleMessageLog(directory, 4, BLOCK_BYTES)) {
+            assertEquals(1, reopened.nextOffset());
+            assertIntegerRecords(reopened.read(0, 12), 0, 1);
+            assertEquals(1, reopened.append(integerBytes(1)));
+            assertIntegerRecords(reopened.read(0, 12), 0, 2);
+        }
+    }
+
     @Test void offsetsContinueAcrossChronicleRollCyclesAndRestart() throws Exception {
         var clock = new AtomicLong(1_800_000_000_000L);
         try (var log = new ChronicleMessageLog(directory, 16, BLOCK_BYTES, RollCycles.FAST_DAILY, clock::get)) {

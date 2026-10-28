@@ -10,6 +10,10 @@ Build the runtime dependencies first:
 
 On Linux/macOS, use `bash ./mvnw -pl setu-server -am package`. The commands below work in PowerShell and Bash. Keep the shared `config/jvm.options`: file storage requires its module/native-access options. Rebuild after changing library sources so `setu-server/target/lib/` contains the current code.
 
+FILE examples automatically use the Setu-owned io_uring backend on supported
+Linux, with startup fallback when ring setup is unavailable. No additional
+backend properties or native library installation are needed.
+
 | Example | Demonstrates | Running broker required? |
 | --- | --- | --- |
 | [Recovery demo project](recovery-demo/README.md) | Lost transaction reply, retry, checkpoint and forced-process recovery; optional contention diagnostic | No |

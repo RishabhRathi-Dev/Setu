@@ -15,6 +15,29 @@ import java.nio.file.StandardOpenOption;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CapacityJfrTests {
+    @Test
+    void includesNativeBarriersWithoutDoubleCountingJdkForces() throws Exception {
+        Path capture = directory.resolve("native-force.jfr");
+        CapacityJfr.start(capture);
+        try {
+            var stage = new CapacityJfr.Stage();
+            stage.mode = "FILE"; stage.stage = 1; stage.begin();
+            var force = new io.setu.storage.uring.FileForceEvent();
+            force.path = "/broker/@consumer-state/generation/cycle.cq4";
+            force.metaData = false; force.begin();
+            Thread.sleep(2);
+            force.success = true; force.end(); force.commit();
+            stage.end(); stage.commit();
+        } finally { CapacityJfr.finish(); }
+        var output = new java.io.ByteArrayOutputStream();
+        var original = System.out;
+        try (var printer = new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8)) {
+            System.setOut(printer); CapacityJfr.report(capture);
+        } finally { System.setOut(original); }
+        String report = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(report.contains("file_force_count=1 "), report);
+        assertTrue(report.contains("scope=consumer_journal_data metadata=false count=1 "), report);
+    }
     @TempDir Path directory;
 
     @Test
@@ -64,6 +87,45 @@ class CapacityJfrTests {
         assertTrue(report.contains("file_force_total_ms="), report);
         assertTrue(report.contains("file_force_p99_ms="), report);
         assertTrue(report.contains("file_force_max_ms="), report);
+        assertTrue(report.contains("CAPACITY_FORCE mode=FILE stage=1 scope=other metadata=false count=1 "), report);
+    }
+
+    @Test
+    void separatesJournalAndPartitionBarriersWithinTheMeasuredStage() throws Exception {
+        Path capture = directory.resolve("scopes.jfr");
+        Path partition = Files.createDirectories(directory.resolve("topic/partition-0"));
+        Path journal = Files.createDirectories(directory.resolve("@consumer-state/generation-1"));
+        CapacityJfr.start(capture);
+        try {
+            var stage = new CapacityJfr.Stage();
+            stage.mode = "FILE";
+            stage.stage = 1;
+            stage.begin();
+            for (Path file : new Path[]{partition.resolve("cycle.cq4"), journal.resolve("cycle.cq4"),
+                    journal.resolve("metadata.cq4t")}) {
+                try (var channel = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+                    channel.write(ByteBuffer.wrap(new byte[]{1}));
+                    channel.force(true);
+                    channel.write(ByteBuffer.wrap(new byte[]{2}));
+                    channel.force(false);
+                }
+            }
+            stage.end();
+            stage.commit();
+        } finally { CapacityJfr.finish(); }
+        var output = new java.io.ByteArrayOutputStream();
+        var original = System.out;
+        try (var printer = new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8)) {
+            System.setOut(printer);
+            CapacityJfr.report(capture);
+        } finally { System.setOut(original); }
+        String report = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(report.contains("file_force_count=6 "), report);
+        for (String scope : new String[]{"partition_data", "consumer_journal_data", "consumer_journal_metadata"}) {
+            for (boolean metadata : new boolean[]{true, false}) {
+                assertTrue(report.contains("scope=" + scope + " metadata=" + metadata + " count=1 "), report);
+            }
+        }
     }
 
     @Test

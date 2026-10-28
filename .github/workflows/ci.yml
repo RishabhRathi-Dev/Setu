@@ -162,10 +162,10 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/file-force-probe/classes"
-          javac -d "$RUNNER_TEMP/file-force-probe/classes" \
-            setu-storage/src/main/java/io/setu/storage/log/ChronicleFileSync.java \
+          bash ./mvnw --batch-mode --no-transfer-progress -pl setu-server -am -DskipTests package
+          javac -cp "setu-server/target/lib/*" -d "$RUNNER_TEMP/file-force-probe/classes" \
             scripts/diagnostics/FileForceProbe.java
-          java --enable-native-access=ALL-UNNAMED -cp "$RUNNER_TEMP/file-force-probe/classes" \
+          java --enable-native-access=ALL-UNNAMED -cp "$RUNNER_TEMP/file-force-probe/classes:setu-server/target/lib/*" \
             io.setu.storage.log.FileForceProbe "$RUNNER_TEMP/file-force-probe" \
             | tee "$RUNNER_TEMP/file-force-probe/probe.log"
 

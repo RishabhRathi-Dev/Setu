@@ -49,9 +49,18 @@ These tools update tracked assets under `benchmark-badges/`. CI stages those ass
 | --- | --- |
 | [diagnostics/FileForceProbe.java](diagnostics/FileForceProbe.java) | Check mapped-file barriers, mapped growth/header rewrites, and delayed-force backlog accounting |
 | [diagnostics/StorageForceProbe.java](diagnostics/StorageForceProbe.java) | Compare full and data-only barriers with two mapped writers on a selected disk path |
+| [diagnostics/WindowsIoRingProbe.java](diagnostics/WindowsIoRingProbe.java) | Query Windows I/O-ring support; optionally compare mapped-file JDK and native-ring flushes |
 | [diagnostics/trace-force-waits.py](diagnostics/trace-force-waits.py) | Linux kernel/resource observer used by the optional CI tracing job |
+| [diagnostics/io-comparison/](diagnostics/io-comparison/README.md) | Isolated Linux overlays comparing Java FileChannel, C++/FFM io_uring and jasyncfio through the actual TCP workload |
 
 Probes diagnose storage behavior and do not qualify broker throughput. Compilation/runtime commands are documented in [storage tests and diagnostics](../setu-storage/README.md#limits-and-tests) and [benchmark CI and reports](../setu-benchmark/README.md#ci-and-reports).
+
+On Windows, run `java --enable-native-access=ALL-UNNAMED scripts/diagnostics/WindowsIoRingProbe.java`
+with JDK 26 to query native capabilities. Add a fresh output-directory path to
+run four alternating flush comparisons; it retains eight 64 MiB test files.
+The experiment requires Windows I/O-ring API version 300 or newer. It preserves
+mapped writes and full durability barriers, reports flushes/s, and does not
+measure broker throughput. See [FILE I/O measurements](diagnostics/io-comparison/README.md#windows-flush-experiment).
 
 ## Tests
 
