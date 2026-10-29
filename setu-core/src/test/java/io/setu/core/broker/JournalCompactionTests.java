@@ -53,7 +53,8 @@ class JournalCompactionTests {
     }
 
     @Test void failureOnEitherSideOfManifestPublicationRecoversCompleteState() throws Exception {
-        for (String stage : List.of("checkpoint-forced", "manifest-published")) {
+        for (String stage : List.of("checkpoint-written", "checkpoint-forced", "manifest-forced",
+                "manifest-published", "before-cleanup", "after-cleanup")) {
             Path data = directory.resolve(stage);
             try (var broker = new DefaultBroker(data, 1024)) {
                 initialize(broker);

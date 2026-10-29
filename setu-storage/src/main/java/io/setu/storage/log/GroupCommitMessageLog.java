@@ -50,10 +50,23 @@ public final class GroupCommitMessageLog implements MessageLog {
         return appendValues(values.stream().map(MessageValue::copyOf).toList());
     }
     public long appendValues(List<MessageValue> values) throws IOException {
-        return await(appendValuesAsync(values), "Partition append failed");
+        return await(enqueue(values), "Partition append failed");
     }
 
     public CompletableFuture<Long> appendValuesAsync(List<MessageValue> values) throws IOException {
+        var result = new CompletableFuture<Long>();
+        enqueue(values).whenComplete((offset, failure) ->
+                Thread.ofVirtual().name("setu-write-completion").start(() -> {
+                    // Completing a public future can run arbitrary caller callbacks.
+                    // Keep both success and failure callbacks off the partition writer:
+                    // they may synchronously append again or close and join that writer.
+                    if (failure == null) result.complete(offset);
+                    else result.completeExceptionally(failure);
+                }));
+        return result;
+    }
+
+    private CompletableFuture<Long> enqueue(List<MessageValue> values) throws IOException {
         if (values.isEmpty()) throw new IllegalArgumentException("empty batch");
         List<MessageValue> owned = List.copyOf(values);
         long bytes = 0;

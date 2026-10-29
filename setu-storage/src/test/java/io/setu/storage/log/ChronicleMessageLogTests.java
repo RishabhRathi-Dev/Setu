@@ -25,6 +25,48 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ChronicleMessageLogTests {
+    @Test void rolloverForcesOldAndNewQueueFilesAndRollMetadataBeforePublishingOffsets() throws Exception {
+        var clock = new AtomicLong(1_800_000_000_000L);
+        var forced = new java.util.HashSet<Path>();
+        try (var log = new ChronicleMessageLog(directory, 16, BLOCK_BYTES, RollCycles.FAST_DAILY, clock::get,
+                path -> new ChronicleFileSync(path) {
+                    @Override void force() throws IOException { super.force(); forced.add(path); }
+                })) {
+            log.append(new byte[]{1});
+            forced.clear();
+            clock.addAndGet(86_400_000L);
+            assertEquals(1, log.append(new byte[]{2}));
+            try (var files = Files.list(directory)) {
+                var durableFiles = files.filter(path -> path.getFileName().toString().endsWith(".cq4")
+                        || path.getFileName().toString().equals("metadata.cq4t")).toList();
+                assertEquals(3, durableFiles.size());
+                assertTrue(forced.containsAll(durableFiles), "rollover must force both cycles and metadata");
+            }
+            assertEquals(2, log.nextOffset());
+        }
+    }
+
+    @Test void failureAfterSuccessfulForceStillWithholdsAcknowledgementUntilReopen() throws Exception {
+        var fail = new AtomicBoolean();
+        try (var log = new ChronicleMessageLog(directory, 16, BLOCK_BYTES, RollCycles.FAST_DAILY,
+                System::currentTimeMillis, path -> new ChronicleFileSync(path) {
+                    @Override void force() throws IOException {
+                        super.force();
+                        if (fail.get()) throw new IOException("injected after force");
+                    }
+                })) {
+            assertEquals(0, log.append(new byte[]{1}));
+            fail.set(true);
+            assertThrows(IOException.class, () -> log.append(new byte[]{2}));
+            assertEquals(1, log.nextOffset(), "the in-process committed boundary must not advance on failure");
+            assertThrows(IOException.class, () -> log.read(0, 1024));
+        }
+        try (var recovered = new ChronicleMessageLog(directory, 16, BLOCK_BYTES)) {
+            assertEquals(2, recovered.nextOffset(), "a failed reply can correspond to durable work");
+            assertEquals(2, recovered.append(new byte[]{3}));
+        }
+    }
+
     @TempDir Path directory;
     private static final long BLOCK_BYTES = 64L << 20;
 

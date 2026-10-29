@@ -28,4 +28,4 @@ Monitor `setu_journal_bytes`, `setu_journal_compactions_total`, `setu_recovery_s
 
 ## Verification
 
-`JournalCompactionTests` covers duplicate retries, epoch fencing, group generations, departed groups, tail replay, repeated reclamation, corruption, and injected failures before/after pointer publication. The [recovery demo](../examples/recovery-demo/README.md) additionally terminates a real broker process after checkpointing and retries the original transaction over TCP. Run the core/integration suites and the demo for changes to this protocol.
+`JournalCompactionTests` covers duplicate retries, epoch fencing, group generations, departed groups, tail replay, repeated reclamation and corruption. Injected failures cover checkpoint writing, checkpoint force, temporary-manifest force, manifest publication, and before/after obsolete-generation cleanup. The [recovery demo](../examples/recovery-demo/README.md) additionally terminates a real broker process after checkpointing and retries the original transaction over TCP. Run the core/integration suites and the demo for changes to this protocol.

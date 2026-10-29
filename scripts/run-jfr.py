@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Capture the existing TCP workload on any OS; leave performance analysis to the caller."""
+"""Capture the existing TCP workload on any OS, with optional measured-stage JFR summaries."""
 import argparse
 from datetime import datetime, timezone
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -31,6 +32,7 @@ def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java-home', type=Path, help='JDK 26 directory; defaults to JAVA_HOME or java on PATH')
     parser.add_argument('--storage-mode', choices=['ALL', 'IN_MEMORY', 'FILE'], default='ALL')
+    parser.add_argument('--analyze', action='store_true', help='also save measured-stage JFR/force diagnostics')
     parser.add_argument('--warmup-millis', type=bounded(250, 60000), default=2000)
     parser.add_argument('--stage-millis', type=bounded(250, 60000), default=3000)
     parser.add_argument('--max-concurrency', type=bounded(1, 32768), default=2)
@@ -130,6 +132,8 @@ def main():
     manifest = dict(status='running', started_utc=datetime.now(timezone.utc).isoformat(),
                     java_version=version, settings={key: str(value) if isinstance(value, Path) else value
                                                   for key, value in vars(args).items()},
+                    host=platform.platform(), processor=platform.processor(), cpu_count=os.cpu_count(),
+                    filesystem_media='filesystem recorded in worker.log; physical media not detected',
                     scope='diagnostic smoke; broker and clients share one JVM; no OS resource quota', runs=[])
     revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True, text=True)
     manifest['source_revision'] = revision.stdout.strip()
@@ -182,6 +186,9 @@ def main():
             run['completed_stages'] = validate_capture(mode, (capture / 'worker.log').read_text(encoding='utf-8'),
                                                        json.loads((capture / 'stages.json').read_text(encoding='utf-8')))
             run['recording_bytes'] = Path(run['recording']).stat().st_size
+            if args.analyze:
+                run['analysis_command'] = [java, '-cp', classpath, 'io.setu.benchmark.chaos.CapacityJfr', run['recording']]
+                stream_run(run['analysis_command'], capture / 'write-path.txt', env, 120)
             run['status'] = 'passed'
             save()
             print(f'JFR verified: {run["recording"]} ({run["completed_stages"]} completed stages)', flush=True)

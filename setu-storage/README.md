@@ -1,6 +1,6 @@
 # setu-storage
 
-`setu-storage` owns append-only partition logs, logical offsets and physical storage. `StorageMode.FILE` uses **OpenHFT Chronicle Queue 2026.6** by default. `IN_MEMORY` provides volatile storage behind the same `MessageLog` interface.
+`setu-storage` owns append-only partition logs, logical offsets and physical storage. `StorageMode.FILE` uses **OpenHFT Chronicle Queue 2026.7** by default. `IN_MEMORY` provides volatile storage behind the same `MessageLog` interface.
 
 ## API and runtime
 
@@ -98,7 +98,7 @@ From the repository root with Java 26:
 .\mvnw.cmd -pl setu-storage test
 ```
 
-Tests cover offsets, admission, immutable snapshots, daily rolls, mapped growth, incomplete/corrupt documents, exclusive ownership, migration, group-commit failure/shutdown and cleanup.
+Tests cover offsets, admission, immutable snapshots, daily rolls, mapped growth, incomplete/corrupt documents, exclusive ownership, migration, group-commit failure/shutdown and cleanup. Durability tests check both sides of the force barrier and force coverage for both queue cycles and roll metadata at rollover.
 
 CI also runs a standalone Linux force diagnostic without changing the throughput gates. To run it from the repository root:
 
