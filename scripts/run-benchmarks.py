@@ -17,6 +17,7 @@ import tempfile
 import uuid
 import sustained_report
 import node_target_report
+import redline_report
 
 MIB = 1024 ** 2
 GIB = 1024 ** 3
@@ -245,6 +246,10 @@ def main():
     policy.add_argument('--strict', action='store_true',
                         help='fail baseline/target/sustained/steady measurements on unmet performance expectations')
     args = parser.parse_args()
+    if args.kind == 'capacity' and (args.repeats not in (None, 1)
+                                   or args.stage_millis not in (None, 2000) or args.warmup_millis not in (None, 2000)
+                                   or args.max_concurrency is not None):
+        parser.error('capacity uses one ramp per mode, 2s warmup/windows and no concurrency ceiling')
     if (args.report_only or args.strict) and args.kind not in ('target', 'baseline', 'sustained', 'steady'):
         parser.error('--report-only/--strict apply to baseline, target, sustained and steady measurements')
     args.report_only = not args.strict
@@ -257,7 +262,7 @@ def main():
             parser.error('CI baseline requires the github-private profile, 0.8 CPU fraction and its fixed 5 GiB memory limit')
     full = args.kind in ('sustained', 'target', 'baseline') and args.measurement == 'full'
     args.repeats = args.repeats if args.repeats is not None else (3 if full or args.kind == 'sweep' else 1)
-    args.stage_millis = args.stage_millis if args.stage_millis is not None else (30000 if full else 3000)
+    args.stage_millis = args.stage_millis if args.stage_millis is not None else (2000 if args.kind == 'capacity' else 30000 if full else 3000)
     args.warmup_millis = args.warmup_millis if args.warmup_millis is not None else (10000 if full else 2000)
     args.max_concurrency = args.max_concurrency if args.max_concurrency is not None else (32768 if args.kind == 'sustained' else 8)
     if full and (args.repeats != 3 or args.stage_millis < 30000 or args.warmup_millis < 10000):
@@ -324,6 +329,12 @@ def main():
                         source_revision=os.environ.get('GITHUB_SHA'), run_url=(
             os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + os.environ['GITHUB_REPOSITORY']
             + '/actions/runs/' + os.environ['GITHUB_RUN_ID']) if 'GITHUB_RUN_ID' in os.environ else None)
+    if args.kind == 'capacity':
+        snapshot['max_concurrency'] = 0
+        snapshot['source_revision'] = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT,
+                                                    capture_output=True, text=True, check=True).stdout.strip()
+        snapshot['source_dirty'] = bool(subprocess.run(['git', 'status', '--porcelain'], cwd=ROOT,
+                                                      capture_output=True, text=True, check=True).stdout.strip())
     print('BENCHMARK_RESOURCES ' + json.dumps(snapshot, sort_keys=True), flush=True)
     if args.dry_run:
         return
@@ -352,6 +363,8 @@ def main():
                 test = '*ChaosTests,!ProgressiveCapacityChaosTests,QuickBrokerChaosBenchmarkTests,ProcessCpuSamplerTests,CpuSaturationHoldTests,CapacityJfrTests,SustainedCriteriaTests'
             if args.kind == 'large-batch':
                 test += '#progressivelyRampsFileProducersAndConsumersUntilTheRuntimeLimit'
+            if args.kind == 'capacity' and args.storage_mode != 'both':
+                test += '#progressivelyRamps' + ('InMemory' if args.storage_mode == 'IN_MEMORY' else 'File') + 'ProducersAndConsumersUntilTheRuntimeLimit'
             test += ',BenchmarkEnvironmentTests'
             command = ['bash', str(ROOT / 'mvnw'), '--batch-mode', '--no-transfer-progress', '-pl', 'setu-benchmark', '-am',
                        '-Dtest=' + test, '-Dsurefire.failIfNoSpecifiedTests=false']
@@ -372,6 +385,7 @@ def main():
                 command += ['-Dsetu.benchmark.steady.enforce=' + str(args.strict).lower()]
             elif args.kind == 'capacity':
                 command += ['-Dsetu.benchmark.max.concurrency=0', '-Dsetu.benchmark.min.stages=8',
+                            '-Dsetu.benchmark.min.completed.stages=1',
                             '-Dsetu.benchmark.stage.millis=2000', '-Dsetu.benchmark.warmup.millis=2000',
                             '-Dsetu.benchmark.cpu.hold.millis=10000', '-Dsetu.benchmark.jfr=true']
             elif args.kind not in ('steady', 'chaos'):
@@ -390,6 +404,11 @@ def main():
                     subprocess.run(([] if os.geteuid() == 0 else ['sudo', '-n']) + ['systemctl', 'stop', unit], check=False)
                     raise
             print(f'BENCHMARK_CASE payload_bytes={payload} repeat={repeat + 1} exit={result.returncode} capture={capture}', flush=True)
+            if args.kind == 'capacity':
+                document = redline_report.save_capture(capture.read_text(encoding='utf-8'), output, snapshot, modes, result.returncode)
+                print(redline_report.render(document), flush=True)
+                if document.get('error'):
+                    raise RuntimeError(f'Redline capture failed: {document["error"]}; report: {output / "redline.md"}')
             if target_kind:
                 captured = capture.read_text(encoding='utf-8')
                 try:

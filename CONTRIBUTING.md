@@ -56,6 +56,8 @@ For documentation-only changes, check relative links and heading anchors, verify
 
 Install the mandatory [contributor PC pre-push check](scripts/README.md#contributor-pc-check-before-every-push) with `python scripts/contributor-performance.py install`. Every branch-tip push must carry its local two-repeat diagnostic alongside the existing CI benchmarks. The check takes at least three minutes plus build/analysis, requires a clean checkout and JDK 26, and preserves performance misses as unqualified measurements. CI rejects missing or mismatched attachments; branch protection must require `contributor-performance` to enforce this on merges.
 
+The check also runs one progressive redline ramp per storage mode after the fixed-target windows. These ramps add runtime/load, use local JVM limits, and report the terminal resource/admission limit as an unqualified diagnostic. CI repeats them under enforced CPU/memory limits and publishes a separate exhaustion report. Updated schema-2 attachments require both profiles; older attachments must be remeasured. See the [redline guide](setu-benchmark/README.md#bounded-chaos-and-exhaustion) for timing, resource limits and failure handling.
+
 1. Create a focused branch from the current default branch; `codex/<short-description>` is the convention for agent-created branches.
 2. Keep the change within the owning module's boundary. Add meaningful behavioral coverage when a contract changes.
 3. Update the module README and any affected cross-cutting guides, configuration examples, or runnable examples.

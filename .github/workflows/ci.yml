@@ -346,6 +346,48 @@ jobs:
             **/target/surefire-reports/
           retention-days: 14
 
+  redline-benchmark:
+    if: ${{ !inputs.trace_file_waits }}
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [IN_MEMORY, FILE]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '26'
+          cache: maven
+      - name: Ramp to the runtime limit under an enforced resource budget
+        env:
+          BENCHMARK_MODE: ${{ matrix.mode }}
+          BENCHMARK_FRACTION: ${{ inputs.resource_fraction || vars.SETU_BENCHMARK_FRACTION || '0.8' }}
+        run: >-
+          python3 scripts/run-benchmarks.py --kind capacity
+          --storage-mode "$BENCHMARK_MODE" --payload-sizes 1024
+          --profile github-private --fraction "$BENCHMARK_FRACTION"
+          --heap-mib 512 --direct-mib 128 --memory-log-mib 64 --data-directory /var/tmp
+      - name: Show redline measurements and the terminal limit
+        if: always()
+        run: |
+          if [ -d logs/benchmarks/resources ]; then
+            find logs/benchmarks/resources -name redline.md -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: redline-${{ matrix.mode }}-${{ github.run_attempt }}
+          path: |
+            logs/benchmarks/resources/
+            logs/benchmarks/capacity/
+            **/target/surefire-reports/
+          if-no-files-found: error
+          retention-days: 14
+
   sustained-full:
     if: github.event_name == 'workflow_dispatch' && inputs.full_benchmark
     needs: chaos-benchmark
@@ -469,7 +511,7 @@ jobs:
           retention-days: 14
 
   publish-benchmark-badges:
-    needs: [unit-tests, integration-tests, windows-functional, node-target-benchmark, contributor-performance]
+    needs: [unit-tests, integration-tests, windows-functional, node-target-benchmark, redline-benchmark, contributor-performance]
     if: >-
       always() && needs.unit-tests.result == 'success' && needs.integration-tests.result == 'success'
       && needs.windows-functional.result == 'success' && needs.node-target-benchmark.result != 'cancelled'
@@ -528,13 +570,29 @@ jobs:
           --allow-incomplete
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        if: needs.contributor-performance.result == 'success'
+        if: ${{ !cancelled() && steps.ci-badges.outcome == 'success' }}
+        continue-on-error: true
+        with:
+          pattern: redline-*-${{ github.run_attempt }}
+          path: redline-reports
+
+      - name: Publish CI redline diagnostics separately from qualified target results
+        if: ${{ !cancelled() && steps.ci-badges.outcome == 'success' }}
+        env:
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_REVISION: ${{ github.sha }}
+        run: >-
+          python3 scripts/redline_report.py --input redline-reports
+          --workflow-url "$WORKFLOW_URL" --revision "$SOURCE_REVISION" --allow-incomplete
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: ${{ !cancelled() && steps.ci-badges.outcome == 'success' && needs.contributor-performance.result == 'success' }}
         with:
           name: contributor-pc-${{ github.run_attempt }}
           path: contributor-report
 
       - name: Publish the contributor PC diagnostic alongside CI measurements
-        if: needs.contributor-performance.result == 'success'
+        if: ${{ !cancelled() && steps.ci-badges.outcome == 'success' && needs.contributor-performance.result == 'success' }}
         env:
           WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: >-

@@ -75,7 +75,7 @@ def jdk_tools(home):
     return home, str(java), str(jfr), version
 
 
-def stream_run(command, log, env, timeout=None):
+def stream_run(command, log, env, timeout=None, accepted_exit_codes=(0,)):
     """Tee the actual child output while retaining failures and bounding worker lifetime."""
     with log.open('w', encoding='utf-8') as capture:
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.PIPE,
@@ -102,8 +102,9 @@ def stream_run(command, log, env, timeout=None):
         finally:
             reader.join()
             process.stdout.close()
-    if code:
+    if code not in accepted_exit_codes:
         raise RuntimeError(f'Process exited {code}; see {log}')
+    return code
 
 
 def validate_capture(mode, log, events):

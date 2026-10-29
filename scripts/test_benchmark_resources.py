@@ -277,6 +277,43 @@ class ResourceBudgetTests(unittest.TestCase):
         with patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'capacity', '--report-only']), patch('sys.stderr'), self.assertRaises(SystemExit):
             resources.main()
 
+    def test_redline_selects_one_mode_and_saves_evidence_before_execution_failure(self):
+        from test_redline_report import fixture, capture
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        for code in (0, 1):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
+                host = dict(self.host(), cpu_model='Test CPU', disk_type='ext4')
+                calls = []
+
+                def workload(command, **kwargs):
+                    if command[0] == 'git':
+                        return type('Result', (), {'stdout': 'a' * 40})()
+                    calls.append(command)
+                    kwargs['stdout'].write(capture(fixture('FILE', cpu=10)))
+                    return type('Result', (), {'returncode': code})()
+
+                argv = ['run-benchmarks', '--kind', 'capacity', '--storage-mode', 'FILE', '--payload-sizes', '1024',
+                        '--data-directory', directory, '--output', directory, '--heap-mib', '512']
+                with patch.object(resources, 'detect_host', return_value=host), \
+                        patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
+                        patch.object(resources.subprocess, 'run', side_effect=workload), \
+                        patch.object(sys, 'argv', argv), patch('builtins.print'):
+                    if code:
+                        with self.assertRaisesRegex(RuntimeError, 'execution failed'):
+                            resources.main()
+                    else:
+                        resources.main()
+                self.assertIn('-Dtest=ProgressiveCapacityChaosTests#progressivelyRampsFileProducersAndConsumersUntilTheRuntimeLimit,BenchmarkEnvironmentTests', calls[0])
+                self.assertIn('-Dsetu.benchmark.max.concurrency=0', calls[0])
+                self.assertIn('-Dsetu.benchmark.min.completed.stages=1', calls[0])
+                saved = json.loads(next(Path(directory).rglob('redline.json')).read_text())
+                self.assertEqual(['FILE'], [run['mode'] for run in saved['runs']])
+                self.assertEqual(code, saved['execution_exit_code'])
+                self.assertEqual(2000, saved['resources']['stage_millis'])
+                self.assertEqual('a' * 40, saved['resources']['source_revision'])
+                self.assertEqual(bool(code), bool(saved.get('error')))
+
     def test_sustained_misses_warn_but_execution_invalid_capture_and_request_errors_fail(self):
         from test_benchmark_sustained import run_fixture, capture
         old_handler = signal.getsignal(signal.SIGTERM)

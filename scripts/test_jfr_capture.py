@@ -58,6 +58,14 @@ class CaptureValidationTests(unittest.TestCase):
                 capture.stream_run(command, log, dict(os.environ), timeout=1)
             self.assertIn('started', log.read_text())
 
+    def test_oom_exit_is_only_accepted_when_requested_by_redline_caller(self):
+        with tempfile.TemporaryDirectory(dir=self.scratch) as directory:
+            log = Path(directory) / 'worker.log'
+            command = [sys.executable, '-c', 'import sys; sys.exit(42)']
+            with self.assertRaisesRegex(RuntimeError, 'Process exited 42'):
+                capture.stream_run(command, log, dict(os.environ), timeout=10)
+            self.assertEqual(42, capture.stream_run(command, log, dict(os.environ), 10, (0, 42)))
+
     def test_nonzero_worker_exit_retains_failure(self):
         with tempfile.TemporaryDirectory(dir=self.scratch) as directory:
             log = Path(directory) / 'worker.log'

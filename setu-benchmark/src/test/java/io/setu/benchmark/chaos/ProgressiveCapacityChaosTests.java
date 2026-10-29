@@ -69,7 +69,10 @@ class ProgressiveCapacityChaosTests {
                     "Child stopped without a recognized capacity boundary:\n" + report);
             assertTrue(child.exitValue() == 0 || child.exitValue() == 42,
                     "Capacity worker terminated unexpectedly (exit " + child.exitValue() + "):\n" + report);
-            int minimumStages = Integer.getInteger("setu.benchmark.min.stages", 8);
+            // Exhaustion may occur before the eighth stage under a smaller resource allocation.
+            // Keep the CPU-hold observation threshold independent of required completed evidence.
+            int minimumStages = Integer.getInteger("setu.benchmark.min.completed.stages",
+                    Integer.getInteger("setu.benchmark.min.stages", 8));
             int maximumConcurrency = Integer.getInteger("setu.benchmark.max.concurrency", 0);
             if (maximumConcurrency == 0 || maximumConcurrency >= (1 << (minimumStages - 1)))
                 assertTrue(report.lines().anyMatch(line -> (line.startsWith("CAPACITY_STAGE mode=" + mode + " stage=" + minimumStages + " ")
