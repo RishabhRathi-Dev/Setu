@@ -255,6 +255,10 @@ def render(document):
              'Broker and clients share the PC. These results are contributor supplied and do not qualify sustained capacity.', '',
              '| Mode | Repeat | Load | Produced/s | Consumed/s | p99 ms | CPU % | Force p99 ms | Health |',
              '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
+    if document.get('source_url'):
+        if not re.fullmatch(r'https://github\.com/[\w.-]+/[\w.-]+/actions/runs/[0-9]+', document['source_url']):
+            raise ValueError('Invalid contributor workflow URL')
+        lines[2:2] = [f'[Report, logs and downloadable results]({document["source_url"]})', '']
     for run in document['runs']:
         for stage, jfr in zip(run['stages'], run['jfr']):
             lines.append(f'| {run["mode"]} | {run["repeat"]} | {float(stage["load_fraction"]):.0%} | '
@@ -264,8 +268,10 @@ def render(document):
     return '\n'.join(lines) + '\n'
 
 
-def publish(path, readme, destination):
+def publish(path, readme, destination, workflow_url=None):
     document = json.loads(path.read_text(encoding='utf-8'))
+    if workflow_url:
+        document['source_url'] = workflow_url
     body = render(document)
     marker = 'benchmark-contributor-pc'
     source = readme.read_text(encoding='utf-8')
@@ -296,6 +302,7 @@ def main():
     publish_parser.add_argument('--input', type=Path, required=True)
     publish_parser.add_argument('--readme', type=Path, default=ROOT / 'README.md')
     publish_parser.add_argument('--output', type=Path, default=ROOT / 'benchmark-badges/contributor-pc.json')
+    publish_parser.add_argument('--workflow-url', help='CI run containing the contributor summary and artifact')
     args = parser.parse_args()
     if args.action == 'install':
         current = git('config', '--get', 'core.hooksPath', check=False).stdout.strip()
@@ -320,7 +327,7 @@ def main():
             with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as output:
                 output.write(summary)
     else:
-        publish(args.input, args.readme, args.output)
+        publish(args.input, args.readme, args.output, args.workflow_url)
 
 
 if __name__ == '__main__':

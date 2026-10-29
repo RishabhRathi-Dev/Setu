@@ -533,9 +533,12 @@ jobs:
           path: contributor-report
 
       - name: Publish the contributor PC diagnostic alongside CI measurements
+        env:
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: >-
           python3 scripts/contributor-performance.py publish
           --input contributor-report/contributor-pc.json
+          --workflow-url "$WORKFLOW_URL"
 
       - name: Commit and push as GitHub App bot
         env:

@@ -91,6 +91,12 @@ class ContributorValidationTests(unittest.TestCase):
             self.assertNotIn('<script>', text)
             self.assertNotIn('[unsafe]', text)
             self.assertEqual(data, json.loads(destination.read_text()))
+            url = 'https://github.com/owner/repo/actions/runs/123'
+            tool.publish(source, readme, destination, url)
+            self.assertIn(f'[Report, logs and downloadable results]({url})', readme.read_text())
+            self.assertEqual(url, json.loads(destination.read_text())['source_url'])
+            with self.assertRaisesRegex(ValueError, 'workflow URL'):
+                tool.publish(source, readme, destination, 'https://example.com/unsafe)')
 
     def test_pre_push_never_reuses_cached_measurement(self):
         with patch.object(tool, 'clean_revision', return_value='a' * 40), \
