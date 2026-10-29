@@ -58,6 +58,8 @@ Install the mandatory [contributor PC pre-push check](scripts/README.md#contribu
 
 The check also runs one progressive redline ramp per storage mode after the fixed-target windows. These ramps add runtime/load, use local JVM limits, and report the terminal resource/admission limit as an unqualified diagnostic. CI repeats them under enforced CPU/memory limits and publishes a separate exhaustion report. Updated schema-2 attachments require both profiles; older attachments must be remeasured. See the [redline guide](setu-benchmark/README.md#bounded-chaos-and-exhaustion) for timing, resource limits and failure handling.
 
+CI can reuse a measured immediate parent's attachment after merging newer generated benchmark reports. Only the generated root README blocks and non-executable JSON/SVG badge snapshots may differ; code, configuration, tools and manual documentation must match. Reports retain the measured source identity and record the merge revision separately. See [attachment collection](scripts/README.md#contributor-pc-check-before-every-push) for the exact comparison boundary.
+
 1. Create a focused branch from the current default branch; `codex/<short-description>` is the convention for agent-created branches.
 2. Keep the change within the owning module's boundary. Add meaningful behavioral coverage when a contract changes.
 3. Update the module README and any affected cross-cutting guides, configuration examples, or runnable examples.

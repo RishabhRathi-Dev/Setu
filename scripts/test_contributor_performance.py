@@ -43,6 +43,19 @@ def fixture():
 
 
 class ContributorValidationTests(unittest.TestCase):
+    def test_generated_readme_normalization_preserves_manual_text_and_rejects_bad_markers(self):
+        source = 'manual before\n' + ''.join(
+            f'<!-- {marker}:start -->generated<!-- {marker}:end -->\n' for marker in tool.PUBLICATION_MARKERS) + 'manual after\n'
+        refreshed = source.replace('generated', 'new report')
+        self.assertEqual(tool.without_publication_blocks(source), tool.without_publication_blocks(refreshed))
+        self.assertNotEqual(tool.without_publication_blocks(source), tool.without_publication_blocks(refreshed + 'new manual prose\n'))
+        first, second = tool.PUBLICATION_MARKERS[:2]
+        invalid = (source + f'<!-- {first}:start -->', source.replace(f'<!-- {first}:end -->', ''),
+                   f'<!-- {first}:start --><!-- {second}:start --><!-- {second}:end --><!-- {first}:end -->')
+        for text in invalid:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                tool.without_publication_blocks(text)
+
     def test_runner_executes_fixed_targets_then_fresh_redline_workers_and_reports_both(self):
         from test_redline_report import fixture as redline_fixture, capture as redline_capture
         scratch = tool.ROOT / 'target/contributor-tests'
@@ -135,6 +148,8 @@ class ContributorValidationTests(unittest.TestCase):
 
     def test_stale_partial_error_and_nonfinite_evidence_is_rejected(self):
         mutations = [lambda d: d.update(source_revision='c' * 40),
+                     lambda d: d.update(collection='invalid'),
+                     lambda d: d.update(collection=dict(comparison='unverified', revision='a' * 40, source_tree='b' * 40)),
                      lambda d: d.update(qualified=True), lambda d: d['runs'].pop(),
                      lambda d: d['runs'][0]['stages'].pop(),
                      lambda d: d['runs'][0]['stages'][0].update(errors='1'),
@@ -247,6 +262,95 @@ class ContributorValidationTests(unittest.TestCase):
 
 
 class ContributorGitAttachmentTests(unittest.TestCase):
+    def test_merge_reuses_parent_evidence_only_for_generated_publication_changes(self):
+        scratch = tool.ROOT / 'target/contributor-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as folder:
+            root = Path(folder)
+            repository, remote = root / 'work', root / 'remote.git'
+            subprocess.run(['git', 'init', '--bare', str(remote)], check=True, capture_output=True)
+            subprocess.run(['git', 'init', '-b', 'baseline', str(repository)], check=True, capture_output=True)
+            with patch.object(tool, 'ROOT', repository):
+                tool.git('config', 'user.name', 'Test')
+                tool.git('config', 'user.email', 'test@example.invalid')
+                # Mode-change cases inspect committed trees, not filesystem chmod support.
+                tool.git('config', 'core.filemode', 'false')
+                readme = 'Manual setup instructions\n' + ''.join(
+                    f'<!-- {marker}:start -->old report<!-- {marker}:end -->\n' for marker in tool.PUBLICATION_MARKERS)
+                (repository / 'README.md').write_text(readme)
+                (repository / 'source.txt').write_text('baseline source\n')
+                (repository / 'benchmark-badges').mkdir()
+                (repository / 'benchmark-badges/metrics.json').write_text('{}\n')
+                tool.git('add', '.')
+                tool.git('commit', '-m', 'baseline')
+                baseline = tool.clean_revision()
+                tool.git('switch', '-c', 'measured')
+                (repository / 'source.txt').write_text('measured source\n')
+                tool.git('add', '.')
+                tool.git('commit', '-m', 'measured source')
+                measured = tool.clean_revision()
+                data = fixture()
+                data.update(source_revision=measured, source_tree=tool.git('rev-parse', 'HEAD^{tree}').stdout.strip())
+                summary = root / 'summary.json'
+                summary.write_text(json.dumps(data))
+                tool.attach(str(remote), measured, summary)
+                tool.git('switch', '-c', 'publication', baseline)
+                (repository / 'README.md').write_text(readme.replace('old report', 'new report'))
+                (repository / 'benchmark-badges/metrics.json').write_text('{"refreshed": true}\n')
+                (repository / 'benchmark-badges/metrics.svg').write_text('<svg/>\n')
+                tool.git('add', '.')
+                tool.git('commit', '-m', 'generated publication')
+                tool.git('merge', '--no-edit', 'measured')
+                merged = tool.clean_revision()
+                real_git = tool.git
+
+                def local_fetch(*args, **kwargs):
+                    args = tuple(str(remote) if value == 'https://github.com/owner/repo.git' else value for value in args)
+                    return real_git(*args, **kwargs)
+
+                with patch.object(tool, 'git', side_effect=local_fetch):
+                    result = tool.collect('owner/repo', merged, root / 'merged.json')
+                self.assertEqual(measured, result['source_revision'])
+                self.assertEqual(data['source_tree'], result['source_tree'])
+                self.assertEqual(dict(revision=merged, source_tree=tool.git('rev-parse', 'HEAD^{tree}').stdout.strip(),
+                                      comparison='generated-publication-only'), result['collection'])
+                self.assertIn(merged, tool.render(result))
+                self.assertIn('manual documentation match', tool.render(result))
+
+                # Each change is directly based on the measured parent, which has a valid remote note.
+                cases = ('manual-readme', 'source', 'config', 'tool', 'documentation', 'snapshot-code',
+                         'duplicate-marker', 'snapshot-executable', 'readme-executable', 'snapshot-symlink')
+                for index, case in enumerate(cases):
+                    with self.subTest(case=case):
+                        tool.git('switch', '-c', f'invalid-{index}', measured)
+                        paths = {'manual-readme': 'README.md', 'source': 'source.txt', 'config': 'config/server.properties',
+                                 'tool': 'scripts/check.py', 'documentation': 'docs/guide.md',
+                                 'snapshot-code': 'benchmark-badges/loader.py', 'duplicate-marker': 'README.md'}
+                        if case in paths:
+                            path = repository / paths[case]
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            text = (readme + 'new manual instructions\n' if case == 'manual-readme' else
+                                    readme + f'<!-- {tool.PUBLICATION_MARKERS[0]}:start -->' if case == 'duplicate-marker'
+                                    else 'unmeasured change\n')
+                            path.write_text(text)
+                            tool.git('add', '.')
+                        elif case.endswith('executable'):
+                            path = 'README.md' if case == 'readme-executable' else 'benchmark-badges/metrics.json'
+                            tool.git('update-index', '--chmod=+x', path)
+                        else:
+                            blob = tool.git('hash-object', '-w', '--stdin', input='source.txt').stdout.strip()
+                            tool.git('update-index', '--add', '--cacheinfo', '120000', blob, 'benchmark-badges/link.svg')
+                            # Match the index in worktrees that represent symlinks as plain files.
+                            if sys.platform == 'win32':
+                                (repository / 'benchmark-badges/link.svg').write_text('source.txt')
+                            else:
+                                (repository / 'benchmark-badges/link.svg').symlink_to('source.txt')
+                        tool.git('commit', '-m', case)
+                        revision = tool.git('rev-parse', 'HEAD').stdout.strip()
+                        self.assertFalse(tool.publication_only_difference(measured, revision))
+                        with patch.object(tool, 'git', side_effect=local_fetch), self.assertRaisesRegex(ValueError, 'Missing contributor'):
+                            tool.collect('owner/repo', revision, root / f'{case}.json')
+
     def test_real_notes_roundtrip_uses_no_source_commit_and_replaces_with_lease(self):
         scratch = tool.ROOT / 'target/contributor-tests'
         scratch.mkdir(parents=True, exist_ok=True)

@@ -26,6 +26,8 @@ MODES = ('IN_MEMORY', 'FILE')
 PROFILE = dict(record_bytes=1024, batch_records=256, warmup_ms=5000, stage_ms=10000, repeats=2)
 NOTE_PREFIX = 'refs/notes/setu-performance/'
 MAX_REPORT_BYTES = 128 * 1024
+PUBLICATION_MARKERS = ('benchmark-metrics-badges', 'benchmark-target-diagnostics', 'benchmark-capacity-details',
+                       'benchmark-contributor-pc', 'benchmark-redline')
 
 
 def git(*args, input=None, check=True):
@@ -36,6 +38,44 @@ def clean_revision():
     if git('status', '--porcelain', '--untracked-files=normal').stdout.strip():
         raise ValueError('Commit or stash working-tree changes before measuring a push')
     return git('rev-parse', 'HEAD').stdout.strip()
+
+
+def without_publication_blocks(source):
+    spans = []
+    for marker in PUBLICATION_MARKERS:
+        start, end = f'<!-- {marker}:start -->', f'<!-- {marker}:end -->'
+        if start not in source and end not in source:
+            continue
+        if source.count(start) != 1 or source.count(end) != 1 or source.index(start) >= source.index(end):
+            raise ValueError('Invalid generated README markers')
+        spans.append((source.index(start), source.index(end) + len(end), start + end))
+    ordered = sorted(spans)
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError('Nested generated README markers')
+    for start, end, replacement in reversed(ordered):
+        source = source[:start] + replacement + source[end:]
+    return source
+
+
+def publication_only_difference(measured, revision):
+    """Ignore only generated reports; every other tracked byte and file mode must match."""
+    paths = git('diff', '--name-only', '--no-renames', '-z', measured, revision, '--').stdout.split('\0')
+    for path in filter(None, paths):
+        if path != 'README.md' and not re.fullmatch(r'benchmark-badges/[a-z0-9-]+\.(json|svg)', path):
+            return False
+        for commit in (measured, revision):
+            entry = git('ls-tree', commit, '--', path).stdout
+            if (entry and not entry.startswith('100644 blob ')) or (not entry and path == 'README.md'):
+                return False
+        if path == 'README.md':
+            try:
+                before = without_publication_blocks(git('show', measured + ':README.md').stdout)
+                after = without_publication_blocks(git('show', revision + ':README.md').stdout)
+            except ValueError:
+                return False
+            if before != after:
+                return False
+    return True
 
 
 def cpu_model():
@@ -80,6 +120,11 @@ def validate(document, revision):
         raise ValueError('Invalid source revision')
     if not re.fullmatch(r'[0-9a-f]{40}', document.get('source_tree', '')):
         raise ValueError('Missing source tree')
+    if 'collection' in document:
+        collection = document['collection']
+        if (not isinstance(collection, dict) or collection.get('comparison') != 'generated-publication-only'
+                or any(not re.fullmatch(r'[0-9a-f]{40}', collection.get(key, '')) for key in ('revision', 'source_tree'))):
+            raise ValueError('Invalid contributor collection provenance')
     if not isinstance(document.get('contributor'), str) or not 1 <= len(document['contributor']) <= 120:
         raise ValueError('Missing contributor name')
     timestamps = [datetime.fromisoformat(document[key]) for key in ('started_utc', 'finished_utc')]
@@ -261,11 +306,12 @@ def pre_push(remote, updates, java_home=None):
 def collect(repository, revision, output):
     if not re.fullmatch(r'[\w.-]+/[\w.-]+', repository) or not re.fullmatch(r'[0-9a-f]{40}', revision):
         raise ValueError('Invalid repository or revision')
-    # A GitHub merge may have the identical measured tree as its branch parent.
+    # A merge can incorporate newer generated reports without changing measured sources.
     candidates = [revision] + git('show', '-s', '--format=%P', revision).stdout.split()
     tree = git('rev-parse', revision + '^{tree}').stdout.strip()
     for candidate in candidates:
-        if git('rev-parse', candidate + '^{tree}').stdout.strip() != tree:
+        measured_tree = git('rev-parse', candidate + '^{tree}').stdout.strip()
+        if measured_tree != tree and not publication_only_difference(candidate, revision):
             continue
         ref = NOTE_PREFIX + candidate
         fetched = git('fetch', '--no-tags', 'https://github.com/' + repository + '.git', ref, check=False)
@@ -276,12 +322,15 @@ def collect(repository, revision, output):
         if len(note.encode('utf-8')) > MAX_REPORT_BYTES:
             raise ValueError('Contributor attachment exceeds size limit')
         document = validate(json.loads(note), candidate)
-        if document['source_tree'] != tree:
+        if document['source_tree'] != measured_tree:
             raise ValueError('Contributor attachment does not match the source tree')
+        document.pop('collection', None)
+        if measured_tree != tree:
+            document['collection'] = dict(revision=revision, source_tree=tree, comparison='generated-publication-only')
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(document, indent=2, allow_nan=False) + '\n', encoding='utf-8')
         return document
-    raise ValueError('Missing contributor evidence for this source. Install the pre-push hook and push from the measured branch; GitHub edits or merges with a different tree need a local measured push.')
+    raise ValueError('Missing contributor evidence for this source. Install the pre-push hook and push from the measured branch; changes outside generated benchmark publication need a local measured push.')
 
 
 def safe_text(value):
@@ -310,6 +359,10 @@ def render(document):
                          f'{float(stage["produce_per_s"]):,.0f} | {float(stage["consume_per_s"]):,.0f} | '
                          f'{float(stage["p99_ms"]):.3f} | {float(stage["cpu_avg"]):.1%} | '
                          f'{float(jfr["file_force_p99_ms"]):.3f} | {stage["healthy"]} |')
+    if document.get('collection'):
+        lines += ['', f'Collected for revision `{document["collection"]["revision"]}`. '
+                  'Only generated benchmark README blocks and JSON/SVG snapshots differ from the measured source above; '
+                  'code, configuration, tools and manual documentation match.']
     return '\n'.join(lines) + '\n\n' + redline_report.render_runs(document['redline_runs'])
 
 
