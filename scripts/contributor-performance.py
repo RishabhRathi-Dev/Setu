@@ -347,18 +347,34 @@ def render(document):
              f'JDK: {safe_text(host["jdk"])}. Media: {safe_text(host["filesystem_media"])}.', '',
              'Two fresh JVMs per mode; 1 KiB records; 256-record batches; 5s minimum adaptive warmup and 10s measurement at each load. '
              'Broker and clients share the PC. These results are contributor supplied and do not qualify sustained capacity.', '',
-             '| Mode | Repeat | Load | Produced/s | Consumed/s | p99 ms | CPU % | Force p99 ms | Health |',
-             '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
+             '**Fixed target: requested writes versus completed work**', '',
+             'These windows count unique records, with one delivery per record. Requested writes/s is the offered load; '
+             'actual writes/s is the completed rate. Write target achieved compares actual with requested writes. '
+             'Delivery coverage compares unique deliveries with completed writes. Consumers keeping up does not mean the write target was met.', '',
+             '| Mode | Repeat | Requested writes/s | Actual writes/s | Unique deliveries/s | Write target achieved | Delivery coverage |',
+             '| --- | ---: | ---: | ---: | ---: | ---: | ---: |']
     if document.get('source_url'):
         if not re.fullmatch(r'https://github\.com/[\w.-]+/[\w.-]+/actions/runs/[0-9]+', document['source_url']):
             raise ValueError('Invalid contributor workflow URL')
         lines[2:2] = [f'[Report, logs and downloadable results]({document["source_url"]})', '']
     for run in document['runs']:
-        for stage, jfr in zip(run['stages'], run['jfr']):
-            lines.append(f'| {run["mode"]} | {run["repeat"]} | {float(stage["load_fraction"]):.0%} | '
+        for stage in run['stages']:
+            coverage = float(stage['consumed']) / float(stage['produced'])
+            attained = float(stage['produce_per_s']) / float(stage['offered_per_s'])
+            lines.append(f'| {run["mode"]} | {run["repeat"]} | {float(stage["offered_per_s"]):,.0f} | '
                          f'{float(stage["produce_per_s"]):,.0f} | {float(stage["consume_per_s"]):,.0f} | '
+                         f'{attained:.1%} | {coverage:.1%} |')
+    lines += ['', '**Fixed target: latency and resource checks**', '',
+              'Window checks include throughput, consumption, latency, CPU and heap limits. '
+              'A passed window remains a local diagnostic, not qualified sustained capacity.', '',
+              '| Mode | Repeat | Load | p99 ms | CPU budget used | Force p99 ms | Window checks |',
+              '| --- | ---: | ---: | ---: | ---: | ---: | --- |']
+    for run in document['runs']:
+        for stage, jfr in zip(run['stages'], run['jfr']):
+            checks = 'Passed' if stage['healthy'] == 'true' else 'Missed'
+            lines.append(f'| {run["mode"]} | {run["repeat"]} | {float(stage["load_fraction"]):.0%} | '
                          f'{float(stage["p99_ms"]):.3f} | {float(stage["cpu_avg"]):.1%} | '
-                         f'{float(jfr["file_force_p99_ms"]):.3f} | {stage["healthy"]} |')
+                         f'{float(jfr["file_force_p99_ms"]):.3f} | {checks} |')
     if document.get('collection'):
         lines += ['', f'Collected for revision `{document["collection"]["revision"]}`. '
                   'Only generated benchmark README blocks and JSON/SVG snapshots differ from the measured source above; '

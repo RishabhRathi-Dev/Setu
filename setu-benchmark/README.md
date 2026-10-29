@@ -185,6 +185,14 @@ The launcher uses one fresh JVM per selected mode, 256-record batches, 2s warmup
 
 The [contributor pre-push check](../scripts/README.md#contributor-pc-check-before-every-push) runs the same two exhaustion workers after its fixed-target windows, with local JVM limits and no OS CPU/memory quota. Its schema-2 attachment and pipeline summary include both profiles. Redline measurements report peak production, fanout consumption, coarse latency, sampled heap/CPU, attempted concurrency and the stop reason; these short windows do not establish sustained capacity. Heap-exhausted JFR is best effort and can omit the terminal stage.
 
+### Reading the reports
+
+Fixed-target reports show requested writes/s, actual unique writes/s and unique deliveries/s. **Write target achieved** is actual writes divided by requested writes. **Delivery coverage** is delivered records divided by written records within the window. A broker completing 50K writes/s and 50K deliveries/s against a 250K writes/s target has 100% delivery coverage but only 20% write-target attainment. Qualification still includes the existing latency, CPU, heap and error requirements.
+
+Redline reports use broadcast fanout: every consumer reads the same partition. **Deliveries needed/s = unique writes/s × consumers**, and **delivery coverage = completed deliveries / (written records × consumers)**. For 100K writes/s and eight consumers, 400K deliveries/s covers only 50% of the 800K deliveries/s demand. Raw fanout delivery rates can exceed unique write rates even while consumers fall behind. The report shows this coverage next to the traffic rates and places timing/resources in a separate table.
+
+Coverage uses measured counters and describes aggregate progress in that window, rather than record loss or the progress of the slowest individual consumer. In-flight operations at the boundary can produce a ratio slightly above 100%; a zero-write window displays n/a. The window status **Measured** means the load step finished, rather than passed qualification; **Partial CPU hold** identifies a surviving prefix. The summary ties the highest observed write rate to its consumer count and delivery coverage. Neither that peak nor a completed redline stage establishes sustained capacity. Re-rendering saved snapshots changes the presentation and derived ratios only; it retains the original measurements, source revisions and qualification.
+
 ## Mixed identified/ordinary writes
 
 `python examples/recovery-demo/run.py --contention` measures two writers across separate partitions in ordinary, identified and mixed modes, recording per-writer p99 and aggregate FILE gate wait. It is a bounded closed-loop diagnostic with explicit unqualified status, not a replacement for resource-enforced offered-load profiles. See [parameters and evidence](../examples/recovery-demo/README.md#contention-diagnostic).

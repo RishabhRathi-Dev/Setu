@@ -40,9 +40,30 @@ class RedlineReportTests(unittest.TestCase):
         parsed = report.parse_capture('\n'.join(capture(run) for run in runs))
         self.assertEqual(runs, parsed)
         text = report.render_runs(parsed)
-        for label in ('unqualified', 'fanout', 'JVM_OOM', 'short-window', '3 / 4', 'NTFS', '26.0.2'):
+        for label in ('unqualified', 'fanout', 'JVM_OOM', 'short-window', 'stage 3 with 4 producers and 4 consumers', 'NTFS', '26.0.2'):
             self.assertIn(label, text)
         self.assertNotIn('private/path', json.dumps(parsed))
+
+    def test_delivery_coverage_accounts_for_every_consumer_without_clamping_or_claiming_loss(self):
+        stage = dict(consumers='8', produce_per_s='100000', produced='200000', consumed='800000')
+        demand, coverage = report.delivery_progress(stage)
+        self.assertEqual(800000, demand)
+        self.assertEqual('50.0%', report.coverage_text(coverage))
+        stage['consumed'] = '1600000'
+        self.assertEqual('100.0%', report.coverage_text(report.delivery_progress(stage)[1]))
+        stage['consumed'] = '1616000'
+        self.assertEqual('101.0%', report.coverage_text(report.delivery_progress(stage)[1]))
+        stage.update(produced='0', produce_per_s='0', consumed='0')
+        self.assertEqual((0, None), report.delivery_progress(stage))
+        self.assertEqual('n/a', report.coverage_text(None))
+        run = fixture()
+        before = copy.deepcopy(run)
+        text = report.render_runs([run])
+        self.assertEqual(before, run)
+        for label in ('Deliveries needed/s', 'Delivery coverage', 'not a record-loss rate', 'not a health or capacity pass',
+                      'timing and resources', 'Measured'):
+            self.assertIn(label, text)
+        self.assertNotIn('| ramp |', text)
 
     def test_invalid_stale_incomplete_nonfinite_and_configured_ceiling_are_rejected(self):
         mutations = [lambda run: run['stages'].pop(0),

@@ -176,6 +176,16 @@ class NodeTargetTests(unittest.TestCase):
         self.assertIn('p99 8000.000 ms outside [0,100) ms', text)
         self.assertNotIn('kill', text)
 
+    def test_clear_report_distinguishes_write_target_from_unique_delivery_coverage(self):
+        runs = [fixture('FILE', repeat) for repeat in (1, 2, 3)]
+        stage = runs[0]['stages'][-1]
+        stage.update(produced='1500000', consumed='1500000', produce_per_s='50000', consume_per_s='50000',
+                     produce_mib_per_s=str(50000 / 1024), consume_mib_per_s=str(50000 / 1024), records_per_core='12500')
+        text = report.comparison_report(runs, ('FILE',))
+        self.assertIn('| FILE | 1 | 250,000 | 50,000 | 50,000 | 20.0% | 100.0% |', text)
+        self.assertIn('Fixed-target latency and resource checks', text)
+        self.assertFalse(report.summaries(runs, ('FILE',))['FILE']['qualified'])
+
     def test_publisher_writes_eight_assets_and_rejects_stale_or_unenforced_reports(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

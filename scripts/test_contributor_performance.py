@@ -146,6 +146,17 @@ class ContributorValidationTests(unittest.TestCase):
         data['runs'][0]['jfr'][0].update(produced='10', consumed='10')
         self.assertFalse(tool.validate(data, 'a' * 40)['qualified'])
 
+    def test_report_separates_write_target_misses_from_consumers_keeping_up(self):
+        data = fixture()
+        run = next(run for run in data['runs'] if run['mode'] == 'FILE')
+        run['stages'][-1].update(produce_per_s='50000', consume_per_s='50000', produced='500000', consumed='500000', healthy='false')
+        run['jfr'][-1].update(produced='500000', consumed='500000')
+        text = tool.render(data)
+        self.assertIn('| FILE | 1 | 250,000 | 50,000 | 50,000 | 20.0% | 100.0% |', text)
+        self.assertIn('Window checks', text)
+        self.assertIn('Missed', text)
+        self.assertIn('not qualified sustained capacity', text)
+
     def test_stale_partial_error_and_nonfinite_evidence_is_rejected(self):
         mutations = [lambda d: d.update(source_revision='c' * 40),
                      lambda d: d.update(collection='invalid'),

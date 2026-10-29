@@ -136,34 +136,76 @@ def safe(value):
     return re.sub(r'[\r\n|`<>\[\]!*\\]', ' ', str(value))[:300]
 
 
+def delivery_progress(stage):
+    consumers = int(stage['consumers'])
+    demand = number(stage, 'produce_per_s') * consumers
+    writes = number(stage, 'produced')
+    coverage = number(stage, 'consumed') / (writes * consumers) if writes else None
+    return demand, coverage
+
+
+def coverage_text(coverage):
+    return 'n/a' if coverage is None else f'{coverage:.1%}'
+
+
+def stop_description(reason):
+    return {'JVM_OOM': 'JVM heap exhausted', 'RESOURCE_LIMIT': 'Resource limit reached',
+            'BROKER_OR_CLIENT_LIMIT': 'Broker/client limit reached', 'CLIENT_STALL': 'Requests stalled',
+            'CONCURRENCY_COUNTER_LIMIT': 'Concurrency counter limit reached'}[reason]
+
+
 def render_runs(runs):
-    sizes = ', '.join(str(size) for size in sorted({int(run['config']['record_bytes']) for run in runs}))
-    lines = [f'Redline diagnostics (unqualified). One fresh JVM per mode; record bytes {sizes}, 256-record batches, '
-             '2s warmup and 2s ramp windows. From stage eight, CPU saturation adds a 10s hold; concurrency keeps doubling until a runtime limit.', '',
-             'Consumption includes broadcast fanout. Peak production is a short-window observation, not sustained capacity. '
-             'The last measured window can precede the terminal failure; a CPU_HOLD row is a partial window.', '',
-             '| Mode | Peak produced/s | Last measured pairs | Stop stage / attempted pairs | Stop reason | Peak CPU % | Max reported heap MiB | Worst p99 ms |',
-             '| --- | ---: | ---: | --- | --- | ---: | ---: | ---: |']
     for run in runs:
         validate_run(run)
+    sizes = ', '.join(str(size) for size in sorted({int(run['config']['record_bytes']) for run in runs}))
+    lines = ['**Redline diagnostics: find a runtime limit (unqualified)**', '',
+             '**Unique writes/s** counts records appended once. This is a fanout workload: every consumer reads the same partition, so one write '
+             'creates one delivery per consumer. **Deliveries needed/s = unique writes/s × consumers.** '
+             '**Delivery coverage** is completed deliveries divided by (written records × consumers) within the same window.', '',
+             'For example, 100,000 writes/s with 8 consumers needs 800,000 deliveries/s. '
+             '400,000 completed deliveries/s covers 50% of that demand.', '',
+             'Coverage describes aggregate progress during the measurement window, not a record-loss rate or proof that every consumer caught up. '
+             'It can slightly exceed 100% when operations cross a window boundary; n/a means no writes completed. '
+             'A completed load step is not a health or capacity pass. Peak production is a short-window observation, not sustained capacity.', '',
+             f'One fresh JVM per mode; record bytes {sizes}, 256-record batches, '
+             '2s warmup and 2s ramp windows. From stage eight, CPU saturation adds a 10s hold; concurrency keeps doubling until a runtime limit.', '',
+             '| Mode | Highest unique writes/s | Consumers at that rate | Delivery coverage at that rate | Why the test stopped |',
+             '| --- | ---: | ---: | ---: | --- |']
+    for run in runs:
         stages, stop = run['stages'], run['stop']
-        peak = lambda key: max(number(stage, key) for stage in stages)
-        reason = stop['reason'] + (' (' + ', '.join(run['request_error_codes']) + ')' if run.get('request_error_codes') else '')
-        lines.append(f'| {run["mode"]} | {peak("produce_per_s"):,.0f} | {stages[-1]["producers"]} | '
-                     f'{stop["stage"]} / {stop["producers"]} | {reason} | {peak("cpu_peak"):.1%} | '
-                     f'{peak("heap_mb"):.1f} | {peak("p99_ms"):.3f} |')
-    lines += ['', '| Mode | Stage | Pairs | Duration s | Produced/s | Fanout consumed/s | Average CPU % | Reported heap MiB | p99 ms | Window |',
-              '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
+        peak = max(stages, key=lambda stage: number(stage, 'produce_per_s'))
+        reason = stop_description(stop['reason']) + f' ({stop["reason"]})'
+        if run.get('request_error_codes'):
+            reason += ': ' + ', '.join(run['request_error_codes'])
+        lines.append(f'| {run["mode"]} | {number(peak, "produce_per_s"):,.0f} | {peak["consumers"]} | '
+                     f'{coverage_text(delivery_progress(peak)[1])} | {reason} |')
     for run in runs:
+        last, stop = run['stages'][-1], run['stop']
+        lines += ['', f'**{run["mode"]}: delivery progress**', '',
+                  f'The last measured stage ({last["stage"]}, {last["consumers"]} consumers) covered '
+                  f'**{coverage_text(delivery_progress(last)[1])}** of its delivery demand. '
+                  f'The test stopped at stage {stop["stage"]} with {stop["producers"]} producers and {stop["consumers"]} consumers. '
+                  'The failing attempt can occur after the last measured window.', '',
+                  'Each row uses equal numbers of producers and consumers. Rates are records or deliveries per second.', '',
+                  '| Stage | Consumers | Unique writes/s | Deliveries needed/s | Completed deliveries/s | Delivery coverage |',
+                  '| --- | ---: | ---: | ---: | ---: | ---: |']
         for stage in run['stages']:
-            lines.append(f'| {run["mode"]} | {stage["stage"]} | {stage["producers"]} | '
-                         f'{number(stage, "duration_s"):.2f} | '
-                         f'{number(stage, "produce_per_s"):,.0f} | {number(stage, "consume_per_s"):,.0f} | '
+            demand, coverage = delivery_progress(stage)
+            lines.append(f'| {stage["stage"]} | {stage["consumers"]} | {number(stage, "produce_per_s"):,.0f} | '
+                         f'{demand:,.0f} | {number(stage, "consume_per_s"):,.0f} | {coverage_text(coverage)} |')
+        lines += ['', f'**{run["mode"]}: timing and resources**', '',
+                  'Measured means the load step finished. Partial CPU hold means only its prefix survived. '
+                  'p99 is a coarse request-cycle estimate; heap is the reported stage sample.', '',
+                  '| Stage | Measured seconds | CPU budget used | Reported heap MiB | Coarse p99 ms | Window status |',
+                  '| --- | ---: | ---: | ---: | ---: | --- |']
+        for stage in run['stages']:
+            state = ('Measured' if stage['stop'] == 'ramp' else 'Partial CPU hold' if stage['stop'] == 'CPU_HOLD'
+                     else stop_description(stage['stop']))
+            lines.append(f'| {stage["stage"]} | {number(stage, "duration_s"):.2f} | '
                          f'{number(stage, "cpu_avg"):.1%} | {number(stage, "heap_mb"):.1f} | '
-                         f'{number(stage, "p99_ms"):.3f} | {stage["stop"]} |')
-    for run in runs:
+                         f'{number(stage, "p99_ms"):.3f} | {state} |')
         lines += ['', f'{run["mode"]}: JDK {safe(run["runtime"]["java"])}; {safe(run["runtime"]["os"])}; '
-                  f'filesystem {safe(run["filesystem"])}; {float(run["cpu_budget_cores"]):g} CPU budget; '
+                  f'filesystem {safe(run["filesystem"])}; CPU percentages use {float(run["cpu_budget_cores"]):g} cores as 100%; '
                   f'{int(run["runtime"]["max_heap_mb"])} MiB maximum heap.']
         if 'disk_reserve_bytes' in run:
             lines.append(f'Free-disk reserve: {number(run, "disk_reserve_bytes") / 1024**3:.2f} GiB (sampled).')
