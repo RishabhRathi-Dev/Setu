@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "label": "memory p99",
-  "message": "0.68 ms at target (CI)",
+  "message": "0.42 ms at target (CI)",
   "color": "green",
   "sourceScope": "CI",
-  "sourceRevision": "3632046ab21395f29e4d443c10d98b1011622e6f",
-  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/40886750864"
+  "sourceRevision": "aa378f0e0f3f6c1a49d03a7e458ad8f682adb68a",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/40898246351"
 }
