@@ -215,28 +215,28 @@ The generated blocks below retain their source revision, host information, and q
 The badges and expandable report below come from resource-enforced CI runs. Contributor PC diagnostics follow in their own section. CI publication continues when the contributor attachment check fails; that check still reports its failure separately.
 
 <!-- benchmark-metrics-badges:start -->
-[![in-memory: 500.00K/s target, 499.99K/s CI, 100% qualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794)
-[![file: 250.00K/s target, 172.85K/s CI, 69% unqualified](benchmark-badges/file-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794)
+[![in-memory: 500.00K/s target, 499.99K/s CI, 100% qualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![file: 250.00K/s target, 117.86K/s CI, 47% unqualified](benchmark-badges/file-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
 <!-- benchmark-metrics-badges:end -->
 
 <details>
 <summary>Latest CI target diagnostics and qualification details</summary>
 
 <!-- benchmark-target-diagnostics:start -->
-[![memory p99: 0.31 ms at target (CI)](benchmark-badges/memory-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794)
-[![memory resources: 39% CPU, 256 MiB heap (CI)](benchmark-badges/memory-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794)
-[![memory JFR: 1.67 GiB/s alloc, 8.6 ms GC (CI)](benchmark-badges/memory-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794)
-[![file p99: 10812.92 ms at target (CI)](benchmark-badges/file-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794)
-[![file resources: 38% CPU, 126 MiB heap (CI)](benchmark-badges/file-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794)
-[![file JFR: 0.66 GiB/s alloc, 10.7 ms GC (CI)](benchmark-badges/file-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794)
+[![memory p99: 0.79 ms at target (CI)](benchmark-badges/memory-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![memory resources: 59% CPU, 256 MiB heap (CI)](benchmark-badges/memory-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![memory JFR: 1.65 GiB/s alloc, 10.2 ms GC (CI)](benchmark-badges/memory-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![file p99: 16416.51 ms at target (CI)](benchmark-badges/file-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![file resources: 23% CPU, 126 MiB heap (CI)](benchmark-badges/file-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![file JFR: 0.50 GiB/s alloc, 6.8 ms GC (CI)](benchmark-badges/file-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
 <!-- benchmark-target-diagnostics:end -->
 
 <!-- benchmark-capacity-details:start -->
-Latest source: **CI**, revision `4e65282832d61710fa5e7b898842ab3f16d7386d`. [Benchmark run/report](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794).
+Latest source: **CI**, revision `35a1e6d045814984e5e1729956541de278226e01`. [Benchmark run/report](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823).
 
-Runner: Intel(R) Xeon(R) 6973P-C; 4.0 enforced CPU cores; 128 MiB worker heap; filesystem/media /dev/nvme0n1p1 ext4 (non-rotational).
+Runner: AMD EPYC 9V74 80-Core Processor; 4.0 enforced CPU cores; 128 MiB worker heap; filesystem/media /dev/nvme0n1p1 ext4 (non-rotational).
 
-Runner: AMD EPYC 9V45 96-Core Processor; 4.0 enforced CPU cores; 256 MiB worker heap; filesystem/media /dev/nvme0n1p1 ext4 (non-rotational).
+Runner: AMD EPYC 7763 64-Core Processor; 4.0 enforced CPU cores; 256 MiB worker heap; filesystem/media /dev/sda1 ext4 (rotational).
 
 # Node-target measurements
 
@@ -246,103 +246,105 @@ Writes count unique records; each record needs one delivery in this workload. Wr
 
 | Mode | Reference writes/s | Median actual writes/s | Write target achieved | Worst target p99 ms | Peak heap MiB | Peak average CPU % | Qualified |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| IN_MEMORY | 500,000 | 499,994 | 100.0% | 0.308 | 256 | 39.0659 | True |
-| FILE | 250,000 | 172,851 | 69.1% | 10812.916 | 126 | 37.6323 | False |
+| IN_MEMORY | 500,000 | 499,994 | 100.0% | 0.788 | 256 | 59.0000 | True |
+| FILE | 250,000 | 117,862 | 47.1% | 16416.506 | 126 | 22.5657 | False |
 
 **Fixed-target traffic**
 
 | Mode | Repeat | Requested writes/s | Actual writes/s | Unique deliveries/s | Write target achieved | Delivery coverage |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| FILE | 1 | 125,000 | 124,996 | 125,030 | 100.0% | 100.0% |
-| FILE | 1 | 200,000 | 163,209 | 156,339 | 81.6% | 95.8% |
-| FILE | 1 | 250,000 | 173,184 | 149,419 | 69.3% | 86.3% |
-| FILE | 2 | 125,000 | 124,996 | 125,022 | 100.0% | 100.0% |
-| FILE | 2 | 200,000 | 171,153 | 151,987 | 85.6% | 88.8% |
-| FILE | 2 | 250,000 | 159,104 | 158,925 | 63.6% | 99.9% |
-| FILE | 3 | 125,000 | 124,996 | 125,013 | 100.0% | 100.0% |
-| FILE | 3 | 200,000 | 172,279 | 151,509 | 86.1% | 87.9% |
-| FILE | 3 | 250,000 | 172,851 | 148,608 | 69.1% | 86.0% |
+| FILE | 1 | 125,000 | 92,339 | 92,356 | 73.9% | 100.0% |
+| FILE | 1 | 200,000 | 124,894 | 124,211 | 62.4% | 99.5% |
+| FILE | 1 | 250,000 | 117,862 | 110,967 | 47.1% | 94.2% |
+| FILE | 2 | 125,000 | 113,161 | 113,852 | 90.5% | 100.6% |
+| FILE | 2 | 200,000 | 104,311 | 107,290 | 52.2% | 102.9% |
+| FILE | 2 | 250,000 | 115,849 | 115,849 | 46.3% | 100.0% |
+| FILE | 3 | 125,000 | 118,741 | 115,703 | 95.0% | 97.4% |
+| FILE | 3 | 200,000 | 138,786 | 126,618 | 69.4% | 91.2% |
+| FILE | 3 | 250,000 | 129,792 | 121,003 | 51.9% | 93.2% |
 | IN_MEMORY | 1 | 250,000 | 249,993 | 250,018 | 100.0% | 100.0% |
-| IN_MEMORY | 1 | 400,000 | 400,000 | 400,017 | 100.0% | 100.0% |
+| IN_MEMORY | 1 | 400,000 | 400,000 | 400,009 | 100.0% | 100.0% |
 | IN_MEMORY | 1 | 500,000 | 499,994 | 500,002 | 100.0% | 100.0% |
-| IN_MEMORY | 2 | 250,000 | 249,993 | 249,950 | 100.0% | 100.0% |
-| IN_MEMORY | 2 | 400,000 | 400,000 | 400,009 | 100.0% | 100.0% |
+| IN_MEMORY | 2 | 250,000 | 249,993 | 250,061 | 100.0% | 100.0% |
+| IN_MEMORY | 2 | 400,000 | 400,000 | 400,000 | 100.0% | 100.0% |
 | IN_MEMORY | 2 | 500,000 | 499,994 | 500,002 | 100.0% | 100.0% |
-| IN_MEMORY | 3 | 250,000 | 249,993 | 250,001 | 100.0% | 100.0% |
-| IN_MEMORY | 3 | 400,000 | 400,000 | 400,017 | 100.0% | 100.0% |
-| IN_MEMORY | 3 | 500,000 | 499,994 | 500,011 | 100.0% | 100.0% |
+| IN_MEMORY | 3 | 250,000 | 249,993 | 250,010 | 100.0% | 100.0% |
+| IN_MEMORY | 3 | 400,000 | 400,000 | 400,000 | 100.0% | 100.0% |
+| IN_MEMORY | 3 | 500,000 | 499,994 | 500,002 | 100.0% | 100.0% |
 
 **Fixed-target latency and resource checks**
 
 | Mode | Repeat | Load | p99 ms | CPU % | Heap slope MiB/s | Qualified window |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| FILE | 1 | 50% | 585.630 | 28.5655 | 0.120 | False |
-| FILE | 1 | 80% | 6064.964 | 26.8324 | 0.007 | False |
-| FILE | 1 | 100% | 10745.807 | 26.7661 | -0.150 | False |
-| FILE | 2 | 50% | 2.000 | 37.3068 | 0.095 | True |
-| FILE | 2 | 80% | 6182.404 | 27.0743 | -0.001 | False |
-| FILE | 2 | 100% | 10812.916 | 26.4572 | -0.113 | False |
-| FILE | 3 | 50% | 2.159 | 37.6323 | 0.158 | True |
-| FILE | 3 | 80% | 6354.371 | 27.8323 | 0.126 | False |
-| FILE | 3 | 100% | 10745.807 | 27.2659 | 0.053 | False |
-| IN_MEMORY | 1 | 50% | 0.347 | 26.3915 | 0.045 | True |
-| IN_MEMORY | 1 | 80% | 0.304 | 33.0664 | 0.136 | True |
-| IN_MEMORY | 1 | 100% | 0.275 | 37.3320 | 0.474 | True |
-| IN_MEMORY | 2 | 50% | 0.285 | 26.0736 | 0.220 | True |
-| IN_MEMORY | 2 | 80% | 0.264 | 32.9576 | 0.109 | True |
-| IN_MEMORY | 2 | 100% | 0.280 | 37.2493 | 0.469 | True |
-| IN_MEMORY | 3 | 50% | 0.293 | 26.4414 | 0.095 | True |
-| IN_MEMORY | 3 | 80% | 0.272 | 34.1246 | 0.207 | True |
-| IN_MEMORY | 3 | 100% | 0.308 | 39.0659 | 0.306 | True |
+| FILE | 1 | 50% | 7499.416 | 18.5075 | 0.281 | False |
+| FILE | 1 | 80% | 11391.730 | 19.6914 | 0.292 | False |
+| FILE | 1 | 100% | 16416.506 | 18.1909 | 0.044 | False |
+| FILE | 2 | 50% | 3089.105 | 22.5657 | -0.030 | False |
+| FILE | 2 | 80% | 14302.577 | 16.6494 | 0.042 | False |
+| FILE | 2 | 100% | 15846.081 | 19.6158 | 0.067 | False |
+| FILE | 3 | 50% | 3600.810 | 19.6412 | -0.041 | False |
+| FILE | 3 | 80% | 9177.137 | 20.0326 | 0.072 | False |
+| FILE | 3 | 100% | 15216.935 | 18.9079 | 0.241 | False |
+| IN_MEMORY | 1 | 50% | 0.592 | 42.9070 | 0.159 | True |
+| IN_MEMORY | 1 | 80% | 0.660 | 52.8321 | 0.174 | True |
+| IN_MEMORY | 1 | 100% | 0.713 | 58.1072 | 0.293 | True |
+| IN_MEMORY | 2 | 50% | 0.582 | 43.0151 | 0.042 | True |
+| IN_MEMORY | 2 | 80% | 0.690 | 52.6332 | 0.118 | True |
+| IN_MEMORY | 2 | 100% | 0.788 | 58.2990 | 0.545 | True |
+| IN_MEMORY | 3 | 50% | 0.621 | 43.4999 | 0.324 | True |
+| IN_MEMORY | 3 | 80% | 0.643 | 53.2325 | -0.153 | True |
+| IN_MEMORY | 3 | 100% | 0.732 | 59.0000 | 0.314 | True |
 
 Qualification failures (completed measurements are retained):
 
 | Mode | Repeat | Load | Measured limit failures |
 | --- | ---: | ---: | --- |
-| FILE | 1 | 50% | p99 585.630 ms outside [0,10) ms |
-| FILE | 1 | 80% | throughput 163,209/s <95% of offered 200,000/s; p99 6064.964 ms outside [0,100) ms |
-| FILE | 1 | 100% | consumption 86.3% <95%; throughput 173,184/s <95% of offered 250,000/s; p99 10745.807 ms outside [0,100) ms |
-| FILE | 2 | 80% | consumption 88.8% <95%; throughput 171,153/s <95% of offered 200,000/s; p99 6182.404 ms outside [0,100) ms |
-| FILE | 2 | 100% | throughput 159,104/s <95% of offered 250,000/s; p99 10812.916 ms outside [0,100) ms |
-| FILE | 3 | 80% | consumption 87.9% <95%; throughput 172,279/s <95% of offered 200,000/s; p99 6354.371 ms outside [0,100) ms |
-| FILE | 3 | 100% | consumption 86.0% <95%; throughput 172,851/s <95% of offered 250,000/s; p99 10745.807 ms outside [0,100) ms |
+| FILE | 1 | 50% | throughput 92,339/s <95% of offered 125,000/s; p99 7499.416 ms outside [0,10) ms |
+| FILE | 1 | 80% | throughput 124,894/s <95% of offered 200,000/s; p99 11391.730 ms outside [0,100) ms |
+| FILE | 1 | 100% | consumption 94.2% <95%; throughput 117,862/s <95% of offered 250,000/s; p99 16416.506 ms outside [0,100) ms |
+| FILE | 2 | 50% | throughput 113,161/s <95% of offered 125,000/s; p99 3089.105 ms outside [0,10) ms |
+| FILE | 2 | 80% | throughput 104,311/s <95% of offered 200,000/s; p99 14302.577 ms outside [0,100) ms |
+| FILE | 2 | 100% | throughput 115,849/s <95% of offered 250,000/s; p99 15846.081 ms outside [0,100) ms |
+| FILE | 3 | 50% | throughput 118,741/s <95% of offered 125,000/s; p99 3600.810 ms outside [0,10) ms |
+| FILE | 3 | 80% | consumption 91.2% <95%; throughput 138,786/s <95% of offered 200,000/s; p99 9177.137 ms outside [0,100) ms |
+| FILE | 3 | 100% | consumption 93.2% <95%; throughput 129,792/s <95% of offered 250,000/s; p99 15216.935 ms outside [0,100) ms |
 
 Latency components (scheduled completion includes offered-load scheduling delay):
 
 | Mode | Repeat | Load | Produce p99 ms | Fetch p99 ms | Ack p99 ms | Scheduled p99 ms |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| FILE | 1 | 50% | 21.135 | 0.686 | 16.564 | 585.630 |
-| FILE | 1 | 80% | 7.881 | 0.950 | 7.533 | 6064.964 |
-| FILE | 1 | 100% | 7.848 | 1.029 | 7.684 | 10745.807 |
-| FILE | 2 | 50% | 1.874 | 0.442 | 1.303 | 2.000 |
-| FILE | 2 | 80% | 7.893 | 1.048 | 7.643 | 6182.404 |
-| FILE | 2 | 100% | 7.975 | 0.925 | 7.520 | 10812.916 |
-| FILE | 3 | 50% | 1.999 | 0.439 | 1.305 | 2.159 |
-| FILE | 3 | 80% | 7.844 | 1.041 | 7.578 | 6354.371 |
-| FILE | 3 | 100% | 7.873 | 1.028 | 7.655 | 10745.807 |
-| IN_MEMORY | 1 | 50% | 0.250 | 0.148 | 0.088 | 0.347 |
-| IN_MEMORY | 1 | 80% | 0.213 | 0.152 | 0.090 | 0.304 |
-| IN_MEMORY | 1 | 100% | 0.196 | 0.151 | 0.088 | 0.275 |
-| IN_MEMORY | 2 | 50% | 0.211 | 0.143 | 0.082 | 0.285 |
-| IN_MEMORY | 2 | 80% | 0.194 | 0.149 | 0.084 | 0.264 |
-| IN_MEMORY | 2 | 100% | 0.195 | 0.150 | 0.085 | 0.280 |
-| IN_MEMORY | 3 | 50% | 0.209 | 0.146 | 0.085 | 0.293 |
-| IN_MEMORY | 3 | 80% | 0.199 | 0.156 | 0.088 | 0.272 |
-| IN_MEMORY | 3 | 100% | 0.215 | 0.164 | 0.100 | 0.308 |
+| FILE | 1 | 50% | 64.094 | 0.622 | 58.360 | 7499.416 |
+| FILE | 1 | 80% | 28.443 | 0.877 | 27.329 | 11391.730 |
+| FILE | 1 | 100% | 35.815 | 0.754 | 32.932 | 16416.506 |
+| FILE | 2 | 50% | 67.961 | 0.666 | 62.128 | 3089.105 |
+| FILE | 2 | 80% | 67.764 | 1.034 | 63.078 | 14302.577 |
+| FILE | 2 | 100% | 36.274 | 0.684 | 32.260 | 15846.081 |
+| FILE | 3 | 50% | 39.322 | 0.966 | 39.682 | 3600.810 |
+| FILE | 3 | 80% | 31.687 | 1.112 | 31.834 | 9177.137 |
+| FILE | 3 | 100% | 31.179 | 0.767 | 31.293 | 15216.935 |
+| IN_MEMORY | 1 | 50% | 0.437 | 0.330 | 0.194 | 0.592 |
+| IN_MEMORY | 1 | 80% | 0.445 | 0.379 | 0.265 | 0.660 |
+| IN_MEMORY | 1 | 100% | 0.483 | 0.427 | 0.284 | 0.713 |
+| IN_MEMORY | 2 | 50% | 0.449 | 0.359 | 0.190 | 0.582 |
+| IN_MEMORY | 2 | 80% | 0.456 | 0.411 | 0.267 | 0.690 |
+| IN_MEMORY | 2 | 100% | 0.512 | 0.461 | 0.287 | 0.788 |
+| IN_MEMORY | 3 | 50% | 0.469 | 0.407 | 0.207 | 0.621 |
+| IN_MEMORY | 3 | 80% | 0.459 | 0.440 | 0.277 | 0.643 |
+| IN_MEMORY | 3 | 100% | 0.508 | 0.476 | 0.292 | 0.732 |
 
 File-force waits from measured JFR stages:
 
 | Mode | Repeat | Stage | Calls | Total wait ms | p99 wait ms | Max wait ms |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| FILE | 1 | 1 | 26132 | 53504.891579 | 19.136511 | 158.313616 |
-| FILE | 1 | 2 | 33124 | 66560.101150 | 7.172095 | 117.884087 |
-| FILE | 1 | 3 | 34394 | 65447.811652 | 7.143423 | 45.709943 |
-| FILE | 2 | 1 | 23453 | 10481.170767 | 0.912895 | 9.538828 |
-| FILE | 2 | 2 | 34376 | 65640.698629 | 7.122943 | 41.859376 |
-| FILE | 2 | 3 | 32420 | 67531.324087 | 7.221247 | 45.807017 |
-| FILE | 3 | 1 | 23922 | 11538.370992 | 1.056767 | 10.129466 |
-| FILE | 3 | 2 | 34572 | 65121.622616 | 7.118847 | 38.030906 |
-| FILE | 3 | 3 | 34506 | 65443.545899 | 7.167999 | 37.406704 |
+| FILE | 1 | 1 | 18306 | 70200.064094 | 48.037887 | 350.120267 |
+| FILE | 1 | 2 | 24459 | 70545.808827 | 26.607615 | 205.180992 |
+| FILE | 1 | 3 | 22633 | 69288.435602 | 28.327935 | 416.989478 |
+| FILE | 2 | 1 | 21825 | 57256.458597 | 38.895615 | 279.039884 |
+| FILE | 2 | 2 | 20056 | 70867.698034 | 54.231039 | 270.139800 |
+| FILE | 2 | 3 | 22757 | 70290.833752 | 29.491199 | 215.997344 |
+| FILE | 3 | 1 | 23179 | 70483.717639 | 31.866879 | 351.069417 |
+| FILE | 3 | 2 | 25915 | 68823.427791 | 28.278783 | 211.834533 |
+| FILE | 3 | 3 | 24381 | 70577.022969 | 25.772031 | 455.322304 |
 | IN_MEMORY | 1 | 1 | 0 | 0.000000 | 0.000000 | 0.000000 |
 | IN_MEMORY | 1 | 2 | 0 | 0.000000 | 0.000000 | 0.000000 |
 | IN_MEMORY | 1 | 3 | 0 | 0.000000 | 0.000000 | 0.000000 |
@@ -365,72 +367,11 @@ Each CI run also doubles producer/consumer concurrency until a runtime limit und
 Compare completed deliveries with the full delivery demand (unique writes × consumers). The report shows this as delivery coverage; a high fanout rate alone does not show that consumers kept up. Fixed-target reports count unique deliveries and show write-target attainment separately. See [how to read the reports](setu-benchmark/README.md#reading-the-reports).
 
 <!-- benchmark-redline:start -->
-Source revision `4e65282832d61710fa5e7b898842ab3f16d7386d`. [CI redline report and captures](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794)
+Source revision `35a1e6d045814984e5e1729956541de278226e01`. [CI redline report and captures](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
 
 Resource-enforced redline diagnostics (unqualified)
 
-Source revision `4e65282832d61710fa5e7b898842ab3f16d7386d`; enforcement: systemd-cgroup-v2.
-
-Host: AMD EPYC 9V45 96-Core Processor; filesystem/media: /dev/nvme0n1p1 ext4 (non-rotational). Allocation: 2 CPU cores, 6554 MiB process-tree memory; 512 MiB worker heap, 128 MiB direct memory; free-disk reserve 17.03 GiB.
-
-Execution exit code: 0.
-
-**Redline diagnostics: find a runtime limit (unqualified)**
-
-**Unique writes/s** counts records appended once. This is a fanout workload: every consumer reads the same partition, so one write creates one delivery per consumer. **Deliveries needed/s = unique writes/s × consumers.** **Delivery coverage** is completed deliveries divided by (written records × consumers) within the same window.
-
-For example, 100,000 writes/s with 8 consumers needs 800,000 deliveries/s. 400,000 completed deliveries/s covers 50% of that demand.
-
-Coverage describes aggregate progress during the measurement window, not a record-loss rate or proof that every consumer caught up. It can slightly exceed 100% when operations cross a window boundary; n/a means no writes completed. A completed load step is not a health or capacity pass. Peak production is a short-window observation, not sustained capacity.
-
-One fresh JVM per mode; record bytes 1024, 256-record batches, 2s warmup and 2s ramp windows. From stage eight, CPU saturation adds a 10s hold; concurrency keeps doubling until a runtime limit.
-
-| Mode | Highest unique writes/s | Consumers at that rate | Delivery coverage at that rate | Why the test stopped |
-| --- | ---: | ---: | ---: | --- |
-| FILE | 161,660 | 64 | 4.9% | Broker/client limit reached (BROKER_OR_CLIENT_LIMIT) |
-
-**FILE: delivery progress**
-
-The last measured stage (10, 512 consumers) covered **0.8%** of its delivery demand. The test stopped at stage 10 with 512 producers and 512 consumers. The failing attempt can occur after the last measured window.
-
-Each row uses equal numbers of producers and consumers. Rates are records or deliveries per second.
-
-| Stage | Consumers | Unique writes/s | Deliveries needed/s | Completed deliveries/s | Delivery coverage |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 1 | 1 | 148,361 | 148,361 | 148,105 | 99.8% |
-| 2 | 2 | 137,348 | 274,696 | 239,720 | 87.3% |
-| 3 | 4 | 41,138 | 164,552 | 87,642 | 53.3% |
-| 4 | 8 | 146,745 | 1,173,960 | 321,333 | 27.4% |
-| 5 | 16 | 152,721 | 2,443,536 | 402,873 | 16.5% |
-| 6 | 32 | 157,681 | 5,045,792 | 492,561 | 9.8% |
-| 7 | 64 | 161,660 | 10,346,240 | 505,284 | 4.9% |
-| 8 | 128 | 145,757 | 18,656,896 | 297,801 | 1.6% |
-| 9 | 256 | 72,923 | 18,668,288 | 164,419 | 0.9% |
-| 10 | 512 | 17,106 | 8,758,272 | 67,749 | 0.8% |
-
-**FILE: timing and resources**
-
-Measured means the load step finished. Partial CPU hold means only its prefix survived. p99 is a coarse request-cycle estimate; heap is the reported stage sample.
-
-| Stage | Measured seconds | CPU budget used | Reported heap MiB | Coarse p99 ms | Window status |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 1 | 2.01 | 68.4% | 252.0 | 8.389 | Measured |
-| 2 | 2.01 | 64.4% | 222.0 | 16.777 | Measured |
-| 3 | 2.00 | 19.7% | 186.0 | 268.435 | Measured |
-| 4 | 2.00 | 53.2% | 122.0 | 67.109 | Measured |
-| 5 | 2.00 | 43.4% | 194.0 | 67.109 | Measured |
-| 6 | 2.01 | 47.6% | 164.0 | 134.218 | Measured |
-| 7 | 2.00 | 49.2% | 168.0 | 134.218 | Measured |
-| 8 | 2.04 | 97.1% | 412.0 | 536.871 | Measured |
-| 9 | 2.05 | 94.4% | 462.0 | 2147.484 | Measured |
-| 10 | 1.90 | 96.2% | 464.0 | 2147.484 | Broker/client limit reached |
-
-FILE: JDK 26.0.2.1; Linux; filesystem ext4; CPU percentages use 2 cores as 100%; 512 MiB maximum heap.
-
-
-Resource-enforced redline diagnostics (unqualified)
-
-Source revision `4e65282832d61710fa5e7b898842ab3f16d7386d`; enforcement: systemd-cgroup-v2.
+Source revision `35a1e6d045814984e5e1729956541de278226e01`; enforcement: systemd-cgroup-v2.
 
 Host: AMD EPYC 9V74 80-Core Processor; filesystem/media: /dev/nvme0n1p1 ext4 (non-rotational). Allocation: 2 CPU cores, 6554 MiB process-tree memory; 512 MiB worker heap, 128 MiB direct memory; free-disk reserve 17.03 GiB.
 
@@ -448,104 +389,52 @@ One fresh JVM per mode; record bytes 1024, 256-record batches, 2s warmup and 2s 
 
 | Mode | Highest unique writes/s | Consumers at that rate | Delivery coverage at that rate | Why the test stopped |
 | --- | ---: | ---: | ---: | --- |
-| IN_MEMORY | 417,110 | 1 | 96.4% | JVM heap exhausted (JVM_OOM) |
+| FILE | 114,474 | 64 | 5.3% | Broker/client limit reached (BROKER_OR_CLIENT_LIMIT) |
 
-**IN_MEMORY: delivery progress**
+**FILE: delivery progress**
 
-The last measured stage (11, 1024 consumers) covered **1.4%** of its delivery demand. The test stopped at stage 12 with 2048 producers and 2048 consumers. The failing attempt can occur after the last measured window.
+The last measured stage (9, 256 consumers) covered **0.9%** of its delivery demand. The test stopped at stage 9 with 256 producers and 256 consumers. The failing attempt can occur after the last measured window.
 
 Each row uses equal numbers of producers and consumers. Rates are records or deliveries per second.
 
 | Stage | Consumers | Unique writes/s | Deliveries needed/s | Completed deliveries/s | Delivery coverage |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 | 1 | 417,110 | 417,110 | 402,065 | 96.4% |
-| 2 | 2 | 364,511 | 729,022 | 698,263 | 95.8% |
-| 3 | 4 | 223,951 | 895,804 | 838,233 | 93.6% |
-| 4 | 8 | 151,627 | 1,213,016 | 1,092,482 | 90.1% |
-| 5 | 16 | 88,879 | 1,422,064 | 1,217,420 | 85.6% |
-| 6 | 32 | 50,733 | 1,623,456 | 1,433,399 | 88.3% |
-| 7 | 64 | 26,151 | 1,673,664 | 1,337,936 | 79.9% |
-| 8 | 128 | 22,032 | 2,820,096 | 1,256,431 | 44.6% |
-| 9 | 256 | 23,914 | 6,121,984 | 1,011,832 | 16.5% |
-| 10 | 512 | 23,156 | 11,855,872 | 866,968 | 7.3% |
-| 11 | 1024 | 26,400 | 27,033,600 | 371,066 | 1.4% |
+| 1 | 1 | 35,513 | 35,513 | 35,385 | 99.6% |
+| 2 | 2 | 48,168 | 96,336 | 77,299 | 80.2% |
+| 3 | 4 | 96,933 | 387,732 | 222,090 | 57.3% |
+| 4 | 8 | 75,609 | 604,872 | 200,134 | 33.1% |
+| 5 | 16 | 58,499 | 935,984 | 198,872 | 21.2% |
+| 6 | 32 | 113,139 | 3,620,448 | 358,167 | 9.9% |
+| 7 | 64 | 114,474 | 7,326,336 | 390,641 | 5.3% |
+| 8 | 128 | 113,242 | 14,494,976 | 260,873 | 1.8% |
+| 9 | 256 | 58,151 | 14,886,656 | 137,486 | 0.9% |
 
-**IN_MEMORY: timing and resources**
+**FILE: timing and resources**
 
 Measured means the load step finished. Partial CPU hold means only its prefix survived. p99 is a coarse request-cycle estimate; heap is the reported stage sample.
 
 | Stage | Measured seconds | CPU budget used | Reported heap MiB | Coarse p99 ms | Window status |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 1 | 2.04 | 96.6% | 346.0 | 2.097 | Measured |
-| 2 | 2.01 | 95.2% | 176.0 | 4.194 | Measured |
-| 3 | 2.06 | 95.2% | 260.0 | 33.554 | Measured |
-| 4 | 2.07 | 96.3% | 262.0 | 33.554 | Measured |
-| 5 | 2.02 | 96.9% | 398.0 | 67.109 | Measured |
-| 6 | 2.01 | 96.4% | 246.0 | 67.109 | Measured |
-| 7 | 2.01 | 95.7% | 204.0 | 67.109 | Measured |
-| 8 | 2.03 | 93.8% | 304.0 | 67.109 | Measured |
-| 9 | 2.07 | 95.2% | 308.0 | 134.218 | Measured |
-| 10 | 2.03 | 94.1% | 510.0 | 536.871 | Measured |
-| 11 | 2.10 | 87.6% | 456.0 | 1073.742 | Measured |
+| 1 | 2.00 | 62.2% | 312.0 | 134.218 | Measured |
+| 2 | 2.00 | 40.2% | 154.0 | 134.218 | Measured |
+| 3 | 2.00 | 65.4% | 360.0 | 134.218 | Measured |
+| 4 | 2.00 | 40.9% | 396.0 | 134.218 | Measured |
+| 5 | 2.00 | 37.7% | 164.0 | 268.435 | Measured |
+| 6 | 2.01 | 47.1% | 358.0 | 268.435 | Measured |
+| 7 | 2.01 | 59.1% | 366.0 | 268.435 | Measured |
+| 8 | 2.03 | 94.9% | 468.0 | 536.871 | Measured |
+| 9 | 2.37 | 95.7% | 502.0 | 2147.484 | Broker/client limit reached |
 
-IN_MEMORY: JDK 26.0.2.1; Linux; filesystem ext4; CPU percentages use 2 cores as 100%; 512 MiB maximum heap.
+FILE: JDK 26.0.2.1; Linux; filesystem ext4; CPU percentages use 2 cores as 100%; 512 MiB maximum heap.
 
-<!-- benchmark-redline:end -->
 
-### Contributor PC benchmarks
+Resource-enforced redline diagnostics (unqualified)
 
-<!-- benchmark-contributor-pc:start -->
-Latest contributor PC run (diagnostic, unqualified)
+Source revision `35a1e6d045814984e5e1729956541de278226e01`; enforcement: systemd-cgroup-v2.
 
-[Report, logs and downloadable results](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40927196794)
+Host: AMD EPYC 7763 64-Core Processor; filesystem/media: /dev/sda1 ext4 (rotational). Allocation: 2 CPU cores, 6554 MiB process-tree memory; 512 MiB worker heap, 128 MiB direct memory; free-disk reserve 17.03 GiB.
 
-Contributor: Rishabh Rathi; finished 2026-10-29T18:00:51.300692+00:00; revision `c997197f28b2c53bfe5857588d12b71fe7ab93a7`.
-
-Windows-11-10.0.26100-SP0; AMD Ryzen 5 7600X 6-Core Processor; 8 JVM active processors; 512 MiB heap; 128 MiB direct-memory limit; no OS resource quota.
-
-JDK: openjdk version "26.0.2.1" 2026-08-18 OpenJDK Runtime Environment Temurin-26.0.2.1+1 (build 26.0.2.1+1) OpenJDK 64-Bit Server VM Temurin-26.0.2.1+1 (build 26.0.2.1+1, mixed mode, sharing). Media: Filesystem per worker; physical media not detected.
-
-Two fresh JVMs per mode; 1 KiB records; 256-record batches; 5s minimum adaptive warmup and 10s measurement at each load. Broker and clients share the PC. These results are contributor supplied and do not qualify sustained capacity.
-
-**Fixed target: requested writes versus completed work**
-
-These windows count unique records, with one delivery per record. Requested writes/s is the offered load; actual writes/s is the completed rate. Write target achieved compares actual with requested writes. Delivery coverage compares unique deliveries with completed writes. Consumers keeping up does not mean the write target was met.
-
-| Mode | Repeat | Requested writes/s | Actual writes/s | Unique deliveries/s | Write target achieved | Delivery coverage |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| IN_MEMORY | 1 | 250,000 | 249,984 | 249,984 | 100.0% | 100.0% |
-| IN_MEMORY | 1 | 400,000 | 400,000 | 399,949 | 100.0% | 100.0% |
-| IN_MEMORY | 1 | 500,000 | 499,994 | 499,994 | 100.0% | 100.0% |
-| FILE | 1 | 125,000 | 57,523 | 57,523 | 46.0% | 100.0% |
-| FILE | 1 | 200,000 | 56,090 | 56,115 | 28.0% | 100.0% |
-| FILE | 1 | 250,000 | 57,933 | 57,984 | 23.2% | 100.1% |
-| IN_MEMORY | 2 | 250,000 | 249,984 | 249,984 | 100.0% | 100.0% |
-| IN_MEMORY | 2 | 400,000 | 399,949 | 399,974 | 100.0% | 100.0% |
-| IN_MEMORY | 2 | 500,000 | 499,994 | 500,019 | 100.0% | 100.0% |
-| FILE | 2 | 125,000 | 56,934 | 56,986 | 45.5% | 100.1% |
-| FILE | 2 | 200,000 | 58,035 | 58,086 | 29.0% | 100.1% |
-| FILE | 2 | 250,000 | 58,778 | 58,803 | 23.5% | 100.0% |
-
-**Fixed target: latency and resource checks**
-
-Window checks include throughput, consumption, latency, CPU and heap limits. A passed window remains a local diagnostic, not qualified sustained capacity.
-
-| Mode | Repeat | Load | p99 ms | CPU budget used | Force p99 ms | Window checks |
-| --- | ---: | ---: | ---: | ---: | ---: | --- |
-| IN_MEMORY | 1 | 50% | 2.088 | 10.2% | 0.000 | Passed |
-| IN_MEMORY | 1 | 80% | 2.073 | 13.4% | 0.000 | Missed |
-| IN_MEMORY | 1 | 100% | 2.036 | 16.4% | 0.000 | Passed |
-| FILE | 1 | 50% | 5351.932 | 31.2% | 6.394 | Missed |
-| FILE | 1 | 80% | 7130.317 | 30.4% | 6.435 | Missed |
-| FILE | 1 | 100% | 7587.496 | 30.5% | 6.038 | Missed |
-| IN_MEMORY | 2 | 50% | 2.093 | 10.3% | 0.000 | Missed |
-| IN_MEMORY | 2 | 80% | 2.058 | 14.0% | 0.000 | Missed |
-| IN_MEMORY | 2 | 100% | 2.032 | 16.3% | 0.000 | Passed |
-| FILE | 2 | 50% | 5377.098 | 31.9% | 6.504 | Missed |
-| FILE | 2 | 80% | 7004.488 | 29.2% | 6.353 | Missed |
-| FILE | 2 | 100% | 7566.524 | 30.6% | 6.169 | Missed |
-
-Collected for revision `4e65282832d61710fa5e7b898842ab3f16d7386d`. Only generated benchmark README blocks and JSON/SVG snapshots differ from the measured source above; code, configuration, tools and manual documentation match.
+Execution exit code: 0.
 
 **Redline diagnostics: find a runtime limit (unqualified)**
 
@@ -559,27 +448,27 @@ One fresh JVM per mode; record bytes 1024, 256-record batches, 2s warmup and 2s 
 
 | Mode | Highest unique writes/s | Consumers at that rate | Delivery coverage at that rate | Why the test stopped |
 | --- | ---: | ---: | ---: | --- |
-| IN_MEMORY | 1,177,772 | 1 | 98.7% | JVM heap exhausted (JVM_OOM) |
-| FILE | 308,893 | 128 | 2.3% | Broker/client limit reached (BROKER_OR_CLIENT_LIMIT): INTERNAL_ERROR |
+| IN_MEMORY | 271,264 | 1 | 94.4% | JVM heap exhausted (JVM_OOM) |
 
 **IN_MEMORY: delivery progress**
 
-The last measured stage (10, 512 consumers) covered **6.4%** of its delivery demand. The test stopped at stage 11 with 1024 producers and 1024 consumers. The failing attempt can occur after the last measured window.
+The last measured stage (11, 1024 consumers) covered **15.0%** of its delivery demand. The test stopped at stage 12 with 2048 producers and 2048 consumers. The failing attempt can occur after the last measured window.
 
 Each row uses equal numbers of producers and consumers. Rates are records or deliveries per second.
 
 | Stage | Consumers | Unique writes/s | Deliveries needed/s | Completed deliveries/s | Delivery coverage |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 | 1 | 1,177,772 | 1,177,772 | 1,162,632 | 98.7% |
-| 2 | 2 | 1,067,121 | 2,134,242 | 2,103,841 | 98.6% |
-| 3 | 4 | 781,305 | 3,125,220 | 3,063,654 | 98.0% |
-| 4 | 8 | 451,016 | 3,608,128 | 3,552,717 | 98.5% |
-| 5 | 16 | 259,991 | 4,159,856 | 4,046,037 | 97.3% |
-| 6 | 32 | 148,689 | 4,758,048 | 4,359,395 | 91.6% |
-| 7 | 64 | 78,955 | 5,053,120 | 4,181,549 | 82.8% |
-| 8 | 128 | 30,086 | 3,851,008 | 3,335,136 | 86.6% |
-| 9 | 256 | 14,175 | 3,628,800 | 2,908,372 | 80.1% |
-| 10 | 512 | 29,999 | 15,359,488 | 984,581 | 6.4% |
+| 1 | 1 | 271,264 | 271,264 | 255,945 | 94.4% |
+| 2 | 2 | 256,590 | 513,180 | 483,060 | 94.1% |
+| 3 | 4 | 191,523 | 766,092 | 704,528 | 92.0% |
+| 4 | 8 | 114,951 | 919,608 | 801,382 | 87.1% |
+| 5 | 16 | 71,286 | 1,140,576 | 1,007,360 | 88.3% |
+| 6 | 32 | 47,292 | 1,513,344 | 1,182,058 | 78.1% |
+| 7 | 64 | 27,065 | 1,732,160 | 1,200,040 | 69.3% |
+| 8 | 128 | 24,220 | 3,100,160 | 896,273 | 28.9% |
+| 9 | 256 | 23,812 | 6,095,872 | 792,967 | 13.0% |
+| 10 | 512 | 20,689 | 10,592,768 | 718,010 | 6.8% |
+| 11 | 1024 | 2,812 | 2,879,488 | 431,868 | 15.0% |
 
 **IN_MEMORY: timing and resources**
 
@@ -587,36 +476,146 @@ Measured means the load step finished. Partial CPU hold means only its prefix su
 
 | Stage | Measured seconds | CPU budget used | Reported heap MiB | Coarse p99 ms | Window status |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 1 | 2.01 | 38.0% | 312.0 | 0.524 | Measured |
-| 2 | 2.01 | 57.0% | 284.0 | 0.524 | Measured |
-| 3 | 2.01 | 98.8% | 444.0 | 1.049 | Measured |
-| 4 | 2.01 | 99.7% | 448.0 | 4.194 | Measured |
-| 5 | 2.01 | 100.0% | 392.0 | 4.194 | Measured |
-| 6 | 2.02 | 99.7% | 404.0 | 4.194 | Measured |
-| 7 | 2.01 | 100.0% | 230.0 | 8.389 | Measured |
-| 8 | 11.08 | 100.0% | 312.0 | 16.777 | Measured |
-| 9 | 11.09 | 99.8% | 510.0 | 67.109 | Measured |
-| 10 | 2.04 | 69.6% | 472.0 | 268.435 | Measured |
+| 1 | 2.01 | 94.4% | 218.0 | 8.389 | Measured |
+| 2 | 2.01 | 96.2% | 230.0 | 8.389 | Measured |
+| 3 | 2.03 | 95.0% | 304.0 | 33.554 | Measured |
+| 4 | 2.03 | 95.5% | 336.0 | 67.109 | Measured |
+| 5 | 2.03 | 97.4% | 336.0 | 33.554 | Measured |
+| 6 | 2.01 | 98.5% | 396.0 | 67.109 | Measured |
+| 7 | 2.01 | 98.6% | 358.0 | 67.109 | Measured |
+| 8 | 2.02 | 94.2% | 236.0 | 134.218 | Measured |
+| 9 | 2.07 | 95.3% | 294.0 | 134.218 | Measured |
+| 10 | 2.02 | 95.1% | 512.0 | 536.871 | Measured |
+| 11 | 11.65 | 93.0% | 502.0 | 1073.742 | Measured |
 
-IN_MEMORY: JDK 26.0.2.1; Windows_11; filesystem NTFS; CPU percentages use 8 cores as 100%; 512 MiB maximum heap.
-Free-disk reserve: 125.91 GiB (sampled).
+IN_MEMORY: JDK 26.0.2.1; Linux; filesystem ext4; CPU percentages use 2 cores as 100%; 512 MiB maximum heap.
 
-**FILE: delivery progress**
+<!-- benchmark-redline:end -->
 
-The last measured stage (8, 128 consumers) covered **2.3%** of its delivery demand. The test stopped at stage 8 with 128 producers and 128 consumers. The failing attempt can occur after the last measured window.
+### Contributor PC benchmarks
+
+<!-- benchmark-contributor-pc:start -->
+Latest contributor PC run (diagnostic, unqualified)
+
+[Report, logs and downloadable results](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+
+Contributor: Rishabh Rathi; finished 2026-10-29T20:22:07.396396+00:00; revision `d0fa4423bb81e846eec74e6346152226ede5d526`.
+
+Windows-11-10.0.26100-SP0; AMD Ryzen 5 7600X 6-Core Processor; 8 JVM active processors; 512 MiB heap; 128 MiB direct-memory limit; no OS resource quota.
+
+JDK: openjdk version "26.0.2.1" 2026-08-18 OpenJDK Runtime Environment Temurin-26.0.2.1+1 (build 26.0.2.1+1) OpenJDK 64-Bit Server VM Temurin-26.0.2.1+1 (build 26.0.2.1+1, mixed mode, sharing). Media: Filesystem per worker; physical media not detected.
+
+Two fresh JVMs per mode; 1 KiB records; 256-record batches; 5s minimum adaptive warmup and 10s measurement at each load. Broker and clients share the PC. These results are contributor supplied and do not qualify sustained capacity.
+
+**Fixed target: requested writes versus completed work**
+
+These windows count unique records, with one delivery per record. Requested writes/s is the offered load; actual writes/s is the completed rate. Write target achieved compares actual with requested writes. Delivery coverage compares unique deliveries with completed writes. Consumers keeping up does not mean the write target was met.
+
+| Mode | Repeat | Requested writes/s | Actual writes/s | Unique deliveries/s | Write target achieved | Delivery coverage |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| IN_MEMORY | 1 | 250,000 | 249,984 | 250,112 | 100.0% | 100.1% |
+| IN_MEMORY | 1 | 400,000 | 400,000 | 400,026 | 100.0% | 100.0% |
+| IN_MEMORY | 1 | 500,000 | 499,635 | 499,558 | 99.9% | 100.0% |
+| FILE | 1 | 125,000 | 51,200 | 51,251 | 41.0% | 100.1% |
+| FILE | 1 | 200,000 | 46,054 | 46,080 | 23.0% | 100.1% |
+| FILE | 1 | 250,000 | 47,923 | 47,923 | 19.2% | 100.0% |
+| IN_MEMORY | 2 | 250,000 | 249,984 | 249,882 | 100.0% | 100.0% |
+| IN_MEMORY | 2 | 400,000 | 399,846 | 399,898 | 100.0% | 100.0% |
+| IN_MEMORY | 2 | 500,000 | 499,942 | 499,994 | 100.0% | 100.0% |
+| FILE | 2 | 125,000 | 49,971 | 49,997 | 40.0% | 100.1% |
+| FILE | 2 | 200,000 | 49,050 | 49,101 | 24.5% | 100.1% |
+| FILE | 2 | 250,000 | 49,075 | 49,101 | 19.6% | 100.1% |
+
+**Fixed target: latency and resource checks**
+
+Window checks include throughput, consumption, latency, CPU and heap limits. A passed window remains a local diagnostic, not qualified sustained capacity.
+
+| Mode | Repeat | Load | p99 ms | CPU budget used | Force p99 ms | Window checks |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| IN_MEMORY | 1 | 50% | 11.731 | 7.6% | 0.000 | Missed |
+| IN_MEMORY | 1 | 80% | 11.239 | 15.5% | 0.000 | Passed |
+| IN_MEMORY | 1 | 100% | 14.680 | 21.9% | 0.000 | Passed |
+| FILE | 1 | 50% | 5821.694 | 29.6% | 6.943 | Missed |
+| FILE | 1 | 80% | 7587.496 | 30.3% | 7.655 | Missed |
+| FILE | 1 | 100% | 8002.732 | 29.7% | 7.143 | Missed |
+| IN_MEMORY | 2 | 50% | 11.837 | 10.4% | 0.000 | Missed |
+| IN_MEMORY | 2 | 80% | 10.125 | 15.0% | 0.000 | Passed |
+| IN_MEMORY | 2 | 100% | 10.510 | 24.3% | 0.000 | Missed |
+| FILE | 2 | 50% | 5934.940 | 31.5% | 7.361 | Missed |
+| FILE | 2 | 80% | 7444.890 | 30.4% | 7.528 | Missed |
+| FILE | 2 | 100% | 7914.652 | 29.6% | 7.332 | Missed |
+
+**Redline diagnostics: find a runtime limit (unqualified)**
+
+**Unique writes/s** counts records appended once. This is a fanout workload: every consumer reads the same partition, so one write creates one delivery per consumer. **Deliveries needed/s = unique writes/s × consumers.** **Delivery coverage** is completed deliveries divided by (written records × consumers) within the same window.
+
+For example, 100,000 writes/s with 8 consumers needs 800,000 deliveries/s. 400,000 completed deliveries/s covers 50% of that demand.
+
+Coverage describes aggregate progress during the measurement window, not a record-loss rate or proof that every consumer caught up. It can slightly exceed 100% when operations cross a window boundary; n/a means no writes completed. A completed load step is not a health or capacity pass. Peak production is a short-window observation, not sustained capacity.
+
+One fresh JVM per mode; record bytes 1024, 256-record batches, 2s warmup and 2s ramp windows. From stage eight, CPU saturation adds a 10s hold; concurrency keeps doubling until a runtime limit.
+
+| Mode | Highest unique writes/s | Consumers at that rate | Delivery coverage at that rate | Why the test stopped |
+| --- | ---: | ---: | ---: | --- |
+| IN_MEMORY | 972,837 | 1 | 98.5% | JVM heap exhausted (JVM_OOM) |
+| FILE | 319,701 | 128 | 2.2% | Broker/client limit reached (BROKER_OR_CLIENT_LIMIT): QUOTA_EXCEEDED |
+
+**IN_MEMORY: delivery progress**
+
+The last measured stage (10, 512 consumers) covered **6.3%** of its delivery demand. The test stopped at stage 11 with 1024 producers and 1024 consumers. The failing attempt can occur after the last measured window.
 
 Each row uses equal numbers of producers and consumers. Rates are records or deliveries per second.
 
 | Stage | Consumers | Unique writes/s | Deliveries needed/s | Completed deliveries/s | Delivery coverage |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 | 1 | 91,592 | 91,592 | 91,465 | 99.9% |
-| 2 | 2 | 93,693 | 187,386 | 187,131 | 99.9% |
-| 3 | 4 | 144,292 | 577,168 | 400,754 | 69.4% |
-| 4 | 8 | 170,240 | 1,361,920 | 401,470 | 29.5% |
-| 5 | 16 | 237,676 | 3,802,816 | 623,357 | 16.4% |
-| 6 | 32 | 284,894 | 9,116,608 | 1,065,011 | 11.7% |
-| 7 | 64 | 257,188 | 16,460,032 | 1,520,903 | 9.2% |
-| 8 | 128 | 308,893 | 39,538,304 | 908,794 | 2.3% |
+| 1 | 1 | 972,837 | 972,837 | 957,890 | 98.5% |
+| 2 | 2 | 873,657 | 1,747,314 | 1,717,115 | 98.3% |
+| 3 | 4 | 707,788 | 2,831,152 | 2,770,738 | 97.9% |
+| 4 | 8 | 441,062 | 3,528,496 | 3,490,134 | 98.9% |
+| 5 | 16 | 241,162 | 3,858,592 | 3,723,821 | 96.5% |
+| 6 | 32 | 146,158 | 4,677,056 | 4,213,909 | 90.1% |
+| 7 | 64 | 69,737 | 4,463,168 | 3,285,235 | 73.6% |
+| 8 | 128 | 26,604 | 3,405,312 | 2,770,992 | 81.4% |
+| 9 | 256 | 13,965 | 3,575,040 | 2,620,764 | 73.3% |
+| 10 | 512 | 29,125 | 14,912,000 | 935,329 | 6.3% |
+
+**IN_MEMORY: timing and resources**
+
+Measured means the load step finished. Partial CPU hold means only its prefix survived. p99 is a coarse request-cycle estimate; heap is the reported stage sample.
+
+| Stage | Measured seconds | CPU budget used | Reported heap MiB | Coarse p99 ms | Window status |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1 | 2.04 | 42.2% | 372.0 | 0.524 | Measured |
+| 2 | 2.09 | 54.5% | 386.0 | 1.049 | Measured |
+| 3 | 2.08 | 93.0% | 318.0 | 1.049 | Measured |
+| 4 | 2.10 | 99.8% | 466.0 | 4.194 | Measured |
+| 5 | 2.10 | 99.7% | 398.0 | 4.194 | Measured |
+| 6 | 2.09 | 97.6% | 258.0 | 8.389 | Measured |
+| 7 | 2.05 | 93.4% | 300.0 | 16.777 | Measured |
+| 8 | 11.27 | 95.1% | 268.0 | 33.554 | Measured |
+| 9 | 11.26 | 98.9% | 428.0 | 67.109 | Measured |
+| 10 | 2.15 | 62.3% | 494.0 | 268.435 | Measured |
+
+IN_MEMORY: JDK 26.0.2.1; Windows_11; filesystem NTFS; CPU percentages use 8 cores as 100%; 512 MiB maximum heap.
+Free-disk reserve: 125.90 GiB (sampled).
+
+**FILE: delivery progress**
+
+The last measured stage (9, 256 consumers) covered **0.3%** of its delivery demand. The test stopped at stage 9 with 256 producers and 256 consumers. The failing attempt can occur after the last measured window.
+
+Each row uses equal numbers of producers and consumers. Rates are records or deliveries per second.
+
+| Stage | Consumers | Unique writes/s | Deliveries needed/s | Completed deliveries/s | Delivery coverage |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1 | 97,102 | 97,102 | 95,979 | 98.8% |
+| 2 | 2 | 93,024 | 186,048 | 185,804 | 99.9% |
+| 3 | 4 | 124,162 | 496,648 | 401,008 | 80.7% |
+| 4 | 8 | 166,494 | 1,331,952 | 384,654 | 28.9% |
+| 5 | 16 | 172,550 | 2,760,800 | 587,511 | 21.3% |
+| 6 | 32 | 203,494 | 6,511,808 | 1,041,023 | 16.0% |
+| 7 | 64 | 254,983 | 16,318,912 | 1,422,930 | 8.7% |
+| 8 | 128 | 319,701 | 40,921,728 | 887,608 | 2.2% |
+| 9 | 256 | 291,753 | 74,688,768 | 245,400 | 0.3% |
 
 **FILE: timing and resources**
 
@@ -624,14 +623,15 @@ Measured means the load step finished. Partial CPU hold means only its prefix su
 
 | Stage | Measured seconds | CPU budget used | Reported heap MiB | Coarse p99 ms | Window status |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 1 | 2.01 | 20.3% | 274.0 | 8.389 | Measured |
-| 2 | 2.01 | 32.8% | 450.0 | 8.389 | Measured |
-| 3 | 2.01 | 33.5% | 320.0 | 16.777 | Measured |
-| 4 | 2.01 | 37.9% | 318.0 | 33.554 | Measured |
-| 5 | 2.01 | 38.9% | 384.0 | 67.109 | Measured |
-| 6 | 2.01 | 55.5% | 276.0 | 67.109 | Measured |
-| 7 | 2.02 | 84.6% | 304.0 | 134.218 | Measured |
-| 8 | 2.02 | 94.1% | 498.0 | 268.435 | Broker/client limit reached |
+| 1 | 2.05 | 21.2% | 272.0 | 4.194 | Measured |
+| 2 | 2.10 | 26.5% | 106.0 | 16.777 | Measured |
+| 3 | 2.11 | 38.8% | 286.0 | 16.777 | Measured |
+| 4 | 2.12 | 35.3% | 390.0 | 33.554 | Measured |
+| 5 | 2.07 | 36.3% | 186.0 | 67.109 | Measured |
+| 6 | 2.09 | 55.3% | 150.0 | 134.218 | Measured |
+| 7 | 2.12 | 85.4% | 306.0 | 134.218 | Measured |
+| 8 | 2.09 | 89.4% | 396.0 | 268.435 | Measured |
+| 9 | 0.28 | 0.0% | 0.0 | 268.435 | Broker/client limit reached |
 
 FILE: JDK 26.0.2.1; Windows_11; filesystem NTFS; CPU percentages use 8 cores as 100%; 512 MiB maximum heap.
 Free-disk reserve: 125.90 GiB (sampled).
