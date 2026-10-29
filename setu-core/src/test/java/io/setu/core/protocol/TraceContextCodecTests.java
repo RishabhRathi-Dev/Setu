@@ -1,6 +1,6 @@
 package io.setu.core.protocol;
 
-import io.setu.storage.log.MessageValue;
+import io.setu.storage.log.MessageFrame;
 import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
@@ -39,7 +39,7 @@ class TraceContextCodecTests {
     }
 
     @Test void scratchBatchEncoderSupportsTraceMetadataAndEmptyContextReuse() throws Exception {
-        var encoder = new ProtocolCodec.ProduceBatchEncoder();
+        var encoder = new ProduceBatchEncoder();
         var values = List.of(new byte[]{1, 2});
         var request = new BrokerRequest(1, Command.PRODUCE_BATCH, "orders", 0, 0, 0, null, 0, null, null, values);
         byte[] traced = encoder.encode(1, "orders", 0, values, TRACE);
@@ -90,7 +90,7 @@ class TraceContextCodecTests {
         }
     }
 
-    private static MessageValue.Frame owned(byte[] bytes) throws Exception {
-        return MessageValue.Frame.readFrom(new DataInputStream(new ByteArrayInputStream(bytes)), bytes.length);
+    private static MessageFrame owned(byte[] bytes) throws Exception {
+        return MessageFrame.readFrom(new DataInputStream(new ByteArrayInputStream(bytes)), bytes.length);
     }
 }

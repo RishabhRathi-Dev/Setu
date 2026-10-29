@@ -74,7 +74,7 @@ Append failure poisons subsequent operations until reopen. Unacknowledged commit
 
 `MemoryLogBudget` reserves complete batches before publication. Rejection leaves records and offsets unchanged. Standalone memory logs are unlimited unless a budget is supplied; `DefaultBroker` shares a 256 MiB budget by default, and zero disables it. Accounting covers payload backing arrays, wrappers and chunks, including empty records. It excludes transport buffers, native mappings, sparse file indexes and snapshots retained after reclamation.
 
-`MessageValue` copies public byte-array inputs/outputs. Internally, protocol and storage share immutable slices of privately owned frames. A backing frame is charged once per contiguous run of sibling slices, separately in each memory chunk it crosses. Partial reclamation keeps the frame charged until the last slice in that chunk is removed. A retained snapshot can therefore keep more memory alive than its selected payload bytes.
+`MessageValue` copies public byte-array inputs/outputs. Internally, protocol and storage share immutable slices of `MessageFrame`; `MessageFrameReader` supports incremental channel reads. A backing frame is charged once per contiguous run of sibling slices, separately in each memory chunk it crosses. Partial reclamation keeps the frame charged until the last slice in that chunk is removed. A retained snapshot can therefore keep more memory alive than its selected payload bytes.
 
 ## Migrating existing data
 
@@ -241,7 +241,7 @@ try (var io = UringFileIo.create();
 `force(true)` performs fsync and `force(false)` performs fdatasync. Writes alone
 are not durable. Callers own file creation/directory durability; close adds no
 implicit force. Virtual threads may call this synchronous API directly. Private
-completion futures cannot be cancelled externally. `Options` supports bounded
+completion futures cannot be cancelled externally. `UringOptions` supports bounded
 standalone configuration with a 64 MiB native-scratch ceiling; broker defaults
 are fixed internals, not server properties.
 

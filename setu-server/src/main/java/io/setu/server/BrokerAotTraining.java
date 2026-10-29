@@ -102,7 +102,7 @@ final class BrokerAotTraining {
         try (var broker = new DefaultBroker(mode, mode == StorageMode.FILE ? directory : null, RECORD_BYTES);
              var server = tls == null
                      ? new TcpServer(address, new FramedConnectionHandler(new BrokerRequestHandler(broker)))
-                     : SecureServerFactory.createBroker(address, FRAME_BYTES, tls.server, tls.contexts,
+                     : SecureServerFactory.createBroker(address, FRAME_BYTES, tls.server(), tls.contexts(),
                              new MtlsAuthenticator(new CertificateValidator()), authorizer,
                              new QuotaManager(limiter), broker)) {
             server.start();
@@ -170,12 +170,12 @@ final class BrokerAotTraining {
 
     private static SetuClient connect(int port, TrainingTls tls) throws IOException {
         return tls == null ? SetuClient.connectPlain("127.0.0.1", port, 5_000, 10_000, FRAME_BYTES)
-                : SetuClient.connectTls("localhost", port, tls.client, tls.contexts, 5_000, 10_000, FRAME_BYTES);
+                : SetuClient.connectTls("localhost", port, tls.client(), tls.contexts(), 5_000, 10_000, FRAME_BYTES);
     }
 
     private static void requireMissingCertificateRejected(int port, TrainingTls tls) throws Exception {
         var context = javax.net.ssl.SSLContext.getInstance("TLS");
-        context.init(new javax.net.ssl.KeyManager[0], new SetuTrustManagerProvider().create(tls.client), null);
+        context.init(new javax.net.ssl.KeyManager[0], new SetuTrustManagerProvider().create(tls.client()), null);
         try (var anonymous = SetuClient.connectTls("localhost", port, context, List.of("TLSv1.3"), List.of(),
                 5_000, 10_000, FRAME_BYTES)) {
             // TLS 1.3 can deliver the server's certificate-required alert on the first application read.
@@ -295,6 +295,4 @@ final class BrokerAotTraining {
             if (process.isAlive()) process.destroyForcibly().waitFor(5, TimeUnit.SECONDS);
         }
     }
-
-    private record TrainingTls(TlsConfiguration server, TlsConfiguration client, TlsContextFactory contexts) { }
 }

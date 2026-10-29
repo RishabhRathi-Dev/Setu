@@ -6,8 +6,6 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static io.setu.core.broker.BrokerState.*;
-
 /** Version-one checkpoint codec. Fetched positions and liveness clocks are deliberately not persisted. */
 final class BrokerCheckpoint {
     private BrokerCheckpoint() { }

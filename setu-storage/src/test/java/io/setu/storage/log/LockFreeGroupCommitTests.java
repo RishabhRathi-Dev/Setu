@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @Timeout(20)
 class LockFreeGroupCommitTests {
     @Test void sharedFrameSlicesCannotBypassQueueByteAdmission() throws Exception {
-        var frame = MessageValue.Frame.readFrom(new java.io.DataInputStream(
+        var frame = MessageFrame.readFrom(new java.io.DataInputStream(
                 new java.io.ByteArrayInputStream(new byte[8192])), 8192);
         try (var log = new GroupCommitMessageLog(new InMemoryMessageLog(1), 1024, 8, 0)) {
             assertThrows(LogCapacityExceededException.class,

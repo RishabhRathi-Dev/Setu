@@ -73,7 +73,7 @@ class ChronicleMessageLogTests {
     @Test void slicedFramePayloadsSurviveDocumentSplitsAndReopen() throws Exception {
         byte[] source = new byte[2 * 1024 * 1024 + 97];
         new java.util.Random(42).nextBytes(source);
-        var frame = MessageValue.Frame.readFrom(new java.io.DataInputStream(
+        var frame = MessageFrame.readFrom(new java.io.DataInputStream(
                 new java.io.ByteArrayInputStream(source)), source.length);
         var values = List.of(frame.valueAt(19, 1024 * 1024 + 3), MessageValue.empty(),
                 frame.valueAt(7, 65539), frame.valueAt(source.length - 1024, 1024),

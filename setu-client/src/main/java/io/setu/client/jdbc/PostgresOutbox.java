@@ -16,11 +16,6 @@ public final class PostgresOutbox {
     private static final int ENVELOPE_BYTES = 20;
     private final DataSource dataSource;
 
-    @FunctionalInterface
-    public interface TransactionHandler {
-        void apply(Connection transaction, byte[] payload) throws SQLException;
-    }
-
     public PostgresOutbox(DataSource dataSource) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
     }

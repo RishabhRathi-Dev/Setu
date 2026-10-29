@@ -141,7 +141,7 @@ public final class TcpServer implements AutoCloseable {
             connectionHandler.handle(client);
         } catch (IOException | RuntimeException failure) {
             if (running.get()) {
-                if (failure instanceof io.setu.core.protocol.BufferBudget.Exhausted)
+                if (failure instanceof io.setu.core.protocol.BufferBudgetExceededException)
                     log.debug("Closing client connection after frame admission rejection");
                 else log.warn("Closing client connection after request failure", failure);
             }

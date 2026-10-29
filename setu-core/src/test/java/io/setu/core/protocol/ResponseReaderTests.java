@@ -24,7 +24,7 @@ class ResponseReaderTests {
     }
 
     @Test void longerThenShorterControlRepliesKeepIndependentDecodedData() throws Exception {
-        var reader = new ProtocolCodec.ResponseReader();
+        var reader = new ResponseReader();
         var metadata = new BrokerResponse(1, Command.METADATA, ErrorCode.NONE, "", -1,
                 List.of(), Map.of("orders", 3, "another-topic", 5));
         var error = BrokerResponse.error(2, Command.PRODUCE_BATCH, ErrorCode.BAD_REQUEST, "bad batch");
@@ -41,7 +41,7 @@ class ResponseReaderTests {
     }
 
     @Test void retainedFetchPayloadsSurviveLaterReadsAndClear() throws Exception {
-        var reader = new ProtocolCodec.ResponseReader();
+        var reader = new ResponseReader();
         var first = new BrokerResponse(1, Command.FETCH, ErrorCode.NONE, "", -1,
                 List.of(new ProtocolRecord(0, new byte[]{1, 2, 3})), Map.of());
         var next = new BrokerResponse(2, Command.FETCH, ErrorCode.NONE, "", -1,
@@ -64,7 +64,7 @@ class ResponseReaderTests {
         for (int i = 0; i < 3000; i++) topics.put("topic-with-long-name-" + i, 1);
         var response = new BrokerResponse(1, Command.METADATA, ErrorCode.NONE, "", -1, List.of(), topics);
         assertTrue(ProtocolCodec.encodeResponse(response).length > 64 * 1024);
-        var reader = new ProtocolCodec.ResponseReader();
+        var reader = new ResponseReader();
         try (var input = replies(response, BrokerResponse.ok(2, Command.HEARTBEAT))) {
             var retained = reader.readFrom(input, LIMIT, Command.METADATA);
             reader.readFrom(input, LIMIT, Command.HEARTBEAT);
@@ -73,7 +73,7 @@ class ResponseReaderTests {
     }
 
     @Test void rejectsInvalidLengthsTruncationAndTrailingBytes() throws Exception {
-        var reader = new ProtocolCodec.ResponseReader();
+        var reader = new ResponseReader();
         for (int length : new int[]{-1, LIMIT + 1}) {
             byte[] header = java.nio.ByteBuffer.allocate(4).putInt(length).array();
             assertThrows(IOException.class, () -> reader.readFrom(

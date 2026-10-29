@@ -4,7 +4,7 @@ import io.setu.security.authorization.Permission;
 
 /** The resource and permission required to process a decoded protocol request. */
 public record RequestAuthorizationMetadata(String resource, Permission permission,
-                                            java.util.List<Requirement> additionalRequirements) {
+                                            java.util.List<AuthorizationRequirement> additionalRequirements) {
     public RequestAuthorizationMetadata(String resource, Permission permission) {
         this(resource, permission, java.util.List.of());
     }
@@ -19,16 +19,9 @@ public record RequestAuthorizationMetadata(String resource, Permission permissio
         additionalRequirements = java.util.List.copyOf(additionalRequirements);
     }
 
-    public record Requirement(String resource, Permission permission) {
-        public Requirement {
-            if (resource == null || resource.isBlank() || permission == null)
-                throw new IllegalArgumentException("Resource and permission are required");
-        }
-    }
-
-    public java.util.List<Requirement> requirements() {
-        var result = new java.util.ArrayList<Requirement>(additionalRequirements.size() + 1);
-        result.add(new Requirement(resource, permission));
+    public java.util.List<AuthorizationRequirement> requirements() {
+        var result = new java.util.ArrayList<AuthorizationRequirement>(additionalRequirements.size() + 1);
+        result.add(new AuthorizationRequirement(resource, permission));
         result.addAll(additionalRequirements);
         return java.util.List.copyOf(result);
     }

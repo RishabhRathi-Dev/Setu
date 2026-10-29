@@ -37,17 +37,17 @@ public final class BrokerRequestHandler implements RequestHandler {
     }
 
     @Override
-    public byte[] handle(io.setu.storage.log.MessageValue.Frame frame) {
+    public byte[] handle(io.setu.storage.log.MessageFrame frame) {
         return handle(null, frame);
     }
 
-    private byte[] handle(byte[] payload, io.setu.storage.log.MessageValue.Frame frame) {
+    private byte[] handle(byte[] payload, io.setu.storage.log.MessageFrame frame) {
         try (var telemetry = new io.setu.server.observability.RequestTelemetry(tracer)) {
             return handle(payload, frame, telemetry);
         }
     }
 
-    private byte[] handle(byte[] payload, io.setu.storage.log.MessageValue.Frame frame,
+    private byte[] handle(byte[] payload, io.setu.storage.log.MessageFrame frame,
                           io.setu.server.observability.RequestTelemetry telemetry) {
         int length = frame == null ? payload.length : frame.length();
         BrokerRequest request = null;
@@ -79,7 +79,7 @@ public final class BrokerRequestHandler implements RequestHandler {
                     request == null ? null : LogText.escape(request.topic()), request == null ? null : request.partition(),
                     failure.errorCode(), LogText.escape(failure.getMessage()));
             return error(payload, frame, failure.errorCode(), failure.getMessage());
-        } catch (io.setu.core.protocol.BufferBudget.Exhausted failure) {
+        } catch (io.setu.core.protocol.BufferBudgetExceededException failure) {
             telemetry.outcome(ErrorCode.QUOTA_EXCEEDED);
             return error(payload, frame, ErrorCode.QUOTA_EXCEEDED, failure.getMessage());
         } catch (IOException failure) {
@@ -98,7 +98,7 @@ public final class BrokerRequestHandler implements RequestHandler {
         }
     }
 
-    private static byte[] error(byte[] payload, io.setu.storage.log.MessageValue.Frame frame,
+    private static byte[] error(byte[] payload, io.setu.storage.log.MessageFrame frame,
                                 ErrorCode code, String message) {
         return frame == null ? ProtocolCodec.errorResponse(payload, code, message)
                 : ProtocolCodec.errorResponse(frame, code, message);

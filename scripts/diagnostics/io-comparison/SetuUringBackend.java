@@ -1,5 +1,6 @@
 package io.setu.storage.log;
 
+import io.setu.storage.uring.UringFile;
 import io.setu.storage.uring.UringFileIo;
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
@@ -10,7 +11,7 @@ import java.nio.file.Path;
 final class SetuUringBackend implements ComparisonSync.Backend {
     private static UringFileIo shared;
     private static int owners;
-    private final UringFileIo.File file;
+    private final UringFile file;
     private final FileChannel metadataChannel;
     private boolean closed;
     private static synchronized UringFileIo acquire() throws IOException {

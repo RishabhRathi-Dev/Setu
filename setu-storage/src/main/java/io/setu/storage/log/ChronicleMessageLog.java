@@ -48,9 +48,8 @@ public final class ChronicleMessageLog implements MessageLog {
     private final FileChannel lockChannel;
     private final FileLock partitionLock;
     private final Map<Path, ChronicleFileSync> syncFiles = new LinkedHashMap<>();
-    @FunctionalInterface
-    interface SyncFactory { ChronicleFileSync open(Path path) throws IOException; }
-    private final SyncFactory syncFactory;
+
+    private final FileSyncFactory syncFactory;
     // Append/close own this lock across forcing; the adapter monitor protects
     // Chronicle access, allowing committed reads during the independent JDK force.
     private final Object writerLock = new Object();
@@ -81,7 +80,7 @@ public final class ChronicleMessageLog implements MessageLog {
     }
 
     ChronicleMessageLog(Path directory, int maxRecordBytes, long blockBytes, RollCycle rollCycle,
-                        TimeProvider timeProvider, SyncFactory syncFactory) throws IOException {
+                        TimeProvider timeProvider, FileSyncFactory syncFactory) throws IOException {
         Objects.requireNonNull(directory, "directory");
         this.syncFactory = Objects.requireNonNull(syncFactory, "syncFactory");
         if (maxRecordBytes < 0 || blockBytes <= 0) throw new IllegalArgumentException("Invalid queue limits");
@@ -276,7 +275,7 @@ public final class ChronicleMessageLog implements MessageLog {
                     int encoded = Math.toIntExact(bytes.readPosition() - start);
                     admission.reserve(2L * payloadBytes + 160L * (records.size() + take) + 22);
                     bytes.readPosition(start);
-                    var frame = MessageValue.Frame.readFrom(new DataInputStream(bytes.inputStream()), encoded);
+                    var frame = MessageFrame.readFrom(new DataInputStream(bytes.inputStream()), encoded);
                     ByteBuffer input = frame.cursor().order(java.nio.ByteOrder.nativeOrder());
                     for (int i = 0; i < take; i++) {
                         int length = input.getInt();

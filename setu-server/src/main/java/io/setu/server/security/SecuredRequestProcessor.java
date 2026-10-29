@@ -40,12 +40,12 @@ public final class SecuredRequestProcessor implements RequestProcessor {
     }
 
     @Override
-    public byte[] process(AuthenticationResult identity, io.setu.storage.log.MessageValue.Frame request) throws IOException {
+    public byte[] process(AuthenticationResult identity, io.setu.storage.log.MessageFrame request) throws IOException {
         return process(identity, null, Objects.requireNonNull(request, "request"));
     }
 
     private byte[] process(AuthenticationResult identity, byte[] request,
-                           io.setu.storage.log.MessageValue.Frame frame) throws IOException {
+                           io.setu.storage.log.MessageFrame frame) throws IOException {
         int length = frame == null ? request.length : frame.length();
         if (identity == null) {
             LOG.warn("Authentication required frame_bytes={}", length);
@@ -57,7 +57,7 @@ public final class SecuredRequestProcessor implements RequestProcessor {
         try {
             metadata = Objects.requireNonNull(frame == null ? metadataResolver.resolve(request)
                     : metadataResolver.resolve(frame), "authorization metadata");
-        } catch (io.setu.core.protocol.BufferBudget.Exhausted failure) {
+        } catch (io.setu.core.protocol.BufferBudgetExceededException failure) {
             return error(request, frame, ErrorCode.QUOTA_EXCEEDED, failure.getMessage());
         } catch (ProtocolException failure) {
             LOG.warn("Security metadata rejected principal={} frame_bytes={} reason={}", LogText.escape(identity.principal()), length, LogText.escape(failure.getMessage()));
@@ -89,7 +89,7 @@ public final class SecuredRequestProcessor implements RequestProcessor {
             if (LOG.isDebugEnabled()) LOG.debug("Security accepted principal={} resource={} permission={} frame_bytes={}",
                     LogText.escape(identity.principal()), LogText.escape(metadata.resource()), metadata.permission(), length);
             return frame == null ? requestHandler.handle(request) : requestHandler.handle(frame);
-        } catch (io.setu.core.protocol.BufferBudget.Exhausted failure) {
+        } catch (io.setu.core.protocol.BufferBudgetExceededException failure) {
             return error(request, frame, ErrorCode.QUOTA_EXCEEDED, failure.getMessage());
         } catch (IOException failure) {
             LOG.error("Secured broker request failed principal={} resource={} permission={}",
@@ -102,7 +102,7 @@ public final class SecuredRequestProcessor implements RequestProcessor {
         }
     }
 
-    private static byte[] error(byte[] request, io.setu.storage.log.MessageValue.Frame frame,
+    private static byte[] error(byte[] request, io.setu.storage.log.MessageFrame frame,
                                 ErrorCode code, String message) {
         return frame == null ? ProtocolCodec.errorResponse(request, code, message)
                 : ProtocolCodec.errorResponse(frame, code, message);

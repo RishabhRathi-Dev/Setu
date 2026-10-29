@@ -43,7 +43,7 @@ public final class BrokerMetrics implements Broker {
         } catch (BrokerException failure) {
             outcome = failure.errorCode();
             throw failure;
-        } catch (io.setu.core.protocol.BufferBudget.Exhausted failure) {
+        } catch (io.setu.core.protocol.BufferBudgetExceededException failure) {
             outcome = ErrorCode.QUOTA_EXCEEDED;
             throw failure;
         } finally {

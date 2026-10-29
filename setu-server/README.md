@@ -93,7 +93,7 @@ Use the shared JVM options for the embedding application. Provision keys/passwor
 
 ## Request authorization contract
 
-The secure path completes TLS and authenticates the client before protocol processing. `ProtocolRequestAuthorizationMetadataResolver` maps valid requests to these exact resources and permissions:
+The secure path completes TLS and authenticates the client before protocol processing. `ProtocolRequestAuthorizationMetadataResolver` returns `RequestAuthorizationMetadata`, with additional grants represented by `AuthorizationRequirement`. Valid requests require these exact resources and permissions:
 
 | Command | Resource | Permission |
 | --- | --- | --- |

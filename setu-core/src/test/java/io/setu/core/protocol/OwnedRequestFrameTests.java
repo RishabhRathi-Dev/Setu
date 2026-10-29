@@ -1,6 +1,6 @@
 package io.setu.core.protocol;
 
-import io.setu.storage.log.MessageValue;
+import io.setu.storage.log.MessageFrame;
 import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
@@ -8,8 +8,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class OwnedRequestFrameTests {
-    private static MessageValue.Frame frame(byte[] bytes) throws Exception {
-        return MessageValue.Frame.readFrom(new DataInputStream(new ByteArrayInputStream(bytes)), bytes.length);
+    private static MessageFrame frame(byte[] bytes) throws Exception {
+        return MessageFrame.readFrom(new DataInputStream(new ByteArrayInputStream(bytes)), bytes.length);
     }
 
     @Test void frameDecoderPreservesWireFormatAndSharesImmutableProducePayloads() throws Exception {

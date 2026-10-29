@@ -1,9 +1,7 @@
 package io.setu.storage.log;
 
 import java.io.IOException;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
@@ -24,7 +22,7 @@ public final class InMemoryMessageLog implements MessageLog {
     private final long chunkMemoryBytes;
     private final boolean trackRetention;
     private final MemoryLogBudget budget;
-    private final AtomicReference<State> state = new AtomicReference<>(new State(null, null, 0, 0, false));
+    private final AtomicReference<MemoryLogState> state = new AtomicReference<>(new MemoryLogState(null, null, 0, 0, false));
 
     public InMemoryMessageLog(int maxRecordBytes) { this(maxRecordBytes, new MemoryLogBudget(0)); }
     public InMemoryMessageLog(int maxRecordBytes, MemoryLogBudget budget) { this(maxRecordBytes, budget, false); }
@@ -67,15 +65,15 @@ public final class InMemoryMessageLog implements MessageLog {
             previous = value;
         }
         while (true) {
-            State before = state.get();
+            MemoryLogState before = state.get();
             ensureOpen(before);
-            long next = Math.addExact(before.nextOffset, owned.size());
-            int available = before.active == null ? 0 : CHUNK_RECORDS - before.active.count;
+            long next = Math.addExact(before.nextOffset(), owned.size());
+            int available = before.active() == null ? 0 : CHUNK_RECORDS - before.active().count();
             long chunks = (Math.max(0L, owned.size() - (long) available) + CHUNK_RECORDS - 1) / CHUNK_RECORDS;
             // Charge a shared frame once per contiguous run within each chunk. A frame
             // spanning chunks is deliberately charged in each, so either can be reclaimed.
             long chargedPayload = payloadBytes;
-            if (available > 0 && owned.getFirst().sharesFrameWith(before.active.records[before.active.count - 1]))
+            if (available > 0 && owned.getFirst().sharesFrameWith(before.active().records()[before.active().count() - 1]))
                 chargedPayload -= owned.getFirst().retainedBackingBytes();
             for (long boundary = available > 0 ? available : CHUNK_RECORDS;
                  boundary < owned.size(); boundary += CHUNK_RECORDS) {
@@ -87,19 +85,19 @@ public final class InMemoryMessageLog implements MessageLog {
             budget.reserve(reservation);
             boolean published = false;
             try {
-                Node root = before.root;
-                Chunk active = before.active;
+                MemoryLogNode root = before.root();
+                MemoryLogChunk active = before.active();
                 int position = 0;
-                long offset = before.nextOffset;
+                long offset = before.nextOffset();
                 long now = trackRetention ? System.nanoTime() : 0;
                 while (position < owned.size()) {
-                    boolean extend = active != null && active.count < CHUNK_RECORDS;
-                    long base = extend ? active.base : offset;
-                    MessageValue[] records = extend ? active.records.clone() : new MessageValue[CHUNK_RECORDS];
-                    long[] times = !trackRetention ? null : extend ? active.appendedNanos.clone() : new long[CHUNK_RECORDS];
-                    int count = extend ? active.count : 0;
-                    int discarded = extend ? active.discarded : 0;
-                    long bytes = extend ? active.payloadBytes : 0;
+                    boolean extend = active != null && active.count() < CHUNK_RECORDS;
+                    long base = extend ? active.base() : offset;
+                    MessageValue[] records = extend ? active.records().clone() : new MessageValue[CHUNK_RECORDS];
+                    long[] times = !trackRetention ? null : extend ? active.appendedNanos().clone() : new long[CHUNK_RECORDS];
+                    int count = extend ? active.count() : 0;
+                    int discarded = extend ? active.discarded() : 0;
+                    long bytes = extend ? active.payloadBytes() : 0;
                     int take = Math.min(CHUNK_RECORDS - count, owned.size() - position);
                     for (int i = 0; i < take; i++) {
                         MessageValue value = owned.get(position++);
@@ -108,16 +106,16 @@ public final class InMemoryMessageLog implements MessageLog {
                         if (trackRetention) times[count] = now;
                         count++;
                     }
-                    active = new Chunk(base, records, times, count, discarded, bytes, chunkMemoryBytes);
+                    active = new MemoryLogChunk(base, records, times, count, discarded, bytes, chunkMemoryBytes);
                     root = put(root, active);
                     offset += take;
                 }
-                State after = new State(root, active, before.firstOffset, next, false);
+                MemoryLogState after = new MemoryLogState(root, active, before.firstOffset(), next, false);
                 if (state.compareAndSet(before, after)) {
                     published = true;
                     if (LOG.isDebugEnabled()) LOG.debug("Memory batch appended first_offset={} records={} next_offset={} retained_bytes={} shared_budget_bytes={}",
-                            before.nextOffset, owned.size(), next, bytes(root), budget.usedBytes());
-                    return before.nextOffset;
+                            before.nextOffset(), owned.size(), next, bytes(root), budget.usedBytes());
+                    return before.nextOffset();
                 }
             } finally { if (!published) budget.release(reservation); }
         }
@@ -130,24 +128,24 @@ public final class InMemoryMessageLog implements MessageLog {
 
     @Override
     public List<LogRecord> read(long firstOffset, int maxBytes, ReadAdmission admission) throws IOException {
-        State snapshot = state.get();
+        MemoryLogState snapshot = state.get();
         ensureOpen(snapshot);
         if (firstOffset < 0 || maxBytes < 0)
             throw new IllegalArgumentException("offset and maxBytes must be non-negative");
         if (maxBytes == 0) return List.of();
-        long start = Math.max(firstOffset, snapshot.firstOffset);
-        if (start >= snapshot.nextOffset) return List.of();
+        long start = Math.max(firstOffset, snapshot.firstOffset());
+        if (start >= snapshot.nextOffset()) return List.of();
         List<LogRecord> result = new ArrayList<>();
         long bytesRead = 0;
         long retainedFrames = 0;
         MessageValue previous = null;
-        Cursor cursor = new Cursor(snapshot.root, start);
-        Chunk chunk;
+        MemoryLogCursor cursor = new MemoryLogCursor(snapshot.root(), start);
+        MemoryLogChunk chunk;
         while ((chunk = cursor.next()) != null) {
-            int from = (int) Math.max(chunk.discarded, start - chunk.base);
+            int from = (int) Math.max(chunk.discarded(), start - chunk.base());
             int end = from;
-            while (end < chunk.count && result.size() + end - from < MAX_RECORDS_PER_READ) {
-                MessageValue value = chunk.records[end];
+            while (end < chunk.count() && result.size() + end - from < MAX_RECORDS_PER_READ) {
+                MessageValue value = chunk.records()[end];
                 int length = value.length();
                 if (bytesRead + length > maxBytes) break;
                 bytesRead += length;
@@ -158,26 +156,26 @@ public final class InMemoryMessageLog implements MessageLog {
             // Reserve the complete chunk before allocating any result records. The snapshot is
             // immutable, so sizing and materialization cannot disagree under append/reclamation.
             if (end > from) admission.reserve(bytesRead + retainedFrames + 64L * (result.size() + end - from) + 22);
-            for (int i = from; i < end; i++) result.add(new LogRecord(chunk.base + i, chunk.records[i]));
-            if (end < chunk.count || result.size() == MAX_RECORDS_PER_READ) return List.copyOf(result);
+            for (int i = from; i < end; i++) result.add(new LogRecord(chunk.base() + i, chunk.records()[i]));
+            if (end < chunk.count() || result.size() == MAX_RECORDS_PER_READ) return List.copyOf(result);
         }
         return List.copyOf(result);
     }
 
     @Override
-    public long nextOffset() { return state.get().nextOffset; }
+    public long nextOffset() { return state.get().nextOffset(); }
     @Override
-    public long firstOffset() { return state.get().firstOffset; }
+    public long firstOffset() { return state.get().firstOffset(); }
 
     @Override
     public void discardBefore(long offset) throws IOException {
         while (true) {
-            State before = state.get();
+            MemoryLogState before = state.get();
             ensureOpen(before);
-            if (offset < 0 || offset > before.nextOffset)
+            if (offset < 0 || offset > before.nextOffset())
                 throw new IllegalArgumentException("offset must be between first and next offset");
-            long target = Math.max(before.firstOffset, offset);
-            if (target == before.firstOffset) return;
+            long target = Math.max(before.firstOffset(), offset);
+            if (target == before.firstOffset()) return;
             if (reclaim(before, target)) return;
         }
     }
@@ -186,145 +184,99 @@ public final class InMemoryMessageLog implements MessageLog {
     public void discardExpired(long now, long retentionNanos) throws IOException {
         if (retentionNanos <= 0 || !trackRetention) return;
         while (true) {
-            State before = state.get();
+            MemoryLogState before = state.get();
             ensureOpen(before);
-            long target = before.firstOffset;
-            Cursor cursor = new Cursor(before.root, target);
-            Chunk chunk;
+            long target = before.firstOffset();
+            MemoryLogCursor cursor = new MemoryLogCursor(before.root(), target);
+            MemoryLogChunk chunk;
             boolean found = false;
             while (!found && (chunk = cursor.next()) != null) {
-                for (int i = chunk.discarded; i < chunk.count; i++) {
-                    if (now - chunk.appendedNanos[i] < retentionNanos) { found = true; break; }
-                    target = chunk.base + i + 1;
+                for (int i = chunk.discarded(); i < chunk.count(); i++) {
+                    if (now - chunk.appendedNanos()[i] < retentionNanos) { found = true; break; }
+                    target = chunk.base() + i + 1;
                 }
             }
-            if (target == before.firstOffset || reclaim(before, target)) return;
+            if (target == before.firstOffset() || reclaim(before, target)) return;
         }
     }
 
-    private boolean reclaim(State before, long target) {
-        Node root = discardPrefix(before.root, target);
-        Chunk active = last(root);
-        State after = new State(root, active, target, before.nextOffset, false);
+    private boolean reclaim(MemoryLogState before, long target) {
+        MemoryLogNode root = discardPrefix(before.root(), target);
+        MemoryLogChunk active = last(root);
+        MemoryLogState after = new MemoryLogState(root, active, target, before.nextOffset(), false);
         if (!state.compareAndSet(before, after)) return false;
-        long released = bytes(before.root) - bytes(root);
+        long released = bytes(before.root()) - bytes(root);
         budget.release(released);
         if (LOG.isDebugEnabled()) LOG.debug("Memory records discarded first_offset={} next_offset={} released_bytes={} retained_bytes={} shared_budget_bytes={}",
-                target, before.nextOffset, released, bytes(root), budget.usedBytes());
+                target, before.nextOffset(), released, bytes(root), budget.usedBytes());
         return true;
     }
 
-    private static long recordMemoryBytes(MessageValue value, MessageValue previous) {
+    static long recordMemoryBytes(MessageValue value, MessageValue previous) {
         return 32 + (value.sharesFrameWith(previous) ? 0 : value.retainedBackingBytes());
     }
     private void validateLength(int length) throws IOException {
         if (length > maxRecordBytes) throw new IOException("Record size " + length + " exceeds maximum " + maxRecordBytes);
     }
-    private static void ensureOpen(State snapshot) throws IOException {
-        if (snapshot.closed) throw new IOException("Message log is closed");
+    private static void ensureOpen(MemoryLogState snapshot) throws IOException {
+        if (snapshot.closed()) throw new IOException("Message log is closed");
     }
 
     @Override
     public void close() {
         while (true) {
-            State before = state.get();
-            if (before.closed) return;
-            if (state.compareAndSet(before, new State(null, null, before.nextOffset, before.nextOffset, true))) {
-                budget.release(bytes(before.root));
+            MemoryLogState before = state.get();
+            if (before.closed()) return;
+            if (state.compareAndSet(before, new MemoryLogState(null, null, before.nextOffset(), before.nextOffset(), true))) {
+                budget.release(bytes(before.root()));
                 return;
             }
         }
     }
 
-    private record State(Node root, Chunk active, long firstOffset, long nextOffset, boolean closed) { }
-    private record Chunk(long base, MessageValue[] records, long[] appendedNanos, int count,
-                         int discarded, long payloadBytes, long overheadBytes) {
-        long bytes() { return payloadBytes + overheadBytes; }
-        Chunk discard(long target) {
-            int removed = (int) (target - base);
-            MessageValue[] retained = records.clone();
-            long bytes = 0;
-            MessageValue previous = null;
-            for (int i = removed; i < count; i++) {
-                bytes += recordMemoryBytes(retained[i], previous);
-                previous = retained[i];
-            }
-            Arrays.fill(retained, discarded, removed, null);
-            // Timestamps contain no payload references and can remain shared.
-            return new Chunk(base, retained, appendedNanos, count, removed, bytes, overheadBytes);
-        }
-    }
-
-    private static final class Node {
-        final Chunk chunk;
-        final Node left, right;
-        final int height;
-        final long bytes;
-        Node(Chunk chunk, Node left, Node right) {
-            this.chunk = chunk; this.left = left; this.right = right;
-            height = 1 + Math.max(height(left), height(right));
-            bytes = chunk.bytes() + bytes(left) + bytes(right);
-        }
-    }
-    private static int height(Node node) { return node == null ? 0 : node.height; }
-    private static long bytes(Node node) { return node == null ? 0 : node.bytes; }
-    private static Chunk last(Node node) {
+    static int height(MemoryLogNode node) { return node == null ? 0 : node.height; }
+    static long bytes(MemoryLogNode node) { return node == null ? 0 : node.bytes; }
+    private static MemoryLogChunk last(MemoryLogNode node) {
         if (node == null) return null;
         while (node.right != null) node = node.right;
         return node.chunk;
     }
-    private static Node put(Node node, Chunk chunk) {
-        if (node == null) return new Node(chunk, null, null);
-        if (chunk.base == node.chunk.base) return new Node(chunk, node.left, node.right);
-        if (chunk.base < node.chunk.base) return balance(node.chunk, put(node.left, chunk), node.right);
+    private static MemoryLogNode put(MemoryLogNode node, MemoryLogChunk chunk) {
+        if (node == null) return new MemoryLogNode(chunk, null, null);
+        if (chunk.base() == node.chunk.base()) return new MemoryLogNode(chunk, node.left, node.right);
+        if (chunk.base() < node.chunk.base()) return balance(node.chunk, put(node.left, chunk), node.right);
         return balance(node.chunk, node.left, put(node.right, chunk));
     }
-    private static Node discardPrefix(Node node, long target) {
+    private static MemoryLogNode discardPrefix(MemoryLogNode node, long target) {
         if (node == null) return null;
-        Chunk chunk = node.chunk;
-        if (chunk.base + chunk.count <= target) return discardPrefix(node.right, target);
-        if (chunk.base < target) return join(chunk.discard(target), null, node.right);
-        Node left = discardPrefix(node.left, target);
+        MemoryLogChunk chunk = node.chunk;
+        if (chunk.base() + chunk.count() <= target) return discardPrefix(node.right, target);
+        if (chunk.base() < target) return join(chunk.discard(target), null, node.right);
+        MemoryLogNode left = discardPrefix(node.left, target);
         return left == node.left ? node : join(chunk, left, node.right);
     }
     // Prefix deletion can remove an arbitrarily tall subtree; join restores AVL
     // balance along its boundary without copying untouched chunks or subtrees.
-    private static Node join(Chunk chunk, Node left, Node right) {
+    private static MemoryLogNode join(MemoryLogChunk chunk, MemoryLogNode left, MemoryLogNode right) {
         if (height(left) > height(right) + 1)
             return balance(left.chunk, left.left, join(chunk, left.right, right));
         if (height(right) > height(left) + 1)
             return balance(right.chunk, join(chunk, left, right.left), right.right);
-        return new Node(chunk, left, right);
+        return new MemoryLogNode(chunk, left, right);
     }
-    private static Node balance(Chunk chunk, Node left, Node right) {
+    private static MemoryLogNode balance(MemoryLogChunk chunk, MemoryLogNode left, MemoryLogNode right) {
         if (height(left) > height(right) + 1) {
             if (height(left.left) >= height(left.right))
-                return new Node(left.chunk, left.left, new Node(chunk, left.right, right));
-            Node pivot = left.right;
-            return new Node(pivot.chunk, new Node(left.chunk, left.left, pivot.left), new Node(chunk, pivot.right, right));
+                return new MemoryLogNode(left.chunk, left.left, new MemoryLogNode(chunk, left.right, right));
+            MemoryLogNode pivot = left.right;
+            return new MemoryLogNode(pivot.chunk, new MemoryLogNode(left.chunk, left.left, pivot.left), new MemoryLogNode(chunk, pivot.right, right));
         }
         if (height(right) > height(left) + 1) {
             if (height(right.right) >= height(right.left))
-                return new Node(right.chunk, new Node(chunk, left, right.left), right.right);
-            Node pivot = right.left;
-            return new Node(pivot.chunk, new Node(chunk, left, pivot.left), new Node(right.chunk, pivot.right, right.right));
+                return new MemoryLogNode(right.chunk, new MemoryLogNode(chunk, left, right.left), right.right);
+            MemoryLogNode pivot = right.left;
+            return new MemoryLogNode(pivot.chunk, new MemoryLogNode(chunk, left, pivot.left), new MemoryLogNode(right.chunk, pivot.right, right.right));
         }
-        return new Node(chunk, left, right);
-    }
-    private static final class Cursor {
-        final ArrayDeque<Node> path = new ArrayDeque<>();
-        Cursor(Node node, long start) {
-            while (node != null) {
-                if (node.chunk.base + node.chunk.count <= start) node = node.right;
-                else { path.push(node); node = node.left; }
-            }
-        }
-        Chunk next() {
-            if (path.isEmpty()) return null;
-            Node next = path.pop();
-            Node node = next.right;
-            while (node != null) { path.push(node); node = node.left; }
-            return next.chunk;
-        }
+        return new MemoryLogNode(chunk, left, right);
     }
 }

@@ -22,7 +22,7 @@ class BufferAdmissionTests {
     @Test void concurrentReservationsAreBoundedAndCancellationReleasesExactlyOnce() throws Exception {
         var budget = new BufferBudget(100);
         try (var credit = budget.reserve(80)) {
-            assertThrows(BufferBudget.Exhausted.class, () -> budget.reserve(21));
+            assertThrows(BufferBudgetExceededException.class, () -> budget.reserve(21));
             try (var tail = budget.reserve(20)) { assertEquals(100, budget.usedBytes()); }
             credit.close(); credit.close();
             assertEquals(0, budget.usedBytes());
@@ -32,7 +32,7 @@ class BufferAdmissionTests {
             for (int i = 0; i < 64; i++) tasks.add(() -> {
                 for (int j = 0; j < 100; j++) {
                     try (var credit = budget.reserve(50)) { assertTrue(budget.usedBytes() <= 100); }
-                    catch (BufferBudget.Exhausted expected) { }
+                    catch (BufferBudgetExceededException expected) { }
                 }
                 return null;
             });
@@ -46,7 +46,7 @@ class BufferAdmissionTests {
                 List.of(new ProtocolRecord(0, new byte[100])), Map.of());
         try (var scope = new ResponseBuffers(budget)) {
             try (var context = scope.activate()) {
-                assertThrows(BufferBudget.Exhausted.class, () -> ProtocolCodec.encodeResponse(response));
+                assertThrows(BufferBudgetExceededException.class, () -> ProtocolCodec.encodeResponse(response));
                 ProtocolCodec.encodeResponse(BrokerResponse.ok(1, Command.CREATE_TOPIC));
                 assertEquals(17, budget.usedBytes());
             }

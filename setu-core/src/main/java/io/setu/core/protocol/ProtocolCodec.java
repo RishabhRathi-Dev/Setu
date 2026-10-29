@@ -1,10 +1,7 @@
 package io.setu.core.protocol;
 
+import io.setu.storage.log.MessageFrame;
 import io.setu.storage.log.MessageValue;
-
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
@@ -21,9 +18,9 @@ import java.util.Map;
 /** Binary Setu protocol codec. Every request carries trace-context fields. */
 public final class ProtocolCodec {
     public static final int MAGIC = 0x53455455; // SETU
-    private static final int HEADER_BYTES = 11;
+    static final int HEADER_BYTES = 11;
     private static final int COMMAND_OFFSET = 5;
-    private static final int CORRELATION_OFFSET = 7;
+    static final int CORRELATION_OFFSET = 7;
     private static final int REQUEST = 0;
     private static final int RESPONSE = 1;
     private static final int MAX_STRING_BYTES = 4_096;
@@ -34,70 +31,12 @@ public final class ProtocolCodec {
 
     private ProtocolCodec() { }
 
-    /**
-     * Receive buffer for serialized client exchanges. Control replies decode to independent
-     * objects; fetch replies keep private frames because their payload slices can escape.
-     */
-    public static final class ResponseReader {
-        private static final int MAX_RETAINED_BYTES = 64 * 1024;
-        private byte[] buffer;
-        private int frameLength;
-
-        public BrokerResponse readFrom(DataInputStream input, int maxFrameSize, Command expectedCommand) throws IOException {
-            java.util.Objects.requireNonNull(expectedCommand, "expectedCommand");
-            int length = FrameCodec.readLength(input, maxFrameSize);
-            frameLength = length;
-            if (length < 0) return null;
-            if (expectedCommand == Command.FETCH || length > MAX_RETAINED_BYTES)
-                return decodeResponse(MessageValue.Frame.readFrom(input, length));
-            if (buffer == null || buffer.length < length)
-                buffer = new byte[Math.min(MAX_RETAINED_BYTES, Math.max(256, length))];
-            input.readFully(buffer, 0, length);
-            // Bound the cursor to this reply, excluding bytes left by a longer previous reply.
-            // The copying decoder also handles an unexpected FETCH safely before the client
-            // rejects its command: none of its records can reference the scratch buffer.
-            ByteBuffer cursor = ByteBuffer.wrap(buffer, 0, length);
-            int correlation = length >= HEADER_BYTES ? cursor.getInt(CORRELATION_OFFSET) : -1;
-            return decodeResponse(cursor, correlation, null);
-        }
-
-        public int frameLength() { return frameLength; }
-        public void clear() { buffer = null; }
-    }
-
     /** Copies caller payloads directly into their final wire frame. */
     public static byte[] encodeProduceBatch(int correlation, String topic, int partition, List<byte[]> values) throws IOException {
         return encodeProduceBatch(correlation, topic, partition, values, null, TraceContext.NONE);
     }
 
-    /**
-     * Scratch encoder for serialized client exchanges. The returned frame is valid only until
-     * the next encode; callers must finish writing it before reusing this encoder.
-     */
-    public static final class ProduceBatchEncoder {
-        private static final int MAX_RETAINED_BYTES = 1024 * 1024;
-        private byte[] buffer;
-
-        public byte[] encode(int correlation, String topic, int partition, List<byte[]> values) throws IOException {
-            return encode(correlation, topic, partition, values, TraceContext.NONE);
-        }
-
-        public byte[] encode(int correlation, String topic, int partition, List<byte[]> values,
-                             TraceContext traceContext) throws IOException {
-            return encodeProduceBatch(correlation, topic, partition, values, this, traceContext);
-        }
-
-        private byte[] allocate(int size) {
-            if (size > MAX_RETAINED_BYTES) return new byte[size];
-            // Exact length keeps framing honest when batch size or topic length changes.
-            if (buffer == null || buffer.length != size) buffer = new byte[size];
-            return buffer;
-        }
-
-        public void clear() { buffer = null; }
-    }
-
-    private static byte[] encodeProduceBatch(int correlation, String topic, int partition,
+    static byte[] encodeProduceBatch(int correlation, String topic, int partition,
                                              List<byte[]> values, ProduceBatchEncoder encoder, TraceContext traceContext) throws IOException {
         requireTopic(topic);
         if (correlation < 0 || partition < 0) throw bad("correlation and partition must be non-negative", correlation);
@@ -140,7 +79,7 @@ public final class ProtocolCodec {
             }
         }
         capacity += 8 + request.traceContext().traceparent().length() + request.traceContext().tracestate().length();
-        EncodingBuffer bytes = new EncodingBuffer(capacity);
+        ProtocolEncodingBuffer bytes = new ProtocolEncodingBuffer(capacity);
         DataOutputStream out = new DataOutputStream(bytes);
         writeHeader(out, REQUEST, request.command(), request.correlationId());
         writeString(out, request.traceContext().traceparent());
@@ -217,31 +156,31 @@ public final class ProtocolCodec {
     }
 
     /** Immutable transport-owned frames can be retained by storage without copying payloads. */
-    public static BrokerRequest decodeRequest(MessageValue.Frame frame) throws ProtocolException {
+    public static BrokerRequest decodeRequest(MessageFrame frame) throws ProtocolException {
         ByteBuffer cursor = frame.cursor();
         int correlation = cursor.remaining() >= HEADER_BYTES ? cursor.getInt(CORRELATION_OFFSET) : -1;
         return decodeRequest(cursor, correlation, frame);
     }
 
-    private static BrokerRequest decodeRequest(ByteBuffer in, int correlation, MessageValue.Frame frame) throws ProtocolException {
+    private static BrokerRequest decodeRequest(ByteBuffer in, int correlation, MessageFrame frame) throws ProtocolException {
         try {
-            Header header = readHeader(in, REQUEST);
-            correlation = header.correlationId;
+            ProtocolHeader header = readHeader(in, REQUEST);
+            correlation = header.correlationId();
             TraceContext trace = new TraceContext(readString(in, null, TraceContext.MAX_FIELD_BYTES),
                     readString(in, null, TraceContext.MAX_FIELD_BYTES));
-            BrokerRequest request = switch (header.command) {
-                case PRODUCE -> new BrokerRequest(correlation, header.command, readString(in, frame), in.getInt(),
+            BrokerRequest request = switch (header.command()) {
+                case PRODUCE -> new BrokerRequest(correlation, header.command(), readString(in, frame), in.getInt(),
                         -1, -1, readValue(in, frame), 0, null, null, List.of(), 0);
                 case PRODUCE_BATCH, PRODUCE_IDEMPOTENT, TRANSACT, PRODUCE_CONFIGURED ->
-                        decodeProduceBatch(in, correlation, frame, header.command);
+                        decodeProduceBatch(in, correlation, frame, header.command());
                 case FETCH -> decodeFetch(in, correlation);
-                case COMMIT_OFFSET, FETCH_OFFSET -> decodeCommit(in, correlation, header.command);
-                case JOIN_GROUP, JOIN_MANAGED_GROUP, GROUP_ASSIGNMENT -> decodeJoin(in, correlation, header.command);
-                case LEAVE_GROUP, HEARTBEAT -> new BrokerRequest(correlation, header.command, null, -1, -1, -1,
+                case COMMIT_OFFSET, FETCH_OFFSET -> decodeCommit(in, correlation, header.command());
+                case JOIN_GROUP, JOIN_MANAGED_GROUP, GROUP_ASSIGNMENT -> decodeJoin(in, correlation, header.command());
+                case LEAVE_GROUP, HEARTBEAT -> new BrokerRequest(correlation, header.command(), null, -1, -1, -1,
                         null, 0, readString(in), readString(in));
-                case CREATE_TOPIC -> new BrokerRequest(correlation, header.command, readString(in), -1, -1, -1,
+                case CREATE_TOPIC -> new BrokerRequest(correlation, header.command(), readString(in), -1, -1, -1,
                         null, in.getInt(), null, null);
-                case METADATA -> new BrokerRequest(correlation, header.command, null, -1, -1, -1,
+                case METADATA -> new BrokerRequest(correlation, header.command(), null, -1, -1, -1,
                         null, 0, null, null);
             };
             if (in.hasRemaining()) throw bad("Trailing bytes in request", correlation);
@@ -249,7 +188,7 @@ public final class ProtocolCodec {
             return trace.isEmpty() ? request : request.withTraceContext(trace);
         } catch (ProtocolException e) {
             throw e;
-        } catch (BufferBudget.Exhausted e) {
+        } catch (BufferBudgetExceededException e) {
             throw new ProtocolException(ErrorCode.QUOTA_EXCEEDED, e.getMessage(), correlation);
         } catch (EOFException | BufferUnderflowException e) {
             throw bad("Truncated request", correlation);
@@ -287,7 +226,7 @@ public final class ProtocolCodec {
                 offset, maxBytes, MessageValue.empty(), 0, group, member, List.of(), wait).withGeneration(generation);
     }
 
-    private static BrokerRequest decodeProduceBatch(ByteBuffer in, int correlation, MessageValue.Frame frame, Command command) throws IOException {
+    private static BrokerRequest decodeProduceBatch(ByteBuffer in, int correlation, MessageFrame frame, Command command) throws IOException {
         String topic = readString(in, frame);
         int partition = in.getInt();
         int count = boundedCount(in.getInt());
@@ -440,7 +379,7 @@ public final class ProtocolCodec {
             }
         }
         ResponseBuffers.reserve(size);
-        EncodingBuffer bytes = new EncodingBuffer(Math.toIntExact(size));
+        ProtocolEncodingBuffer bytes = new ProtocolEncodingBuffer(Math.toIntExact(size));
         DataOutputStream out = new DataOutputStream(bytes);
         writeHeader(out, RESPONSE, response.command(), response.correlationId());
         out.writeShort(response.errorCode().id());
@@ -493,17 +432,17 @@ public final class ProtocolCodec {
     }
 
     /** Decodes immutable slices; retaining a record also retains its response frame. */
-    public static BrokerResponse decodeResponse(MessageValue.Frame frame) throws ProtocolException {
+    public static BrokerResponse decodeResponse(MessageFrame frame) throws ProtocolException {
         ByteBuffer cursor = frame.cursor();
         int correlation = cursor.remaining() >= HEADER_BYTES ? cursor.getInt(CORRELATION_OFFSET) : -1;
         return decodeResponse(cursor, correlation, frame);
     }
 
-    private static BrokerResponse decodeResponse(ByteBuffer in, int correlation, MessageValue.Frame frame) throws ProtocolException {
+    static BrokerResponse decodeResponse(ByteBuffer in, int correlation, MessageFrame frame) throws ProtocolException {
         try {
             // One cursor for the whole frame avoids per-record wrappers and synchronized stream reads.
-            Header header = readHeader(in, RESPONSE);
-            correlation = header.correlationId;
+            ProtocolHeader header = readHeader(in, RESPONSE);
+            correlation = header.correlationId();
             ErrorCode errorCode = ErrorCode.fromId(Short.toUnsignedInt(in.getShort()));
             String message = readString(in);
             long offset = -1;
@@ -511,7 +450,7 @@ public final class ProtocolCodec {
             Map<String, Integer> topics = Map.of();
             GroupAssignment assignment = null;
             if (errorCode == ErrorCode.NONE) {
-                switch (header.command) {
+                switch (header.command()) {
                     case PRODUCE, PRODUCE_BATCH, FETCH_OFFSET, PRODUCE_IDEMPOTENT, TRANSACT, PRODUCE_CONFIGURED -> offset = in.getLong();
                     case JOIN_MANAGED_GROUP, GROUP_ASSIGNMENT -> {
                         long generation = in.getLong();
@@ -555,7 +494,7 @@ public final class ProtocolCodec {
                 }
             }
             if (in.hasRemaining()) throw bad("Trailing bytes in response", correlation);
-            return new BrokerResponse(correlation, header.command, errorCode, message, offset, records, topics, assignment);
+            return new BrokerResponse(correlation, header.command(), errorCode, message, offset, records, topics, assignment);
         } catch (ProtocolException e) {
             throw e;
         } catch (EOFException | BufferUnderflowException e) {
@@ -566,14 +505,14 @@ public final class ProtocolCodec {
     }
 
     public static byte[] errorResponse(byte[] request, ErrorCode code, String message) {
-        HeaderParts header = extractHeader(request);
+        ProtocolHeaderParts header = extractHeader(request);
         String safeMessage = message == null ? "" : message;
         while (safeMessage.getBytes(StandardCharsets.UTF_8).length > MAX_STRING_BYTES)
             safeMessage = safeMessage.substring(0, safeMessage.length() - 1);
-        return encodeUnchecked(BrokerResponse.error(header.correlationId, header.command, code, safeMessage));
+        return encodeUnchecked(BrokerResponse.error(header.correlationId(), header.command(), code, safeMessage));
     }
 
-    public static byte[] errorResponse(MessageValue.Frame request, ErrorCode code, String message) {
+    public static byte[] errorResponse(MessageFrame request, ErrorCode code, String message) {
         // Error paths are cold; retain the existing malformed-header handling exactly.
         return errorResponse(request.copy(), code, message);
     }
@@ -590,13 +529,13 @@ public final class ProtocolCodec {
         out.writeInt(correlation);
     }
 
-    private static Header readHeader(ByteBuffer in, int expectedKind) throws IOException {
+    private static ProtocolHeader readHeader(ByteBuffer in, int expectedKind) throws IOException {
         if (in.getInt() != MAGIC) throw bad("Invalid protocol magic", -1);
         if (Byte.toUnsignedInt(in.get()) != expectedKind) throw bad("Unexpected message kind", -1);
         Command command = Command.fromId(Short.toUnsignedInt(in.getShort()));
         int correlation = in.getInt();
         if (correlation < 0) throw bad("correlationId must be non-negative", correlation);
-        return new Header(command, correlation);
+        return new ProtocolHeader(command, correlation);
     }
 
     private static void writeString(DataOutputStream out, String value) throws IOException {
@@ -611,7 +550,7 @@ public final class ProtocolCodec {
         value.writeTo(out);
     }
 
-    private static MessageValue readValue(ByteBuffer in, MessageValue.Frame frame) throws IOException {
+    private static MessageValue readValue(ByteBuffer in, MessageFrame frame) throws IOException {
         int length = in.getInt();
         if (length < 0 || length > 16 * 1024 * 1024 || length > in.remaining())
             throw new IOException("Invalid byte field length: " + length);
@@ -624,11 +563,11 @@ public final class ProtocolCodec {
         return readString(in, null);
     }
 
-    private static String readString(ByteBuffer in, MessageValue.Frame frame) throws IOException {
+    private static String readString(ByteBuffer in, MessageFrame frame) throws IOException {
         return readString(in, frame, MAX_STRING_BYTES);
     }
 
-    private static String readString(ByteBuffer in, MessageValue.Frame frame, int maxBytes) throws IOException {
+    private static String readString(ByteBuffer in, MessageFrame frame, int maxBytes) throws IOException {
         int length = in.getInt();
         if (length < 0 || length > maxBytes || length > in.remaining())
             throw new IOException("Invalid byte field length: " + length);
@@ -667,13 +606,13 @@ public final class ProtocolCodec {
     }
 
     private static int extractCorrelationId(byte[] payload) {
-        HeaderParts header = extractHeader(payload);
-        return header.correlationId;
+        ProtocolHeaderParts header = extractHeader(payload);
+        return header.correlationId();
     }
 
-    private static HeaderParts extractHeader(byte[] payload) {
-        if (payload == null || payload.length < HEADER_BYTES) return new HeaderParts(Command.METADATA, 0);
-        ByteBufferReader reader = new ByteBufferReader(payload);
+    private static ProtocolHeaderParts extractHeader(byte[] payload) {
+        if (payload == null || payload.length < HEADER_BYTES) return new ProtocolHeaderParts(Command.METADATA, 0);
+        ProtocolByteReader reader = new ProtocolByteReader(payload);
         int magic = reader.intAt(0);
         int commandId = reader.unsignedShortAt(COMMAND_OFFSET);
         int correlation = reader.intAt(CORRELATION_OFFSET);
@@ -683,28 +622,10 @@ public final class ProtocolCodec {
             catch (ProtocolException ignored) { }
         }
         if (correlation < 0) correlation = 0;
-        return new HeaderParts(command, correlation);
+        return new ProtocolHeaderParts(command, correlation);
     }
 
     private static ProtocolException bad(String message, int correlation) {
         return new ProtocolException(ErrorCode.BAD_REQUEST, message, Math.max(correlation, 0));
-    }
-
-    private record Header(Command command, int correlationId) { }
-
-    private static final class EncodingBuffer extends ByteArrayOutputStream {
-        private EncodingBuffer(int capacity) { super(capacity); }
-
-        // Exact-sized batch encodings transfer their buffer; other commands return a trimmed copy.
-        // The stream is local to the encoder and is never used after this call.
-        private byte[] finish() { return count == buf.length ? buf : toByteArray(); }
-    }
-    private record HeaderParts(Command command, int correlationId) { }
-
-    private static final class ByteBufferReader {
-        private final byte[] bytes;
-        private ByteBufferReader(byte[] bytes) { this.bytes = bytes; }
-        private int intAt(int i) { return (bytes[i] & 255) << 24 | (bytes[i + 1] & 255) << 16 | (bytes[i + 2] & 255) << 8 | (bytes[i + 3] & 255); }
-        private int unsignedShortAt(int i) { return (bytes[i] & 255) << 8 | (bytes[i + 1] & 255); }
     }
 }
