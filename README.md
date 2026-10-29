@@ -211,28 +211,28 @@ The [benchmark guide](setu-benchmark/README.md) documents reproducible profiles,
 The generated blocks below retain their source revision, host information, and qualification status. Read them against that revision rather than as measurements of the current checkout; CI refreshes them after new runs.
 
 <!-- benchmark-metrics-badges:start -->
-[![in-memory: 500.00K/s target, 499.99K/s CI, 100% qualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40734393919)
-[![file: 250.00K/s target, 249.98K/s CI, 100% qualified](benchmark-badges/file-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40734393919)
+[![in-memory: 500.00K/s target, 499.99K/s CI, 100% qualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40886750864)
+[![file: 250.00K/s target, 106.75K/s CI, 43% unqualified](benchmark-badges/file-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40886750864)
 <!-- benchmark-metrics-badges:end -->
 
 <details>
 <summary>Latest recorded target diagnostics and qualification details</summary>
 
 <!-- benchmark-target-diagnostics:start -->
-[![memory p99: 0.61 ms at target (CI)](benchmark-badges/memory-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40734393919)
-[![memory resources: 58% CPU, 256 MiB heap (CI)](benchmark-badges/memory-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40734393919)
-[![memory JFR: 1.66 GiB/s alloc, 8.3 ms GC (CI)](benchmark-badges/memory-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40734393919)
-[![file p99: 5.18 ms at target (CI)](benchmark-badges/file-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40734393919)
-[![file resources: 69% CPU, 124 MiB heap (CI)](benchmark-badges/file-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40734393919)
-[![file JFR: 1.09 GiB/s alloc, 23.1 ms GC (CI)](benchmark-badges/file-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40734393919)
+[![memory p99: 0.68 ms at target (CI)](benchmark-badges/memory-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40886750864)
+[![memory resources: 73% CPU, 254 MiB heap (CI)](benchmark-badges/memory-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40886750864)
+[![memory JFR: 1.65 GiB/s alloc, 8.8 ms GC (CI)](benchmark-badges/memory-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40886750864)
+[![file p99: 22800.24 ms at target (CI)](benchmark-badges/file-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40886750864)
+[![file resources: 32% CPU, 126 MiB heap (CI)](benchmark-badges/file-target-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40886750864)
+[![file JFR: 0.46 GiB/s alloc, 6.4 ms GC (CI)](benchmark-badges/file-target-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40886750864)
 <!-- benchmark-target-diagnostics:end -->
 
 <!-- benchmark-capacity-details:start -->
-Latest source: **CI**, revision `fb8305b864a1d7334e69a0538526a90cee2a61b2`. [Benchmark run/report](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40734393919).
+Latest source: **CI**, revision `3632046ab21395f29e4d443c10d98b1011622e6f`. [Benchmark run/report](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40886750864).
 
-Runner: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz; 3.2 enforced CPU cores; 128 MiB worker heap; filesystem/media /dev/sda1 ext4 (rotational).
+Runner: AMD EPYC 9V74 80-Core Processor; 3.2 enforced CPU cores; 128 MiB worker heap; filesystem/media /dev/nvme0n1p1 ext4 (non-rotational).
 
-Runner: AMD EPYC 9V74 80-Core Processor; 3.2 enforced CPU cores; 256 MiB worker heap; filesystem/media /dev/nvme0n1p1 ext4 (non-rotational).
+Runner: AMD EPYC 7763 64-Core Processor; 3.2 enforced CPU cores; 256 MiB worker heap; filesystem/media /dev/sda1 ext4 (rotational).
 
 # Node-target measurements
 
@@ -240,66 +240,80 @@ Three independent repetitions; 1 KiB records; 10s or longer warmup and 30s measu
 
 | Mode | Target/s | Median measured/s | Worst target p99 ms | Peak heap MiB | Peak average CPU % | Qualified |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| IN_MEMORY | 500,000 | 499,994 | 0.612 | 256 | 58.4156 | True |
-| FILE | 250,000 | 249,975 | 5.181 | 124 | 68.5414 | True |
+| IN_MEMORY | 500,000 | 499,994 | 0.685 | 254 | 72.9258 | True |
+| FILE | 250,000 | 106,752 | 22800.237 | 126 | 32.2259 | False |
 
 | Mode | Repeat | Load | Measured/s | Consumed/s | p99 ms | CPU % | Heap slope MiB/s | Healthy |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| FILE | 1 | 50% | 124,996 | 125,022 | 4.723 | 54.7169 | -0.051 | True |
-| FILE | 1 | 80% | 199,987 | 200,004 | 3.357 | 65.7393 | -0.048 | True |
-| FILE | 1 | 100% | 249,975 | 249,941 | 3.121 | 67.9143 | 0.102 | True |
-| FILE | 2 | 50% | 124,996 | 125,030 | 2.863 | 55.3518 | 0.120 | True |
-| FILE | 2 | 80% | 199,987 | 200,004 | 4.440 | 64.9149 | 0.167 | True |
-| FILE | 2 | 100% | 249,993 | 250,001 | 3.310 | 68.4768 | -0.039 | True |
-| FILE | 3 | 50% | 124,996 | 125,047 | 2.871 | 55.0086 | 0.136 | True |
-| FILE | 3 | 80% | 199,987 | 199,996 | 6.263 | 63.6954 | 0.151 | True |
-| FILE | 3 | 100% | 249,933 | 249,907 | 5.181 | 68.5414 | 0.026 | True |
-| IN_MEMORY | 1 | 50% | 249,993 | 250,001 | 0.486 | 41.8958 | 0.334 | True |
-| IN_MEMORY | 1 | 80% | 400,000 | 400,009 | 0.464 | 52.1232 | 0.279 | True |
-| IN_MEMORY | 1 | 100% | 499,985 | 499,985 | 0.612 | 58.4156 | 0.079 | True |
-| IN_MEMORY | 2 | 50% | 249,993 | 250,018 | 0.556 | 42.0721 | 0.161 | True |
-| IN_MEMORY | 2 | 80% | 400,000 | 400,009 | 0.466 | 51.9785 | 0.277 | True |
-| IN_MEMORY | 2 | 100% | 499,994 | 500,002 | 0.501 | 58.3834 | 0.491 | True |
-| IN_MEMORY | 3 | 50% | 249,993 | 250,010 | 0.473 | 42.0195 | 0.203 | True |
-| IN_MEMORY | 3 | 80% | 400,000 | 400,009 | 0.409 | 51.8218 | 0.504 | True |
-| IN_MEMORY | 3 | 100% | 499,994 | 500,002 | 0.473 | 58.1543 | 0.276 | True |
+| FILE | 1 | 50% | 105,617 | 105,626 | 4529.848 | 32.2259 | 0.053 | False |
+| FILE | 1 | 80% | 96,333 | 97,075 | 16013.853 | 24.6973 | 0.061 | False |
+| FILE | 1 | 100% | 106,752 | 104,730 | 18001.953 | 23.9167 | 0.209 | False |
+| FILE | 2 | 50% | 102,076 | 102,161 | 6161.433 | 23.1869 | 0.189 | False |
+| FILE | 2 | 80% | 63,855 | 63,872 | 20367.540 | 22.2492 | -0.295 | False |
+| FILE | 2 | 100% | 112,990 | 112,998 | 16374.563 | 29.0509 | 0.113 | False |
+| FILE | 3 | 50% | 96,171 | 95,659 | 7839.154 | 28.4366 | -0.213 | False |
+| FILE | 3 | 80% | 85,137 | 85,205 | 17280.532 | 27.2597 | -0.060 | False |
+| FILE | 3 | 100% | 55,415 | 55,433 | 22800.237 | 23.3848 | 0.397 | False |
+| IN_MEMORY | 1 | 50% | 249,993 | 250,027 | 0.536 | 52.7391 | 0.158 | True |
+| IN_MEMORY | 1 | 80% | 400,000 | 400,009 | 0.575 | 64.4467 | 0.248 | True |
+| IN_MEMORY | 1 | 100% | 499,994 | 500,002 | 0.658 | 71.3003 | 0.250 | True |
+| IN_MEMORY | 2 | 50% | 249,993 | 250,027 | 0.591 | 53.5826 | 0.291 | True |
+| IN_MEMORY | 2 | 80% | 400,000 | 400,009 | 0.616 | 65.8840 | 0.345 | True |
+| IN_MEMORY | 2 | 100% | 499,994 | 500,002 | 0.685 | 72.9258 | 0.013 | True |
+| IN_MEMORY | 3 | 50% | 249,993 | 250,061 | 0.604 | 53.4054 | 0.115 | True |
+| IN_MEMORY | 3 | 80% | 400,000 | 400,009 | 0.589 | 65.1542 | 0.382 | True |
+| IN_MEMORY | 3 | 100% | 499,994 | 500,002 | 0.670 | 72.1016 | 0.049 | True |
+
+Qualification failures (completed measurements are retained):
+
+| Mode | Repeat | Load | Measured limit failures |
+| --- | ---: | ---: | --- |
+| FILE | 1 | 50% | throughput 105,617/s <95% of offered 125,000/s; p99 4529.848 ms outside [0,10) ms |
+| FILE | 1 | 80% | throughput 96,333/s <95% of offered 200,000/s; p99 16013.853 ms outside [0,100) ms |
+| FILE | 1 | 100% | throughput 106,752/s <95% of offered 250,000/s; p99 18001.953 ms outside [0,100) ms |
+| FILE | 2 | 50% | throughput 102,076/s <95% of offered 125,000/s; p99 6161.433 ms outside [0,10) ms |
+| FILE | 2 | 80% | throughput 63,855/s <95% of offered 200,000/s; p99 20367.540 ms outside [0,100) ms |
+| FILE | 2 | 100% | throughput 112,990/s <95% of offered 250,000/s; p99 16374.563 ms outside [0,100) ms |
+| FILE | 3 | 50% | throughput 96,171/s <95% of offered 125,000/s; p99 7839.154 ms outside [0,10) ms |
+| FILE | 3 | 80% | throughput 85,137/s <95% of offered 200,000/s; p99 17280.532 ms outside [0,100) ms |
+| FILE | 3 | 100% | throughput 55,415/s <95% of offered 250,000/s; p99 22800.237 ms outside [0,100) ms |
 
 Latency components (scheduled completion includes offered-load scheduling delay):
 
 | Mode | Repeat | Load | Produce p99 ms | Fetch p99 ms | Ack p99 ms | Scheduled p99 ms |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| FILE | 1 | 50% | 3.267 | 0.589 | 1.770 | 4.723 |
-| FILE | 1 | 80% | 2.822 | 0.738 | 2.130 | 3.357 |
-| FILE | 1 | 100% | 2.408 | 0.744 | 1.954 | 3.121 |
-| FILE | 2 | 50% | 2.472 | 0.585 | 1.508 | 2.863 |
-| FILE | 2 | 80% | 2.552 | 0.710 | 1.961 | 4.440 |
-| FILE | 2 | 100% | 2.548 | 0.796 | 2.134 | 3.310 |
-| FILE | 3 | 50% | 2.548 | 0.591 | 1.660 | 2.871 |
-| FILE | 3 | 80% | 3.105 | 0.699 | 2.173 | 6.263 |
-| FILE | 3 | 100% | 2.677 | 0.830 | 2.241 | 5.181 |
-| IN_MEMORY | 1 | 50% | 0.368 | 0.217 | 0.180 | 0.486 |
-| IN_MEMORY | 1 | 80% | 0.347 | 0.230 | 0.187 | 0.464 |
-| IN_MEMORY | 1 | 100% | 0.389 | 0.270 | 0.197 | 0.612 |
-| IN_MEMORY | 2 | 50% | 0.406 | 0.227 | 0.203 | 0.556 |
-| IN_MEMORY | 2 | 80% | 0.332 | 0.228 | 0.186 | 0.466 |
-| IN_MEMORY | 2 | 100% | 0.345 | 0.260 | 0.192 | 0.501 |
-| IN_MEMORY | 3 | 50% | 0.357 | 0.216 | 0.185 | 0.473 |
-| IN_MEMORY | 3 | 80% | 0.310 | 0.235 | 0.169 | 0.409 |
-| IN_MEMORY | 3 | 100% | 0.335 | 0.260 | 0.191 | 0.473 |
+| FILE | 1 | 50% | 69.140 | 0.615 | 28.557 | 4529.848 |
+| FILE | 1 | 80% | 74.121 | 0.639 | 57.508 | 16013.853 |
+| FILE | 1 | 100% | 64.913 | 0.734 | 54.723 | 18001.953 |
+| FILE | 2 | 50% | 76.218 | 0.697 | 74.842 | 6161.433 |
+| FILE | 2 | 80% | 119.210 | 0.541 | 98.763 | 20367.540 |
+| FILE | 2 | 100% | 38.207 | 0.615 | 20.414 | 16374.563 |
+| FILE | 3 | 50% | 67.305 | 0.577 | 38.142 | 7839.154 |
+| FILE | 3 | 80% | 87.097 | 0.570 | 37.782 | 17280.532 |
+| FILE | 3 | 100% | 203.817 | 0.504 | 102.171 | 22800.237 |
+| IN_MEMORY | 1 | 50% | 0.409 | 0.302 | 0.175 | 0.536 |
+| IN_MEMORY | 1 | 80% | 0.411 | 0.346 | 0.247 | 0.575 |
+| IN_MEMORY | 1 | 100% | 0.445 | 0.385 | 0.270 | 0.658 |
+| IN_MEMORY | 2 | 50% | 0.461 | 0.366 | 0.180 | 0.591 |
+| IN_MEMORY | 2 | 80% | 0.449 | 0.404 | 0.258 | 0.616 |
+| IN_MEMORY | 2 | 100% | 0.494 | 0.439 | 0.274 | 0.685 |
+| IN_MEMORY | 3 | 50% | 0.438 | 0.314 | 0.187 | 0.604 |
+| IN_MEMORY | 3 | 80% | 0.413 | 0.355 | 0.243 | 0.589 |
+| IN_MEMORY | 3 | 100% | 0.456 | 0.412 | 0.273 | 0.670 |
 
 File-force waits from measured JFR stages:
 
 | Mode | Repeat | Stage | Calls | Total wait ms | p99 wait ms | Max wait ms |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| FILE | 1 | 1 | 23444 | 13570.189554 | 1.587199 | 11.374052 |
-| FILE | 1 | 2 | 38832 | 20892.410618 | 1.394687 | 6.398859 |
-| FILE | 1 | 3 | 47956 | 23249.943653 | 1.161215 | 5.704191 |
-| FILE | 2 | 1 | 23834 | 11975.107027 | 1.227775 | 8.919738 |
-| FILE | 2 | 2 | 38398 | 19410.256862 | 1.228799 | 12.997420 |
-| FILE | 2 | 3 | 49061 | 24701.777236 | 1.301503 | 7.022402 |
-| FILE | 3 | 1 | 23650 | 11155.173400 | 1.185791 | 16.923122 |
-| FILE | 3 | 2 | 38611 | 20208.391871 | 1.713151 | 16.467983 |
-| FILE | 3 | 3 | 48189 | 24705.968019 | 1.357823 | 13.541170 |
+| FILE | 1 | 1 | 21660 | 67469.342656 | 48.398335 | 222.903770 |
+| FILE | 1 | 2 | 20282 | 71971.878130 | 51.937279 | 639.427718 |
+| FILE | 1 | 3 | 22288 | 69766.017146 | 44.040191 | 426.043086 |
+| FILE | 2 | 1 | 20302 | 71084.967503 | 64.782335 | 245.218058 |
+| FILE | 2 | 2 | 13139 | 72957.301641 | 99.745791 | 382.440051 |
+| FILE | 2 | 3 | 23255 | 70346.544821 | 24.952831 | 226.105757 |
+| FILE | 3 | 1 | 20233 | 64499.652034 | 37.060607 | 643.179042 |
+| FILE | 3 | 2 | 17834 | 71149.745538 | 55.640063 | 398.881246 |
+| FILE | 3 | 3 | 11396 | 70817.592617 | 143.654911 | 801.040745 |
 | IN_MEMORY | 1 | 1 | 0 | 0.000000 | 0.000000 | 0.000000 |
 | IN_MEMORY | 1 | 2 | 0 | 0.000000 | 0.000000 | 0.000000 |
 | IN_MEMORY | 1 | 3 | 0 | 0.000000 | 0.000000 | 0.000000 |

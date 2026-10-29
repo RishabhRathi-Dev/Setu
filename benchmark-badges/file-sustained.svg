@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="432" height="24" viewBox="0 0 432 24" role="img" aria-label="file: 250.00K/s target, 249.98K/s CI, 100% qualified">
-  <title>file: 250.00K/s target, 249.98K/s CI, 100% qualified</title>
-  <rect width="432" height="24" rx="3" fill="#22863a"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="24" viewBox="0 0 440 24" role="img" aria-label="file: 250.00K/s target, 106.75K/s CI, 43% unqualified">
+  <title>file: 250.00K/s target, 106.75K/s CI, 43% unqualified</title>
+  <rect width="440" height="24" rx="3" fill="#b55200"/>
   <path d="M3 0H48V24H3Q0 24 0 21V3Q0 0 3 0" fill="#555"/>
   <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="12">
     <text x="24" y="16">file</text>
-    <text x="240" y="16">250.00K/s target, 249.98K/s CI, 100% qualified</text>
+    <text x="244" y="16">250.00K/s target, 106.75K/s CI, 43% unqualified</text>
   </g>
 </svg>
