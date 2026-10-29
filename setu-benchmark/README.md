@@ -116,6 +116,8 @@ These short diagnostics do not qualify sustained capacity. CPU scheduling, JIT/G
 
 ## Direct node-target verification
 
+The mandatory [contributor PC pre-push diagnostic](../scripts/README.md#contributor-pc-check-before-every-push) runs separately from these full target measurements: two fresh JVMs per mode, 5-second minimum adaptive warmups and 10-second fixed-load windows. It uses the same TCP workload, targets, record/batch sizes and durability boundary, but has no OS resource quota and is always unqualified. CI retains the attached PC report alongside its own benchmarks; default-branch publication displays both sources separately.
+
 This profile offers 500K/s in memory with one pair and 250K/s with file storage with two pairs. Three fresh JVMs per mode measure 50%, 80% and 100% of the reference target. All nine windows per mode must qualify.
 
 ```bash

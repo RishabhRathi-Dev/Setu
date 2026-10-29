@@ -329,6 +329,12 @@ Waits are elapsed time inside jdk.FileForce, clipped to each measured stage. Con
 
 </details>
 
+<!-- benchmark-contributor-pc:start -->
+Latest contributor PC run: [report and logs](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40910258031/job/123575983943) · [results JSON](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40910258031/artifacts/12913361610). Measured revision: `2b8247c3d7ab2814eb017bf09f2ac754d2dfa316`, Windows 11 / Ryzen 5 7600X. This contributor diagnostic is unqualified and does not establish sustained capacity.
+<!-- benchmark-contributor-pc:end -->
+
+The [mandatory contributor pre-push check](scripts/README.md#contributor-pc-check-before-every-push) attaches local performance evidence. CI validates the attachment and retains it with the pipeline artifacts; default-branch publication refreshes the block above independently of the CI measurements.
+
 ## Help and contributions
 
 For setup help or a reproducible bug, start with [support and troubleshooting](SUPPORT.md). Use the [issue forms](https://github.com/RishabhRathi-Dev/Setu/issues/new/choose) for bugs and feature requests. Report vulnerabilities privately following the [security policy](SECURITY.md).

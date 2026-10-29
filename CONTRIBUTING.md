@@ -54,6 +54,8 @@ For documentation-only changes, check relative links and heading anchors, verify
 
 ## Pull request workflow
 
+Install the mandatory [contributor PC pre-push check](scripts/README.md#contributor-pc-check-before-every-push) with `python scripts/contributor-performance.py install`. Every branch-tip push must carry its local two-repeat diagnostic alongside the existing CI benchmarks. The check takes at least three minutes plus build/analysis, requires a clean checkout and JDK 26, and preserves performance misses as unqualified measurements. CI rejects missing or mismatched attachments; branch protection must require `contributor-performance` to enforce this on merges.
+
 1. Create a focused branch from the current default branch; `codex/<short-description>` is the convention for agent-created branches.
 2. Keep the change within the owning module's boundary. Add meaningful behavioral coverage when a contract changes.
 3. Update the module README and any affected cross-cutting guides, configuration examples, or runnable examples.
