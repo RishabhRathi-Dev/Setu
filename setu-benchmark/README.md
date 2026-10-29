@@ -56,7 +56,7 @@ python3 scripts/run-benchmarks.py --kind sustained --measurement full \
 | --- | --- |
 | `sustained` | Find a healthy throughput knee, then measure fixed loads at 50%, 80% and 100% of it |
 | `target` | Check fixed reference targets directly, independently of the measured knee |
-| `baseline` | Measure the fixed 1.6-CPU / 5 GiB CI envelope separately from reference targets |
+| `baseline` | Measure the fixed 2-CPU / 5 GiB CI envelope separately from reference targets |
 | `steady` | Separate broker/client JVMs at fixed load, with one and four partitions |
 | `chaos` | Bounded broker failure/limit checks |
 | `sweep`, `large-batch` | Historical fanout and batch-size diagnostics |
@@ -68,7 +68,7 @@ For a Windows smoke without OS resource enforcement:
 .\mvnw.cmd -pl setu-benchmark -am '-Dtest=SustainedThroughputBenchmarkTests' '-Dsurefire.failIfNoSpecifiedTests=false' '-Dsetu.benchmark.max.concurrency=2' test
 ```
 
-All child JVMs load the shared [JVM configuration](../config/jvm.options). The launcher defaults to 80% of detected CPU/memory/free-disk availability; `--fraction` and per-resource fractions adjust it. The selected budget is reused for every repetition. Heap, direct-memory and retained-log allocations reserve process headroom. File space is sampled during measurement against a reserve, rather than enforced as a disk quota.
+All child JVMs load the shared [JVM configuration](../config/jvm.options). The launcher defaults to 80% of detected CPU/memory/free-disk availability; `--fraction` and per-resource fractions adjust it. CPU allocation rounds up to whole cores, capped by available capacity and the selected profile: 1.6 becomes 2 cores and 3.2 becomes 4 cores. Fractional ancestor quotas remain hard ceilings. The fixed baseline now uses 2 cores with its existing 5 GiB memory limit; historical 1.6-core captures retain their recorded budget. The selected budget is reused for every repetition. Heap, direct-memory and retained-log allocations reserve process headroom. File space is sampled during measurement against a reserve, rather than enforced as a disk quota.
 
 Useful options include `--max-concurrency`, `--heap-mib`, `--direct-mib`, `--memory-log-mib`, `--data-directory` and `--output`. Default payloads are 256/512/1024/4096 bytes; Java workers default to 256-record batches. `--stage-millis`, `--warmup-millis` and `--repeats` remain subject to profile validation. See [run-benchmarks.py](../scripts/run-benchmarks.py) for all options.
 
@@ -151,7 +151,7 @@ The optional `trace_file_waits` workflow dispatch runs only the original FILE ba
 
 Combine it with `trace_storage_only` to trace the short broker-free storage probe instead. Both modes retain their JFR/kernel counters and preserve the normal baseline configuration. Use these captures to investigate storage stalls; qualification still requires the complete resource-enforced benchmark.
 
-Default-branch publication validates source revision, resources, timing, durability and all measured JFR stages before updating JSON, SVG badges and the [main README](../README.md#performance). Missing captures are labeled incomplete. Older workflows cannot overwrite newer source measurements. `render-benchmark-badges.py` regenerates images/links from committed snapshots; legacy historical sections are optional and remain separate when present.
+Default-branch publication validates source revision, resources, timing, durability and all measured JFR stages before updating JSON, SVG badges and the [main README](../README.md#performance). CI results publish even when the contributor attachment check fails; a successful attachment check also refreshes the separate contributor section. Contributor publication errors do not prevent committing the validated CI report, and still fail the publication job. Missing CI captures are labeled incomplete. Older workflows cannot overwrite newer source measurements. `render-benchmark-badges.py` regenerates images/links from committed snapshots; legacy historical sections are optional and remain separate when present.
 
 Artifacts include `comparison.json`, `comparison.txt`, raw worker captures, JFR and an `optimization.md` analysis, including failed stages. Reanalyze without rerunning load:
 

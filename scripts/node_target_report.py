@@ -65,7 +65,8 @@ def validate_runs(runs, modes, require_jfr=True, target_profile='reference'):
                 if config.get(key, expected) != expected: raise ValueError('wrong target measurement configuration')
             if config.get('target_profile', 'reference') != target_profile:
                 raise ValueError('wrong target profile')
-            if target_profile == 'ci-baseline' and (number(config, 'cpu_cores') != 1.6
+            # Keep historical 1.6-core captures readable; new baselines use two cores.
+            if target_profile == 'ci-baseline' and (number(config, 'cpu_cores') not in (1.6, 2)
                     or number(config, 'heap_mib') != (256 if mode == 'IN_MEMORY' else 128)):
                 raise ValueError('wrong CI baseline worker budget')
             if target_profile == 'ci-baseline' and mode == 'FILE' and config['filesystem'] in ('tmpfs', 'ramfs'):

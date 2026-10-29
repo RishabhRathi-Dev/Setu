@@ -210,13 +210,17 @@ The [benchmark guide](setu-benchmark/README.md) documents reproducible profiles,
 
 The generated blocks below retain their source revision, host information, and qualification status. Read them against that revision rather than as measurements of the current checkout; CI refreshes them after new runs.
 
+### CI benchmarks
+
+The badges and expandable report below come from resource-enforced CI runs. Contributor PC diagnostics follow in their own section. CI publication continues when the contributor attachment check fails; that check still reports its failure separately.
+
 <!-- benchmark-metrics-badges:start -->
 [![in-memory: 500.00K/s target, 499.99K/s CI, 100% qualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40913108106)
 [![file: 250.00K/s target, 175.59K/s CI, 70% unqualified](benchmark-badges/file-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40913108106)
 <!-- benchmark-metrics-badges:end -->
 
 <details>
-<summary>Latest recorded target diagnostics and qualification details</summary>
+<summary>Latest CI target diagnostics and qualification details</summary>
 
 <!-- benchmark-target-diagnostics:start -->
 [![memory p99: 0.72 ms at target (CI)](benchmark-badges/memory-target-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40913108106)
@@ -326,6 +330,8 @@ Waits are elapsed time inside jdk.FileForce, clipped to each measured stage. Con
 <!-- benchmark-capacity-details:end -->
 
 </details>
+
+### Contributor PC benchmarks
 
 <!-- benchmark-contributor-pc:start -->
 Latest contributor PC run (diagnostic, unqualified)

@@ -55,7 +55,7 @@ class ResourceBudgetTests(unittest.TestCase):
              patch.object(sys, 'argv', argv), patch('builtins.print') as output:
             resources.main()
         snapshot = json.loads(output.call_args.args[0].split(' ', 1)[1])
-        self.assertEqual(1.6, snapshot['budget']['cpu_cores'])
+        self.assertEqual(2, snapshot['budget']['cpu_cores'])
         self.assertEqual(5 * resources.GIB, snapshot['budget']['memory_bytes'])
         self.assertEqual([0, 1], snapshot['budget']['allowed_cpus'])
         self.assertEqual('ci-baseline', snapshot['target_profile'])
@@ -68,7 +68,7 @@ class ResourceBudgetTests(unittest.TestCase):
             with patch.object(sys, 'argv', argv + flags), patch('sys.stderr'), self.assertRaises(SystemExit):
                 resources.main()
         with patch.object(resources, 'detect_host', return_value=self.host(cores=1)), \
-             patch.object(sys, 'argv', argv), self.assertRaisesRegex(ValueError, 'fixed 1.6 CPU/5 GiB'):
+             patch.object(sys, 'argv', argv), self.assertRaisesRegex(ValueError, 'fixed 2 CPU/5 GiB'):
             resources.main()
 
     def test_baseline_saves_failed_expectations_and_emits_a_warning(self):
@@ -96,16 +96,20 @@ class ResourceBudgetTests(unittest.TestCase):
             self.assertEqual('ci-baseline', document['kind'])
             self.assertEqual(3, len(document['runs']))
 
-    def test_host_and_runner_profiles_reserve_capacity_without_rounding_cpu_up(self):
+    def test_host_and_runner_profiles_round_cpu_up_within_available_capacity(self):
         budget = resources.plan(self.host())
-        self.assertAlmostEqual(9.6, budget.cpu_cores)
+        self.assertEqual(10, budget.cpu_cores)
         self.assertEqual(int(16 * resources.GIB * .8), budget.memory_bytes)
         self.assertAlmostEqual(20 * resources.GIB, budget.disk_reserve_bytes, delta=1)
         runner = resources.plan(self.host(), profile='github-private')
-        self.assertAlmostEqual(1.6, runner.cpu_cores)
+        self.assertEqual(2, runner.cpu_cores)
+        self.assertEqual(4, resources.plan(self.host(), profile='github-public').cpu_cores)
         self.assertEqual(int(8 * resources.GIB * .8), runner.memory_bytes)
         small = resources.plan(self.host(cores=.5, available=2 * resources.GIB), profile='github-private')
-        self.assertAlmostEqual(.4, small.cpu_cores)
+        self.assertEqual(.5, small.cpu_cores)
+        self.assertEqual(1.5, resources.plan(self.host(cores=1.5)).cpu_cores)
+        self.assertEqual(12, resources.plan(self.host(), cpu_fraction=1).cpu_cores)
+        self.assertEqual(1, resources.plan(self.host(), cpu_fraction=.01).cpu_cores)
         self.assertLess(small.memory_bytes, runner.memory_bytes)
 
     def test_shared_memory_budget_accounts_for_both_steady_workers_and_native_headroom(self):
@@ -136,7 +140,7 @@ class ResourceBudgetTests(unittest.TestCase):
         self.assertEqual(3, snapshot['repeats'])
         self.assertEqual(10000, snapshot['warmup_millis'])
         self.assertEqual(30000, snapshot['stage_millis'])
-        self.assertEqual(2, snapshot['max_concurrency'])
+        self.assertEqual(4, snapshot['max_concurrency'])
         self.assertLessEqual(snapshot['budget']['heap_mib'], 1024)
 
     def test_full_profile_rejects_smoke_timings_or_incomplete_repetitions(self):
@@ -345,7 +349,7 @@ class ResourceBudgetTests(unittest.TestCase):
              patch.dict(resources.os.environ, {'JAVA_HOME': '/test/jdk'}):
             command = resources.limited_command(['bash', 'mvnw', 'test'], budget, 'test-unit')
         self.assertEqual(['sudo', '-n', 'systemd-run'], command[:3])
-        self.assertIn('CPUQuota=960%', command)
+        self.assertIn('CPUQuota=1000%', command)
         self.assertIn('AllowedCPUs=2,4', command)
         self.assertIn('MemoryMax=' + str(budget.memory_bytes), command)
         self.assertIn('MemorySwapMax=0', command)

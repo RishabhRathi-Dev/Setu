@@ -10,7 +10,7 @@ on:
         default: false
         type: boolean
       resource_fraction:
-        description: 'Share of detected available CPU, memory and free disk (0 < share <= 1)'
+        description: 'Resource share (0 < share <= 1); CPU rounds up to whole cores within available capacity'
         default: '0.8'
         type: string
       trace_file_waits:
@@ -140,7 +140,7 @@ jobs:
             sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
               --unit="setu-force-probe-${{ github.run_id }}" --uid="$(id -u)" --gid="$(id -g)" \
               --working-directory="$GITHUB_WORKSPACE" \
-              -p CPUQuota=160% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
+              -p CPUQuota=200% -p AllowedCPUs=0,1 -p MemoryMax=5368709120 -p MemorySwapMax=0 \
               "$JAVA_HOME/bin/java" @config/jvm.options -Xms64m -Xmx128m -XX:ActiveProcessorCount=2 \
               "-XX:StartFlightRecording=filename=$RUNNER_TEMP/force-trace/storage.jfr,settings=profile,dumponexit=true" \
               -cp "$RUNNER_TEMP/force-trace/classes" io.setu.storage.log.StorageForceProbe \
@@ -473,7 +473,6 @@ jobs:
     if: >-
       always() && needs.unit-tests.result == 'success' && needs.integration-tests.result == 'success'
       && needs.windows-functional.result == 'success' && needs.node-target-benchmark.result != 'cancelled'
-      && needs.contributor-performance.result == 'success'
       && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
@@ -517,6 +516,7 @@ jobs:
           path: reports
 
       - name: Generate benchmark badges
+        id: ci-badges
         env:
           WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SOURCE_REVISION: ${{ github.sha }}
@@ -528,11 +528,13 @@ jobs:
           --allow-incomplete
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: needs.contributor-performance.result == 'success'
         with:
           name: contributor-pc-${{ github.run_attempt }}
           path: contributor-report
 
       - name: Publish the contributor PC diagnostic alongside CI measurements
+        if: needs.contributor-performance.result == 'success'
         env:
           WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: >-
@@ -541,6 +543,7 @@ jobs:
           --workflow-url "$WORKFLOW_URL"
 
       - name: Commit and push as GitHub App bot
+        if: ${{ !cancelled() && steps.ci-badges.outcome == 'success' }}
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           SOURCE_REVISION: ${{ github.sha }}
