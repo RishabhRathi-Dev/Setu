@@ -69,6 +69,7 @@ State verification limits explicitly, including unavailable tools or unsupported
 - Check `BrokerResponse.errorCode()` explicitly. A failed/lost produce response can have an uncertain outcome.
 - Extend meaningful behavioral tests when changing contracts. Include recovery and failure paths for storage/admission changes.
 - Use the existing Java formatting and package structure; [.editorconfig](.editorconfig) defines whitespace defaults. Keep tools dependency-light unless a new dependency has a clear purpose.
+- Give each production class, interface, record and enum its own named file in the owning subsystem package. Keep implementation helpers package-private; test-local fixtures may remain nested. See [Java source layout](docs/source-layout.md).
 - Document API/configuration changes beside the owning module and update cross-cutting guides when behavior changes.
 
 ## Repository hygiene

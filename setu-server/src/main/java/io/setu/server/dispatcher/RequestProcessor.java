@@ -9,7 +9,7 @@ import java.io.IOException;
 public interface RequestProcessor {
     byte[] process(AuthenticationResult identity, byte[] request) throws IOException;
 
-    default byte[] process(AuthenticationResult identity, io.setu.storage.log.MessageValue.Frame request) throws IOException {
+    default byte[] process(AuthenticationResult identity, io.setu.storage.log.MessageFrame request) throws IOException {
         io.setu.core.protocol.RequestBuffers.reserveObjects(request.length());
         return process(identity, request.copy());
     }
@@ -20,7 +20,7 @@ public interface RequestProcessor {
             public byte[] process(AuthenticationResult identity, byte[] request) throws IOException {
                 return handler.handle(request);
             }
-            public byte[] process(AuthenticationResult identity, io.setu.storage.log.MessageValue.Frame request) throws IOException {
+            public byte[] process(AuthenticationResult identity, io.setu.storage.log.MessageFrame request) throws IOException {
                 return handler.handle(request);
             }
         };

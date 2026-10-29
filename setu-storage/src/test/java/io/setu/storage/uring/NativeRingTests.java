@@ -30,7 +30,7 @@ class NativeRingTests {
     @Test void writesHeapDirectSlicesAndGrowthWithMappedHeaders() throws Exception {
         Path path = Files.createFile(root.resolve("records"));
         byte[] data = new byte[150_007]; new Random(13).nextBytes(data);
-        try (var io = UringFileIo.create(new UringFileIo.Options(4, 4096, 16, 65536));
+        try (var io = UringFileIo.create(new UringOptions(4, 4096, 16, 65536));
              var file = io.open(path);
              var channel = FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE)) {
             ByteBuffer direct = UringFileIo.allocateBuffer(data.length + 16).position(7).put(data).flip().position(7);
@@ -63,7 +63,7 @@ class NativeRingTests {
     @Test void independentFilesCompleteTogetherAndRepeatedCloseLeavesNoOwnerThreads() throws Exception {
         long original = owners();
         for (int round = 0; round < 8; round++) {
-            try (var io = UringFileIo.create(new UringFileIo.Options(4, 4096, 16, 65536));
+            try (var io = UringFileIo.create(new UringOptions(4, 4096, 16, 65536));
                  var callers = Executors.newVirtualThreadPerTaskExecutor()) {
                 var tasks = new java.util.ArrayList<java.util.concurrent.Future<?>>();
                 for (int index = 0; index < 8; index++) {
@@ -87,7 +87,7 @@ class NativeRingTests {
         assertEquals(original, owners());
     }
     @Test void nativeWriteAndForceErrorsPropagateAndMissingOpenDoesNotKillExecutor() throws Exception {
-        try (var io = UringFileIo.create(new UringFileIo.Options(2, 4096, 8, 8192))) {
+        try (var io = UringFileIo.create(new UringOptions(2, 4096, 8, 8192))) {
             assertThrows(IOException.class, () -> io.open(root.resolve("missing")));
             try (var full = io.open(Path.of("/dev/full"))) {
                 assertThrows(IOException.class, () -> full.writeFully(ByteBuffer.wrap(new byte[]{1}), 0));

@@ -108,7 +108,7 @@ Propagation is always enabled in the Java clients over blocking, selector and TL
 
 Core carries bounded metadata in `BrokerRequest.traceContext()` / `withTraceContext(TraceContext)` without an OpenTelemetry dependency. W3C semantic validation belongs to client/server instrumentation: bounded but invalid trace parents start a fresh server trace, and invalid vendor state is discarded by the propagator. Trace metadata is not authentication or authorization data. It is excluded from producer fingerprints, transaction journal entries and consumer-state journal records. It is not stored with record payloads or returned by fetches. See [trace propagation](../docs/observability.md#logs-and-request-traces).
 
-Public byte-array APIs copy payloads. Internal `MessageValue.Frame` overloads share immutable slices between protocol and storage, with admission before materialization. Retaining a slice can retain its backing frame.
+Public byte-array APIs copy payloads. Internal `MessageFrame` overloads share immutable slices between protocol and storage, with admission before materialization. Retaining a slice can retain its backing frame.
 
 ## Limits and tests
 
@@ -126,4 +126,4 @@ From the repository root with Java 26:
 
 Tests cover protocol validation/ownership, offsets, membership, long polling, memory reclamation, expiry and Chronicle recovery. See the [architecture guide](../docs/architecture.md) for module boundaries.
 
-`BrokerJournal` owns generation publication, storage and the metadata lock; `BrokerCheckpoint` encodes committed metadata; `BrokerState` contains state types. `DefaultBroker` retains transaction visibility and lock ordering. Aggregate operational gauges expose readiness, recovery, journal use, writer pressure, consumer lag and gate wait without transport dependencies. The server exports these through its optional operations endpoint.
+`BrokerJournal` owns generation publication, storage and the metadata lock; `BrokerCheckpoint` encodes committed metadata. `DefaultBroker` retains transaction visibility and lock ordering; broker state types remain package-private. See [Java source layout](../docs/source-layout.md) for type conventions and public import migration. Aggregate operational gauges expose readiness, recovery, journal use, writer pressure, consumer lag and gate wait without transport dependencies. The server exports these through its optional operations endpoint.

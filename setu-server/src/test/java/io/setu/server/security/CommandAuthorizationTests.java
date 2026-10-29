@@ -1,12 +1,12 @@
 package io.setu.server.security;
 
+import io.setu.storage.log.MessageFrame;
 import io.setu.core.protocol.*;
 import io.setu.security.authentication.AuthenticationMethod;
 import io.setu.security.authentication.AuthenticationResult;
 import io.setu.security.authorization.InMemoryAuthorizer;
 import io.setu.security.authorization.Permission;
 import io.setu.security.quota.QuotaManager;
-import io.setu.storage.log.MessageValue;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -63,7 +63,7 @@ class CommandAuthorizationTests {
 
     private static BrokerResponse process(SecuredRequestProcessor processor, AuthenticationResult principal,
                                            byte[] encoded, boolean ownedFrame) throws Exception {
-        byte[] result = ownedFrame ? processor.process(principal, MessageValue.Frame.readFrom(
+        byte[] result = ownedFrame ? processor.process(principal, MessageFrame.readFrom(
                 new DataInputStream(new ByteArrayInputStream(encoded)), encoded.length)) : processor.process(principal, encoded);
         return ProtocolCodec.decodeResponse(result);
     }
@@ -79,7 +79,7 @@ class CommandAuthorizationTests {
     }
 
     // Explicit public authorization contract, independent of the resolver's returned requirements.
-    private static List<RequestAuthorizationMetadata.Requirement> required(Command command) {
+    private static List<AuthorizationRequirement> required(Command command) {
         var produce = grant("topic/orders", Permission.PRODUCE);
         var consume = grant("topic/orders", Permission.CONSUME);
         var groupWrite = grant("consumer-group/group", Permission.CONSUMER_GROUP_WRITE);
@@ -99,7 +99,7 @@ class CommandAuthorizationTests {
         };
     }
 
-    private static RequestAuthorizationMetadata.Requirement grant(String resource, Permission permission) {
-        return new RequestAuthorizationMetadata.Requirement(resource, permission);
+    private static AuthorizationRequirement grant(String resource, Permission permission) {
+        return new AuthorizationRequirement(resource, permission);
     }
 }

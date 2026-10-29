@@ -1,5 +1,6 @@
 package io.setu.storage.log;
 
+import io.setu.storage.uring.UringUnavailableException;
 import io.setu.storage.uring.UringFileIo;
 import jdk.jfr.Recording;
 import jdk.jfr.consumer.RecordingFile;
@@ -28,10 +29,10 @@ class FileSyncsTests {
 
     @Test void unsupportedPlatformsAndDeniedSetupChooseFallbackOnlyOnce() throws Exception {
         AtomicInteger attempts = new AtomicInteger();
-        var unsupported = new FileSyncs.Pool(false, () -> { throw new AssertionError("Must not initialize native bindings"); });
+        var unsupported = new UringIoPool(false, () -> { throw new AssertionError("Must not initialize native bindings"); });
         assertNull(unsupported.acquire());
         for (int errno : new int[]{1, 13, 38, 95}) {
-            var denied = new FileSyncs.Pool(true, () -> { attempts.incrementAndGet(); throw new UringFileIo.UnavailableException(errno); });
+            var denied = new UringIoPool(true, () -> { attempts.incrementAndGet(); throw new UringUnavailableException(errno); });
             assertNull(denied.acquire());
             assertNull(denied.acquire());
         }
@@ -40,11 +41,11 @@ class FileSyncsTests {
 
     @Test void resourceAndIoFailuresDoNotSilentlySwitchBackends() {
         AtomicInteger attempts = new AtomicInteger();
-        var failed = new FileSyncs.Pool(true, () -> { attempts.incrementAndGet(); throw new IOException("resource failure"); });
+        var failed = new UringIoPool(true, () -> { attempts.incrementAndGet(); throw new IOException("resource failure"); });
         assertThrows(IOException.class, failed::acquire);
         assertThrows(IOException.class, failed::acquire);
         assertEquals(2, attempts.get());
-        assertThrows(IllegalArgumentException.class, () -> new UringFileIo.UnavailableException(12));
+        assertThrows(IllegalArgumentException.class, () -> new UringUnavailableException(12));
     }
 
     @Test void defaultNativeWritesAndMappedHeadersHaveRecordedDurabilityBarriers() throws Exception {
@@ -94,7 +95,7 @@ class FileSyncsTests {
     @Test void sharedOwnerSurvivesIntermediateCloseAndStopsAfterLastLease() throws Exception {
         nativeEnabled();
         AtomicInteger starts = new AtomicInteger();
-        var pool = new FileSyncs.Pool(true, () -> { starts.incrementAndGet(); return UringFileIo.createWithBackpressure(); });
+        var pool = new UringIoPool(true, () -> { starts.incrementAndGet(); return UringFileIo.createWithBackpressure(); });
         var first = pool.acquire();
         var second = pool.acquire();
         assertSame(first, second);

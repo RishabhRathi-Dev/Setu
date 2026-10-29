@@ -20,18 +20,18 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(15)
 class UringFileIoTests {
-    private static final UringFileIo.Options SMALL = new UringFileIo.Options(2, 8, 4, 16);
+    private static final UringOptions SMALL = new UringOptions(2, 8, 4, 16);
     private record ReleaseGate(CountDownLatch gate) implements AutoCloseable {
         @Override public void close() { gate.countDown(); }
     }
-    private static class FakeRing implements UringFileIo.Ring {
+    private static class FakeRing implements UringRing {
         final AtomicInteger descriptors = new AtomicInteger(100);
         final List<Integer> closedFiles = new ArrayList<>();
         final List<Long> offsets = new ArrayList<>();
         final List<Byte> written = new ArrayList<>();
         final List<Boolean> forces = new ArrayList<>();
         final AtomicInteger maxInFlight = new AtomicInteger();
-        final List<UringFileIo.Operation> pending = new ArrayList<>();
+        final List<UringOperation> pending = new ArrayList<>();
         final java.util.concurrent.Semaphore signals = new java.util.concurrent.Semaphore(0);
         volatile CountDownLatch entered, release;
         volatile IOException fatal;
@@ -40,13 +40,13 @@ class UringFileIoTests {
         int forceError, shortWrite = Integer.MAX_VALUE;
         volatile boolean closed;
         @Override public int available() { return 2 - pending.size(); }
-        @Override public void submit(List<UringFileIo.Operation> batch) {
+        @Override public void submit(List<UringOperation> batch) {
             pending.addAll(batch);
             maxInFlight.accumulateAndGet(pending.size(), Math::max);
             if (entered != null && batch.stream().anyMatch(op -> op.opcode == UringFileIo.WRITE)) entered.countDown();
         }
         @Override public void wakeup() { signals.release(); }
-        @Override public List<UringFileIo.Completion> poll(boolean wait) throws IOException {
+        @Override public List<UringCompletion> poll(boolean wait) throws IOException {
             var result = drain();
             if (wait && result.isEmpty()) {
                 try { signals.tryAcquire(10, TimeUnit.MILLISECONDS); }
@@ -55,8 +55,8 @@ class UringFileIoTests {
             }
             return result;
         }
-        private List<UringFileIo.Completion> drain() throws IOException {
-            var results = new ArrayList<UringFileIo.Completion>();
+        private List<UringCompletion> drain() throws IOException {
+            var results = new ArrayList<UringCompletion>();
             var iterator = pending.iterator();
             while (iterator.hasNext()) {
                 var operation = iterator.next();
@@ -77,7 +77,7 @@ class UringFileIoTests {
                     }
                     default -> throw new AssertionError("Unexpected operation");
                 }
-                results.add(new UringFileIo.Completion(operation, result));
+                results.add(new UringCompletion(operation, result));
                 iterator.remove();
             }
             return results;
@@ -130,7 +130,7 @@ class UringFileIoTests {
             assertFalse(UringFileIo.ownsBuffer(arena.allocate(16)));
         }
         FakeRing ring = new FakeRing() {
-            @Override public void submit(List<UringFileIo.Operation> batch) {
+            @Override public void submit(List<UringOperation> batch) {
                 for (var operation : batch) {
                     if (operation.opcode == UringFileIo.WRITE)
                         assertTrue(operation.payload.isDirect(), "Owned buffer must survive dispatch without a heap copy");
@@ -148,7 +148,7 @@ class UringFileIoTests {
     @Test void idleOwnerIsWokenBySubmissionAndShutdownWithoutPollingTimeouts() throws Exception {
         CountDownLatch sleeping = new CountDownLatch(1);
         FakeRing ring = new FakeRing() {
-            @Override public List<UringFileIo.Completion> poll(boolean wait) throws IOException {
+            @Override public List<UringCompletion> poll(boolean wait) throws IOException {
                 if (wait && pending.isEmpty()) {
                     sleeping.countDown();
                     try { signals.acquire(); }
@@ -305,8 +305,8 @@ class UringFileIoTests {
     }
 
     @Test void validatesLimitsAndRejectsUnsupportedPlatformsWithoutNativeInitialization() {
-        assertThrows(IllegalArgumentException.class, () -> new UringFileIo.Options(3, 8, 4, 16));
-        assertThrows(IllegalArgumentException.class, () -> new UringFileIo.Options(256, 16 * 1024 * 1024, 256, Long.MAX_VALUE));
+        assertThrows(IllegalArgumentException.class, () -> new UringOptions(3, 8, 4, 16));
+        assertThrows(IllegalArgumentException.class, () -> new UringOptions(256, 16 * 1024 * 1024, 256, Long.MAX_VALUE));
         if (!UringFileIo.isSupportedPlatform()) assertThrows(IOException.class, UringFileIo::create);
     }
 

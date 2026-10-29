@@ -14,8 +14,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-
-import static io.setu.core.broker.DefaultBroker.TransactionStage.*;
+import static io.setu.core.broker.TransactionStage.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class TransactionBoundaryTests {
@@ -54,7 +53,7 @@ class TransactionBoundaryTests {
     }
 
     @Test void injectedFailuresBeforeAndAfterTheCommitDecisionHaveDistinctOutcomes() throws Exception {
-        for (var stage : DefaultBroker.TransactionStage.values()) {
+        for (var stage : TransactionStage.values()) {
             Path data = directory.resolve(stage.name());
             long generation;
             try (var broker = new DefaultBroker(data, 1024)) {
@@ -155,7 +154,7 @@ class TransactionBoundaryTests {
         public static void main(String[] args) throws Exception {
             var broker = new DefaultBroker(Path.of(args[0]), 1024);
             long generation = initialize(broker);
-            var target = DefaultBroker.TransactionStage.valueOf(args[1]);
+            var target = TransactionStage.valueOf(args[1]);
             broker.transactionFault(stage -> { if (stage == target) Runtime.getRuntime().halt(23); });
             broker.execute(transaction(generation));
             throw new AssertionError("crash boundary was not reached");

@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 class ProtocolCodecTests {
     @Test
     void reusableBatchFramesHandleChangingLengthsWithoutOverwritingDecodedRecords() throws Exception {
-        var encoder = new ProtocolCodec.ProduceBatchEncoder();
+        var encoder = new ProduceBatchEncoder();
         byte[] first = encoder.encode(1, "orders", 0, java.util.List.of(new byte[]{1, 2, 3}));
         var decoded = ProtocolCodec.decodeRequest(first);
         byte[] second = encoder.encode(2, "orders", 0, java.util.List.of(new byte[]{4, 5, 6}));
@@ -46,8 +46,8 @@ class ProtocolCodecTests {
         org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class, () -> ProtocolCodec.decodeRequest(invalid));
     }
 
-    private static io.setu.storage.log.MessageValue.Frame owned(byte[] bytes) throws Exception {
-        return io.setu.storage.log.MessageValue.Frame.readFrom(
+    private static io.setu.storage.log.MessageFrame owned(byte[] bytes) throws Exception {
+        return io.setu.storage.log.MessageFrame.readFrom(
                 new java.io.DataInputStream(new java.io.ByteArrayInputStream(bytes)), bytes.length);
     }
 

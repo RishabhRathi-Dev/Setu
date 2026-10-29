@@ -140,7 +140,7 @@ File memberships survive restart until leave or expiry. Call `fetchOffset(group,
 
 ## Bounded async client
 
-`AsyncSetuClient` returns `CompletableFuture<BrokerResponse>` and uses a fixed number of independent connections. Its constructor takes a connection factory, connection count (1–1,024), bounded queued request count, and read retry count (0–10). The factory can call either `SetuClient.connectPlain` or `connectTls`; TLS hostname verification is preserved. Connections open lazily, reconnect after I/O failure, and close with the async client. Queue saturation completes the returned future exceptionally with `RejectedExecutionException`.
+`AsyncSetuClient` returns `CompletableFuture<BrokerResponse>` and uses a fixed number of independent connections. Its constructor takes a `ConnectionFactory`, connection count (1–1,024), bounded queued request count, and read retry count (0–10). The factory can call either `SetuClient.connectPlain` or `connectTls`; TLS hostname verification is preserved. Connections open lazily, reconnect after I/O failure, and close with the async client. Queue saturation completes the returned future exceptionally with `RejectedExecutionException`.
 
 ```java
 try (var client = new io.setu.client.AsyncSetuClient(

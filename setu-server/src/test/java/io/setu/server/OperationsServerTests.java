@@ -1,5 +1,6 @@
 package io.setu.server;
 
+import io.setu.core.protocol.BufferBudgetExceededException;
 import io.setu.core.broker.DefaultBroker;
 import io.setu.core.protocol.*;
 import io.setu.server.observability.BrokerMetrics;
@@ -61,7 +62,7 @@ class OperationsServerTests {
             assertEquals(3, metrics.execute(fetch).records().size());
             metrics.execute(fetch); // Repeated delivery contributes again; this is not unique consumption.
             try (var credit = new ResponseBuffers(new BufferBudget(1)); var context = credit.activate()) {
-                assertThrows(BufferBudget.Exhausted.class, () -> metrics.execute(fetch));
+                assertThrows(BufferBudgetExceededException.class, () -> metrics.execute(fetch));
             }
             String scrape = metrics.scrape();
             assertTrue(scrape.contains("setu_requests_total{command=\"FETCH\",error=\"QUOTA_EXCEEDED\"} 1\n"));

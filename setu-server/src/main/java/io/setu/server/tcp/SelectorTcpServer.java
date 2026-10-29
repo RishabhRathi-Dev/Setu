@@ -1,5 +1,7 @@
 package io.setu.server.tcp;
 
+import io.setu.core.protocol.BufferLease;
+import io.setu.core.protocol.BufferBudgetExceededException;
 import io.setu.core.protocol.BufferBudget;
 import io.setu.core.protocol.ResponseBuffers;
 import io.setu.server.dispatcher.RequestHandler;
@@ -19,7 +21,6 @@ import org.slf4j.LoggerFactory;
 /** One event loop; a connection admits exactly one frame and one reply at a time. */
 public final class SelectorTcpServer implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(SelectorTcpServer.class);
-    private static final java.util.concurrent.atomic.AtomicLong SESSION_IDS = new java.util.concurrent.atomic.AtomicLong();
     private final InetSocketAddress address;
     private final int maxFrameSize;
     private final TcpServerOptions options;
@@ -27,7 +28,7 @@ public final class SelectorTcpServer implements AutoCloseable {
     private final BufferBudget requests;
     private final BufferBudget responses;
     private final AtomicBoolean running = new AtomicBoolean();
-    private final Set<Client> clients = ConcurrentHashMap.newKeySet();
+    private final Set<SelectorClient> clients = ConcurrentHashMap.newKeySet();
     private final java.util.concurrent.atomic.LongAdder acceptedConnections = new java.util.concurrent.atomic.LongAdder();
     private final java.util.concurrent.atomic.LongAdder rejectedConnections = new java.util.concurrent.atomic.LongAdder();
     private final ConcurrentLinkedQueue<Runnable> completions = new ConcurrentLinkedQueue<>();
@@ -93,54 +94,54 @@ public final class SelectorTcpServer implements AutoCloseable {
                     try {
                         if (key.isAcceptable()) accept();
                         else {
-                            Client client = (Client) key.attachment();
+                            SelectorClient client = (SelectorClient) key.attachment();
                             if (key.isReadable()) read(key, client);
                             if (key.isValid() && key.isWritable()) write(key, client);
                         }
                     } catch (IOException | RuntimeException e) {
-                        if (!(key.attachment() instanceof Client client)) throw e;
-                        if (e instanceof BufferBudget.Exhausted) LOG.debug("Selector frame admission rejected session={}", client.sessionId);
+                        if (!(key.attachment() instanceof SelectorClient client)) throw e;
+                        if (e instanceof BufferBudgetExceededException) LOG.debug("Selector frame admission rejected session={}", client.sessionId);
                         else LOG.warn("Selector connection failed session={}", client.sessionId, e);
                         closeClient(client);
                     }
                 }
                 if (options.socketTimeoutMillis() > 0) {
                     long now = System.nanoTime();
-                    for (Client client : clients)
+                    for (SelectorClient client : clients)
                         if (!client.inFlight && now - client.activity > options.socketTimeoutMillis() * 1_000_000L)
                             closeClient(client);
                 }
                 long now = System.nanoTime();
-                for (Client client : clients)
+                for (SelectorClient client : clients)
                     if ((client.outbound != null && now - client.writeStarted > options.writeTimeoutMillis() * 1_000_000L)
                             || (client.receiving && now - client.frameStarted > options.frameTimeoutMillis() * 1_000_000L))
                         closeClient(client);
             }
         } catch (IOException | RuntimeException e) { if (running.get()) LOG.error("Selector loop failed", e); }
-        finally { running.set(false); for (Client client : clients) closeClient(client); }
+        finally { running.set(false); for (SelectorClient client : clients) closeClient(client); }
     }
     private void accept() throws IOException {
         SocketChannel channel;
         while ((channel = listener.accept()) != null) {
             acceptedConnections.increment();
             if (clients.size() >= options.maxConnections()) { rejectedConnections.increment(); channel.close(); continue; }
-            BufferBudget.Lease connectionCredit = null;
+            BufferLease connectionCredit = null;
             try {
                 connectionCredit = requests.reserve(1024);
                 channel.configureBlocking(false);
                 channel.setOption(StandardSocketOptions.TCP_NODELAY, true);
-                Client client = new Client(channel, connectionCredit);
+                SelectorClient client = new SelectorClient(channel, connectionCredit);
                 client.key = channel.register(selector, SelectionKey.OP_READ, client);
                 clients.add(client);
                 LOG.debug("Selector session opened session={} peer={} active_connections={}", client.sessionId, channel.getRemoteAddress(), clients.size());
-            } catch (BufferBudget.Exhausted e) { channel.close(); }
+            } catch (BufferBudgetExceededException e) { channel.close(); }
             catch (IOException | RuntimeException e) {
                 if (connectionCredit != null) connectionCredit.close();
                 channel.close(); throw e;
             }
         }
     }
-    private void read(SelectionKey key, Client client) throws IOException {
+    private void read(SelectionKey key, SelectorClient client) throws IOException {
         if (client.body == null) {
             int count = client.channel.read(client.header);
             if (count < 0) { closeClient(client); return; }
@@ -156,7 +157,7 @@ public final class SelectorTcpServer implements AutoCloseable {
             client.header.clear();
             if (length < 0 || length > maxFrameSize) throw new IOException("Invalid frame length");
             client.requestCredit = requests.reserve(2L * length + 1024);
-            client.body = new io.setu.storage.log.MessageValue.Frame.Reader(length);
+            client.body = new io.setu.storage.log.MessageFrameReader(length);
         }
         int count = client.body.readFrom(client.channel);
         if (count < 0) { closeClient(client); return; }
@@ -171,12 +172,12 @@ public final class SelectorTcpServer implements AutoCloseable {
         client.body = null;
         client.inFlight = true;
         key.interestOps(0);
-        BufferBudget.Lease requestCredit = client.requestCredit;
+        BufferLease requestCredit = client.requestCredit;
         client.requestCredit = null;
         try { workers.execute(() -> dispatch(client, request, requestCredit)); }
         catch (RuntimeException e) { requestCredit.close(); throw e; }
     }
-    private void dispatch(Client client, io.setu.storage.log.MessageValue.Frame request, BufferBudget.Lease credit) {
+    private void dispatch(SelectorClient client, io.setu.storage.log.MessageFrame request, BufferLease credit) {
         ResponseBuffers responseCredit = new ResponseBuffers(responses);
         boolean transferred = false;
         try (credit; var requestContext = io.setu.core.protocol.RequestBuffers.activate(credit);
@@ -206,7 +207,7 @@ public final class SelectorTcpServer implements AutoCloseable {
             selector.wakeup();
         }
     }
-    private void write(SelectionKey key, Client client) throws IOException {
+    private void write(SelectionKey key, SelectorClient client) throws IOException {
         if (client.channel.write(client.outbound) > 0) client.activity = System.nanoTime();
         if (!client.outbound[0].hasRemaining() && !client.outbound[1].hasRemaining()) {
             client.outbound = null;
@@ -216,7 +217,7 @@ public final class SelectorTcpServer implements AutoCloseable {
         }
     }
     private void drain() { Runnable action; while ((action = completions.poll()) != null) action.run(); }
-    private void closeClient(Client client) {
+    private void closeClient(SelectorClient client) {
         if (client == null) return;
         client.key.cancel();
         try { client.channel.close(); } catch (IOException ignored) { }
@@ -232,7 +233,7 @@ public final class SelectorTcpServer implements AutoCloseable {
         selector.wakeup();
         if (listener != null) listener.close();
         // Closing sockets lets any asynchronous dispatch observe cancellation on its next write.
-        for (Client client : clients) try { client.channel.close(); } catch (IOException ignored) { }
+        for (SelectorClient client : clients) try { client.channel.close(); } catch (IOException ignored) { }
         boolean interrupted = false;
         if (eventThread != null && eventThread != Thread.currentThread()) {
             while (eventThread.isAlive()) try { eventThread.join(); } catch (InterruptedException e) { interrupted = true; }
@@ -243,25 +244,8 @@ public final class SelectorTcpServer implements AutoCloseable {
             catch (InterruptedException e) { interrupted = true; }
         }
         drain();
-        for (Client client : clients) closeClient(client);
+        for (SelectorClient client : clients) closeClient(client);
         selector.close();
         if (interrupted) Thread.currentThread().interrupt();
-    }
-    private static final class Client {
-        final SocketChannel channel;
-        final long sessionId = SESSION_IDS.incrementAndGet();
-        final ByteBuffer header = ByteBuffer.allocate(4);
-        final BufferBudget.Lease connectionCredit;
-        SelectionKey key;
-        io.setu.storage.log.MessageValue.Frame.Reader body;
-        BufferBudget.Lease requestCredit;
-        ResponseBuffers responseCredit;
-        ByteBuffer[] outbound;
-        boolean inFlight;
-        long activity = System.nanoTime();
-        long writeStarted;
-        long frameStarted;
-        boolean receiving;
-        Client(SocketChannel channel, BufferBudget.Lease connectionCredit) { this.channel = channel; this.connectionCredit = connectionCredit; }
     }
 }

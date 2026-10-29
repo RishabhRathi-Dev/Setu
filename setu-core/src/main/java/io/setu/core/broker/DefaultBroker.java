@@ -1,7 +1,6 @@
 package io.setu.core.broker;
 
 import io.setu.core.logging.LogText;
-import static io.setu.core.broker.BrokerState.*;
 import io.setu.core.protocol.BrokerRequest;
 import io.setu.core.protocol.BrokerResponse;
 import io.setu.core.protocol.ErrorCode;
@@ -64,8 +63,6 @@ public final class DefaultBroker implements Broker {
     private volatile IOException failed;
     private static final int TRANSACTION_ENTRY = 0x53545831;
     // Package-scoped test seam only; never configured by clients or launcher properties.
-    enum TransactionStage { BEFORE_JOURNAL, JOURNAL_FORCED, OUTPUT_FORCED, INPUT_APPLIED, BEFORE_REPLY }
-    @FunctionalInterface interface TransactionFault { void at(TransactionStage stage) throws IOException; }
     private TransactionFault transactionFault = stage -> { };
     private final java.util.concurrent.ScheduledExecutorService maintenance;
     private final long memoryRetentionNanos;
@@ -981,7 +978,7 @@ public final class DefaultBroker implements Broker {
     }
 
     // Package-scoped deterministic failure seam; never exposed by the wire protocol or launcher.
-    void journalFault(BrokerJournal.Fault fault) { consumerJournal.fault(fault); }
+    void journalFault(JournalFault fault) { consumerJournal.fault(fault); }
     synchronized void transactionFault(TransactionFault fault) { transactionFault = Objects.requireNonNull(fault); }
 
     public boolean isReady() { return !closed && failed == null; }
@@ -1065,5 +1062,4 @@ public final class DefaultBroker implements Broker {
         if (failure != null) throw failure;
         LOG.info("Broker closed storage={} topics={} retained_budget_bytes={}", storageMode, topics.size(), memoryBudget.usedBytes());
     }
-
 }

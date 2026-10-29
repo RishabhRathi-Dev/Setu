@@ -21,9 +21,6 @@ import java.util.zip.CheckedOutputStream;
 /** Owns journal generations. Callers exclude all state mutations during checkpoint publication. */
 final class BrokerJournal implements AutoCloseable {
     private static final int MAGIC = 0x53435031;
-    @FunctionalInterface interface Writer { void write(DataOutputStream output) throws IOException; }
-    @FunctionalInterface interface Reader { void read(DataInputStream input) throws IOException; }
-    @FunctionalInterface interface Fault { void at(String stage) throws IOException; }
     private final Path root;
     private final long blockBytes;
     private final FileChannel lockChannel;
@@ -33,7 +30,7 @@ final class BrokerJournal implements AutoCloseable {
     private final java.util.concurrent.atomic.AtomicLong appendedBytes = new java.util.concurrent.atomic.AtomicLong();
     private volatile long diskBytes;
     private volatile long compactions;
-    private Fault fault = stage -> { };
+    private JournalFault fault = stage -> { };
 
     BrokerJournal(Path root, long blockBytes) throws IOException {
         this.root = root.toAbsolutePath().normalize();
@@ -66,7 +63,7 @@ final class BrokerJournal implements AutoCloseable {
         return path;
     }
 
-    void restore(Reader reader) throws IOException {
+    void restore(JournalCheckpointReader reader) throws IOException {
         if (generation.equals(root)) return;
         if (log.nextOffset() == 0 || !java.util.Arrays.equals(log.read(0, 1).getFirst().value(), new byte[]{0}))
             throw new IOException("Missing checkpoint journal boundary");
@@ -79,7 +76,7 @@ final class BrokerJournal implements AutoCloseable {
         }
     }
 
-    void compact(Writer writer) throws IOException {
+    void compact(JournalCheckpointWriter writer) throws IOException {
         Path next = Files.createDirectory(root.resolve("generation-" + UUID.randomUUID()));
         MessageLog replacement = null;
         try {
@@ -167,7 +164,7 @@ final class BrokerJournal implements AutoCloseable {
     boolean hasCheckpoint() { return !generation.equals(root); }
     long diskBytes() { return diskBytes; }
     long compactions() { return compactions; }
-    void fault(Fault fault) { this.fault = fault; }
+    void fault(JournalFault fault) { this.fault = fault; }
     void refreshDiskBytes() throws IOException {
         try (var paths = Files.walk(root, 2)) {
             long size = 0;

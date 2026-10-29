@@ -31,7 +31,7 @@ flowchart TD
 | Durable engine | `GroupCommitMessageLog`, `ChronicleMessageLog`, `ChronicleFileSync` | Bounded write admission, Chronicle documents, force boundary, recovery |
 | Memory engine | `InMemoryMessageLog`, `MemoryLogBudget` | Immutable chunk publication and accounted retained-memory admission |
 
-Metadata persistence is split into `BrokerJournal` (generation I/O and locking), `BrokerCheckpoint` (versioned snapshot codec), `ProducerLedger` (sequencing/fencing) and `BrokerState` (state types). `DefaultBroker` owns request semantics and lock ordering. [Checkpoint publication](journal-checkpoints.md) preserves the latest producer results and committed group progress without retaining historical payloads indefinitely. The server's optional [operations endpoint](observability.md) exposes bounded metrics through a broker decorator; core and storage remain independent of HTTP.
+Metadata persistence is split into `BrokerJournal` (generation I/O and locking), `BrokerCheckpoint` (versioned snapshot codec) and `ProducerLedger` (sequencing/fencing). Broker state lives in package-private types in the broker package. `DefaultBroker` owns request semantics and lock ordering. [Checkpoint publication](journal-checkpoints.md) preserves the latest producer results and committed group progress without retaining historical payloads indefinitely. The server's optional [operations endpoint](observability.md) exposes bounded metrics through a broker decorator; core and storage remain independent of HTTP.
 
 ## Request path
 

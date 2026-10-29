@@ -119,7 +119,7 @@ public final class FramedConnectionHandler implements ConnectionHandler {
                          var requestContext = io.setu.core.protocol.RequestBuffers.activate(requestCredit);
                          var responseCredit = new io.setu.core.protocol.ResponseBuffers(responseBudget);
                          var context = responseCredit.activate()) {
-                        var request = io.setu.storage.log.MessageValue.Frame.readFrom(input, length);
+                        var request = io.setu.storage.log.MessageFrame.readFrom(input, length);
                         // Receipt is complete; long polling and dispatch have their own lifecycle.
                         frameDeadline.complete();
                         byte[] response = Objects.requireNonNull(
@@ -134,7 +134,7 @@ public final class FramedConnectionHandler implements ConnectionHandler {
                 }
             }
         } catch (IOException | RuntimeException failure) {
-            if (failure instanceof io.setu.core.protocol.BufferBudget.Exhausted)
+            if (failure instanceof io.setu.core.protocol.BufferBudgetExceededException)
                 LOG.debug("Frame admission rejected session={} peer={}", sessionId, peer);
             else LOG.warn("Session failed session={} peer={} completed_frames={} elapsed_ms={}",
                     sessionId, peer, frames, (System.nanoTime() - started) / 1_000_000, failure);

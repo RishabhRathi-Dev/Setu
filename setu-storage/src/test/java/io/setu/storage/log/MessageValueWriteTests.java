@@ -16,7 +16,7 @@ class MessageValueWriteTests {
     @Test void chronicleBulkWritesMatchStreamWritesForOwnedValuesAndFrameSlices() throws Exception {
         byte[] source = new byte[2 * 1024 * 1024 + 97];
         new Random(42).nextBytes(source);
-        var frame = MessageValue.Frame.readFrom(new DataInputStream(new ByteArrayInputStream(source)), source.length);
+        var frame = MessageFrame.readFrom(new DataInputStream(new ByteArrayInputStream(source)), source.length);
         Bytes<?> output = Bytes.allocateElasticDirect(32);
         try {
             for (int length : new int[]{0, 1, 7, 8, 31, 1024, 65539, 1024 * 1024 + 3}) {

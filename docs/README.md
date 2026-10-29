@@ -18,6 +18,7 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | Guide | What it explains |
 | --- | --- |
 | [Architecture](architecture.md) | Module dependencies, request flow, persistence, consumers, and backpressure |
+| [Java source layout](source-layout.md) | Type locations and migration from former nested public types |
 | [Configuration](configuration.md) | Every standalone property, defaults, validation, and runtime controls |
 | [Containers](containers.md) | Broker image builds/publication, CI-aligned limits, persistent Compose service, health checks and a local LGTM stack |
 | [IntelliJ development](intellij.md) | Shared run/debug profiles, examples, JUnit suites, Maven builds, and debugger attachment |

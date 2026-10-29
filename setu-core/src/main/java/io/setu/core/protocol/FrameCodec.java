@@ -1,7 +1,6 @@
 package io.setu.core.protocol;
 
-import io.setu.storage.log.MessageValue;
-
+import io.setu.storage.log.MessageFrame;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -20,9 +19,9 @@ public final class FrameCodec {
         return body;
     }
 
-    public static MessageValue.Frame readOwnedFrame(DataInputStream input, int maxFrameSize) throws IOException {
+    public static MessageFrame readOwnedFrame(DataInputStream input, int maxFrameSize) throws IOException {
         int length = readLength(input, maxFrameSize);
-        return length < 0 ? null : MessageValue.Frame.readFrom(input, length);
+        return length < 0 ? null : MessageFrame.readFrom(input, length);
     }
 
     static int readLength(DataInputStream input, int maxFrameSize) throws IOException {

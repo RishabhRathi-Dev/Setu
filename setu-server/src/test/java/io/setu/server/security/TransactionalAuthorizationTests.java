@@ -13,10 +13,10 @@ class TransactionalAuthorizationTests {
                 new ConsumerCommit("group", "member", "input", 0, 1, -1), AcknowledgementMode.DURABLE, -1));
         var metadata = new ProtocolRequestAuthorizationMetadataResolver().resolve(ProtocolCodec.encodeRequest(request));
         assertEquals(List.of(
-                new RequestAuthorizationMetadata.Requirement("topic/output", Permission.PRODUCE),
-                new RequestAuthorizationMetadata.Requirement("producer/identity", Permission.PRODUCE),
-                new RequestAuthorizationMetadata.Requirement("topic/input", Permission.CONSUME),
-                new RequestAuthorizationMetadata.Requirement("consumer-group/group", Permission.CONSUMER_GROUP_WRITE)),
+                new AuthorizationRequirement("topic/output", Permission.PRODUCE),
+                new AuthorizationRequirement("producer/identity", Permission.PRODUCE),
+                new AuthorizationRequirement("topic/input", Permission.CONSUME),
+                new AuthorizationRequirement("consumer-group/group", Permission.CONSUMER_GROUP_WRITE)),
                 metadata.requirements());
     }
 }

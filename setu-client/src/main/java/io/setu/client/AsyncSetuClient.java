@@ -16,10 +16,6 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 public final class AsyncSetuClient implements AutoCloseable {
-    @FunctionalInterface
-    public interface ConnectionFactory {
-        SetuClient connect() throws IOException;
-    }
 
     private final ConnectionFactory connectionFactory;
     private final ThreadPoolExecutor executor;

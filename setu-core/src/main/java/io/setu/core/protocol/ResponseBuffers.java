@@ -6,7 +6,7 @@ import java.io.IOException;
 public final class ResponseBuffers implements AutoCloseable {
     private static final ThreadLocal<ResponseBuffers> CURRENT = new ThreadLocal<>();
     private final BufferBudget budget;
-    private BufferBudget.Lease lease;
+    private BufferLease lease;
     private long reserved;
     private boolean closed;
     public ResponseBuffers(BufferBudget budget) { this.budget = budget; }

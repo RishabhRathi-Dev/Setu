@@ -8,21 +8,21 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Exact-match, default-deny ACL implementation for a single broker process. */
 public final class InMemoryAuthorizer implements Authorizer, AccessPolicy {
-    private final Set<Grant> grants = ConcurrentHashMap.newKeySet();
+    private final Set<AclGrant> grants = ConcurrentHashMap.newKeySet();
 
     public void grant(String principal, String resource, Permission permission) {
-        grants.add(new Grant(require(principal, "principal"), require(resource, "resource"),
+        grants.add(new AclGrant(require(principal, "principal"), require(resource, "resource"),
                 Objects.requireNonNull(permission, "permission")));
     }
 
     public void revoke(String principal, String resource, Permission permission) {
-        grants.remove(new Grant(require(principal, "principal"), require(resource, "resource"),
+        grants.remove(new AclGrant(require(principal, "principal"), require(resource, "resource"),
                 Objects.requireNonNull(permission, "permission")));
     }
 
     @Override
     public boolean allows(String principal, String resource, Permission permission) {
-        return grants.contains(new Grant(principal, resource, permission));
+        return grants.contains(new AclGrant(principal, resource, permission));
     }
 
     @Override
@@ -40,6 +40,4 @@ public final class InMemoryAuthorizer implements Authorizer, AccessPolicy {
         if (value == null || value.isBlank()) throw new IllegalArgumentException(label + " must not be blank");
         return value;
     }
-
-    private record Grant(String principal, String resource, Permission permission) { }
 }

@@ -22,7 +22,7 @@ Windows uses file forcing and atomic rename, matching the existing retention pub
 
 Legacy flat `@consumer-state/` journals are read directly until the first checkpoint. After checkpointing, older Setu binaries cannot interpret the generation layout. Do not downgrade the same data directory; restore a compatible offline backup instead. Stop the broker and copy all topic partitions plus the entire `@consumer-state/` directory as one backup. Do not copy only `CURRENT` or only the checkpoint.
 
-`BrokerJournal` owns generation I/O and the root metadata lock; `BrokerCheckpoint` owns the snapshot format; `BrokerState` contains mutable state types. `DefaultBroker` owns lock ordering and semantic validation. Snapshot recovery resets fetched positions to committed progress and restores exact generations without causing an artificial rebalance.
+`BrokerJournal` owns generation I/O and the root metadata lock; `BrokerCheckpoint` owns the snapshot format. `DefaultBroker` owns lock ordering and semantic validation. Snapshot recovery resets fetched positions to committed progress and restores exact generations without causing an artificial rebalance.
 
 Monitor `setu_journal_bytes`, `setu_journal_compactions_total`, `setu_recovery_seconds` and request latency during compaction. The byte gauge counts logical file sizes, including sparse mapped files, and is refreshed approximately once per second. Checkpoints pause requests while writing bounded metadata; they are not incremental background snapshots.
 

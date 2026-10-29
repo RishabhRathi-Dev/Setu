@@ -32,7 +32,7 @@ class LockFreeMemoryLogTests {
     }
 
     @Test void retainedFrameSliceCannotBypassMemoryBudget() throws Exception {
-        var frame = MessageValue.Frame.readFrom(new java.io.DataInputStream(
+        var frame = MessageFrame.readFrom(new java.io.DataInputStream(
                 new java.io.ByteArrayInputStream(new byte[64 * 1024])), 64 * 1024);
         var budget = new MemoryLogBudget(32 * 1024);
         try (var log = new InMemoryMessageLog(1, budget)) {

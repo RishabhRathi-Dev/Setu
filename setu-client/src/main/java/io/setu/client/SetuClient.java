@@ -1,5 +1,7 @@
 package io.setu.client;
 
+import io.setu.core.protocol.ProduceBatchEncoder;
+import io.setu.core.protocol.ResponseReader;
 import io.setu.core.logging.LogText;
 import io.setu.core.protocol.BrokerRequest;
 import io.setu.core.protocol.BrokerResponse;
@@ -35,8 +37,8 @@ public final class SetuClient implements AutoCloseable {
     private final int maxFrameSize;
     private volatile boolean closed;
     private final AtomicInteger correlationIds = new AtomicInteger();
-    private final ProtocolCodec.ProduceBatchEncoder batchEncoder = new ProtocolCodec.ProduceBatchEncoder();
-    private final ProtocolCodec.ResponseReader responseReader = new ProtocolCodec.ResponseReader();
+    private final ProduceBatchEncoder batchEncoder = new ProduceBatchEncoder();
+    private final ResponseReader responseReader = new ResponseReader();
     private io.opentelemetry.api.trace.Tracer tracer = io.opentelemetry.api.GlobalOpenTelemetry.getTracer("io.setu.client");
 
     private SetuClient(Socket socket, int maxFrameSize) throws IOException {

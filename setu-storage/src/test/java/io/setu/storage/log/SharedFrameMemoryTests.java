@@ -9,10 +9,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SharedFrameMemoryTests {
-    private static MessageValue.Frame frame(int size) throws Exception {
+    private static MessageFrame frame(int size) throws Exception {
         byte[] source = new byte[size];
         java.util.Arrays.fill(source, (byte) 7);
-        return MessageValue.Frame.readFrom(new DataInputStream(new ByteArrayInputStream(source)), size);
+        return MessageFrame.readFrom(new DataInputStream(new ByteArrayInputStream(source)), size);
     }
 
     @Test void chargesFrameOnceAndKeepsItChargedUntilLastSliceIsDiscarded() throws Exception {
@@ -68,7 +68,7 @@ class SharedFrameMemoryTests {
     }
 
     @Test void incrementalReaderPermanentlyRemovesWritableAccessOnCompletion() throws Exception {
-        var reader = new MessageValue.Frame.Reader(3);
+        var reader = new MessageFrameReader(3);
         assertThrows(IllegalStateException.class, reader::finish);
         var channel = Channels.newChannel(new ByteArrayInputStream(new byte[]{1, 2, 3}));
         assertEquals(3, reader.readFrom(channel));

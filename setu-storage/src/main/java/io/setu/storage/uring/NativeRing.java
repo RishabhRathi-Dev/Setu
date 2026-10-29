@@ -2,11 +2,7 @@ package io.setu.storage.uring;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
-import java.lang.foreign.FunctionDescriptor;
-import java.lang.foreign.Linker;
-import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
-import java.lang.invoke.MethodHandle;
 import java.lang.invoke.VarHandle;
 import java.util.List;
 import java.util.ArrayList;
@@ -15,22 +11,22 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import static java.lang.foreign.ValueLayout.*;
 
 /** Linux's stable, little-endian 64-bit UAPI. No native shim or liburing dependency. */
-final class NativeRing implements UringFileIo.Ring {
+final class NativeRing implements UringRing {
     private static final VarHandle INT = JAVA_INT.varHandle();
     // On an unrecoverable enter/protocol error, buffers must not be freed while
     // the kernel might still use them. Quarantine the ring until process exit.
     private static final ConcurrentLinkedQueue<NativeRing> QUARANTINED = new ConcurrentLinkedQueue<>();
     private final Arena arena = Arena.ofConfined();
-    private final MemorySegment errors = arena.allocate(Native.ERRORS);
+    private final MemorySegment errors = arena.allocate(UringNativeCalls.ERRORS);
     private final MemorySegment buffers;
     private final int stride;
-    private final UringFileIo.Operation[] operations;
+    private final UringOperation[] operations;
     // Separate from reusable commands: a fatal CQ error must retain borrowed
     // memory even after a caller receives an error and closes its file handle.
     private final MemorySegment[] borrowed;
     private final long[] tags;
     private final Arena wakeArena = Arena.ofShared();
-    private final MemorySegment wakeErrors = wakeArena.allocate(Native.ERRORS);
+    private final MemorySegment wakeErrors = wakeArena.allocate(UringNativeCalls.ERRORS);
     private final MemorySegment wakeValue = wakeArena.allocate(JAVA_LONG);
     private final MemorySegment wakeRead = arena.allocate(JAVA_LONG);
     private final Object wakeLock = new Object();
@@ -44,20 +40,20 @@ final class NativeRing implements UringFileIo.Ring {
     private long nextTag = 1;
     private boolean closed;
 
-    NativeRing(UringFileIo.Options options) throws IOException {
+    NativeRing(UringOptions options) throws IOException {
         stride = Math.max(4096, options.maxWriteBytes());
         // Reserve an entry for eventfd polling so new work wakes completion waits.
-        operations = new UringFileIo.Operation[options.entries() - 1];
+        operations = new UringOperation[options.entries() - 1];
         borrowed = new MemorySegment[operations.length];
         tags = new long[operations.length];
         MemorySegment allocated;
         try {
             MemorySegment params = arena.allocate(120, 8);
-            long descriptor = (long) Native.SETUP.invokeExact(errors, 425L, options.entries(), params);
+            long descriptor = (long) UringNativeCalls.SETUP.invokeExact(errors, 425L, options.entries(), params);
             if (descriptor < 0) {
-                int errno = errors.get(JAVA_INT, Native.ERRNO);
+                int errno = errors.get(JAVA_INT, UringNativeCalls.ERRNO);
                 if (errno == 1 || errno == 13 || errno == 38 || errno == 95)
-                    throw new UringFileIo.UnavailableException(errno);
+                    throw new UringUnavailableException(errno);
                 throw error("io_uring_setup");
             }
             fd = Math.toIntExact(descriptor);
@@ -82,7 +78,7 @@ final class NativeRing implements UringFileIo.Ring {
             cqMask = cq.get(JAVA_INT, offset(params, 88));
             if (sqMask != sqCount - 1 || cqMask != cqCount - 1) throw new IOException("Invalid io_uring masks");
             allocated = arena.allocate(options.nativeBufferBytes(), 64);
-            wakeFd = (int) Native.EVENTFD.invokeExact(errors, 0, 0x80800); // EFD_CLOEXEC | EFD_NONBLOCK
+            wakeFd = (int) UringNativeCalls.EVENTFD.invokeExact(errors, 0, 0x80800); // EFD_CLOEXEC | EFD_NONBLOCK
             if (wakeFd < 0) throw error("eventfd");
             wakeValue.set(JAVA_LONG, 0, 1L);
             armWakeup();
@@ -97,18 +93,18 @@ final class NativeRing implements UringFileIo.Ring {
     }
     private static long offset(MemorySegment params, long position) { return Integer.toUnsignedLong(params.get(JAVA_INT, position)); }
     private IOException error(String operation) {
-        return new IOException(operation + " failed: errno=" + errors.get(JAVA_INT, Native.ERRNO));
+        return new IOException(operation + " failed: errno=" + errors.get(JAVA_INT, UringNativeCalls.ERRNO));
     }
     private static IOException asIo(Throwable failure) {
         return failure instanceof IOException io ? io : new IOException("io_uring native operation failed", failure);
     }
     private MemorySegment map(long bytes, long offset) throws Throwable {
-        MemorySegment address = (MemorySegment) Native.MMAP.invokeExact(errors, MemorySegment.NULL, bytes,
+        MemorySegment address = (MemorySegment) UringNativeCalls.MMAP.invokeExact(errors, MemorySegment.NULL, bytes,
                 3, 1, fd, offset); // PROT_READ|PROT_WRITE, MAP_SHARED
         if (address.address() == -1L) throw error("mmap");
         return address.reinterpret(bytes, arena, segment -> {
             try {
-                if ((int) Native.MUNMAP.invokeExact(segment, bytes) != 0)
+                if ((int) UringNativeCalls.MUNMAP.invokeExact(segment, bytes) != 0)
                     throw new IllegalStateException("Cannot unmap io_uring");
             } catch (Throwable failure) { throw new IllegalStateException("Cannot unmap io_uring", failure); }
         });
@@ -118,12 +114,12 @@ final class NativeRing implements UringFileIo.Ring {
 
     @Override public int available() { return operations.length - pending; }
 
-    @Override public void submit(List<UringFileIo.Operation> batch) throws IOException {
+    @Override public void submit(List<UringOperation> batch) throws IOException {
         if (closed || poisoned || batch.size() > available()) throw new IOException("io_uring is closed, failed or full");
         try {
             int tail = sq.get(JAVA_INT, sqTail);
             for (int i = 0; i < batch.size(); i++) {
-                UringFileIo.Operation operation = batch.get(i);
+                UringOperation operation = batch.get(i);
                 int slot = 0;
                 while (operations[slot] != null) slot++;
                 long tag = Math.multiplyExact(nextTag++, 256) | slot;
@@ -164,9 +160,9 @@ final class NativeRing implements UringFileIo.Ring {
         } catch (Throwable failure) { poisoned = true; throw asIo(failure); }
     }
 
-    @Override public List<UringFileIo.Completion> poll(boolean wait) throws IOException {
+    @Override public List<UringCompletion> poll(boolean wait) throws IOException {
         try {
-            List<UringFileIo.Completion> ready = drain();
+            List<UringCompletion> ready = drain();
             if (wait && ready.isEmpty() && !awakened) {
                 enter(true);
                 ready = drain();
@@ -174,8 +170,8 @@ final class NativeRing implements UringFileIo.Ring {
             return ready;
         } catch (Throwable failure) { poisoned = true; throw asIo(failure); }
     }
-    private List<UringFileIo.Completion> drain() throws Throwable {
-        var results = new ArrayList<UringFileIo.Completion>();
+    private List<UringCompletion> drain() throws Throwable {
+        var results = new ArrayList<UringCompletion>();
         awakened = false;
         int head = cq.get(JAVA_INT, cqHead), ready = acquire(cq, cqTail);
         while (head != ready) {
@@ -190,7 +186,7 @@ final class NativeRing implements UringFileIo.Ring {
                 int slot = (int) (tag & 255);
                 if (slot >= operations.length || operations[slot] == null || tags[slot] != tag)
                     throw new IOException("Unexpected or duplicate io_uring completion");
-                results.add(new UringFileIo.Completion(operations[slot], result));
+                results.add(new UringCompletion(operations[slot], result));
                 operations[slot] = null;
                 borrowed[slot] = null;
                 pending--;
@@ -206,10 +202,10 @@ final class NativeRing implements UringFileIo.Ring {
     private void enter(boolean wait) throws Throwable {
         while (true) {
             int submissions = sq.get(JAVA_INT, sqTail) - acquire(sq, sqHead);
-            long result = (long) Native.ENTER.invokeExact(errors, 426L, fd, submissions, wait ? 1 : 0, wait ? 1 : 0,
+            long result = (long) UringNativeCalls.ENTER.invokeExact(errors, 426L, fd, submissions, wait ? 1 : 0, wait ? 1 : 0,
                     MemorySegment.NULL, 0L);
             if (result >= 0) return;
-            int errno = errors.get(JAVA_INT, Native.ERRNO);
+            int errno = errors.get(JAVA_INT, UringNativeCalls.ERRNO);
             if (errno == 4) continue;
             if (errno == 11 || errno == 16) return; // Reap CQ before retrying EAGAIN/EBUSY.
             throw error("io_uring_enter");
@@ -227,9 +223,9 @@ final class NativeRing implements UringFileIo.Ring {
     }
     private void drainWakeup() throws Throwable {
         while (true) {
-            long result = (long) Native.READ.invokeExact(errors, wakeFd, wakeRead, 8L);
+            long result = (long) UringNativeCalls.READ.invokeExact(errors, wakeFd, wakeRead, 8L);
             if (result == 8) continue;
-            int errno = errors.get(JAVA_INT, Native.ERRNO);
+            int errno = errors.get(JAVA_INT, UringNativeCalls.ERRNO);
             if (result < 0 && errno == 11) return;
             if (result < 0 && errno == 4) continue;
             throw error("eventfd read");
@@ -240,9 +236,9 @@ final class NativeRing implements UringFileIo.Ring {
             if (closed) return;
             try {
                 while (true) {
-                    long result = (long) Native.WRITE.invokeExact(wakeErrors, wakeFd, wakeValue, 8L);
+                    long result = (long) UringNativeCalls.WRITE.invokeExact(wakeErrors, wakeFd, wakeValue, 8L);
                     if (result == 8) return;
-                    int errno = wakeErrors.get(JAVA_INT, Native.ERRNO);
+                    int errno = wakeErrors.get(JAVA_INT, UringNativeCalls.ERRNO);
                     if (result < 0 && errno == 11) return; // Counter is already readable.
                     if (result < 0 && errno == 4) continue;
                     throw new IOException("eventfd write failed: errno=" + errno);
@@ -255,7 +251,7 @@ final class NativeRing implements UringFileIo.Ring {
         if (poisoned && pending > 0) throw new IOException("Descriptor retained because kernel I/O is unresolved");
         try {
             // Do not retry close on EINTR: Linux already released the descriptor.
-            if ((int) Native.CLOSE.invokeExact(errors, descriptor) != 0) throw error("close");
+            if ((int) UringNativeCalls.CLOSE.invokeExact(errors, descriptor) != 0) throw error("close");
         } catch (Throwable failure) { throw asIo(failure); }
     }
     @Override public void close() throws IOException {
@@ -268,29 +264,6 @@ final class NativeRing implements UringFileIo.Ring {
         finally {
             try { closeFile(wakeFd); }
             finally { arena.close(); wakeArena.close(); }
-        }
-    }
-
-    private static final class Native {
-        static final Linker LINKER = Linker.nativeLinker();
-        static final MemoryLayout ERRORS = Linker.Option.captureStateLayout();
-        static final long ERRNO = ERRORS.byteOffset(MemoryLayout.PathElement.groupElement("errno"));
-        static final Linker.Option CAPTURE = Linker.Option.captureCallState("errno");
-        // syscall(long, ...): first variadic argument is index 1. Linux uses these
-        // syscall numbers and LP64 layouts on both supported architectures.
-        static final MethodHandle SETUP = bind("syscall", FunctionDescriptor.of(JAVA_LONG, JAVA_LONG, JAVA_INT, ADDRESS),
-                CAPTURE, Linker.Option.firstVariadicArg(1));
-        static final MethodHandle ENTER = bind("syscall", FunctionDescriptor.of(JAVA_LONG, JAVA_LONG, JAVA_INT,
-                JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, JAVA_LONG), CAPTURE, Linker.Option.firstVariadicArg(1));
-        static final MethodHandle MMAP = bind("mmap", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG,
-                JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG), CAPTURE);
-        static final MethodHandle MUNMAP = bind("munmap", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
-        static final MethodHandle CLOSE = bind("close", FunctionDescriptor.of(JAVA_INT, JAVA_INT), CAPTURE);
-        static final MethodHandle EVENTFD = bind("eventfd", FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT), CAPTURE);
-        static final MethodHandle READ = bind("read", FunctionDescriptor.of(JAVA_LONG, JAVA_INT, ADDRESS, JAVA_LONG), CAPTURE);
-        static final MethodHandle WRITE = bind("write", FunctionDescriptor.of(JAVA_LONG, JAVA_INT, ADDRESS, JAVA_LONG), CAPTURE);
-        static MethodHandle bind(String name, FunctionDescriptor descriptor, Linker.Option... options) {
-            return LINKER.downcallHandle(LINKER.defaultLookup().find(name).orElseThrow(), descriptor, options);
         }
     }
 }
