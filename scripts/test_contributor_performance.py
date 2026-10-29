@@ -3,7 +3,9 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -75,6 +77,7 @@ class ContributorValidationTests(unittest.TestCase):
                     return 0
 
                 def jfr_print(command, **kwargs):
+                    self.assertEqual(['jfr', 'print', '--json', '--events'], command[:4])
                     mode = 'IN_MEMORY' if 'IN_MEMORY' in command[-1] else 'FILE'
                     kwargs['stdout'].write(json.dumps(dict(recording=dict(events=[dict(type=tool.capture.STAGE_EVENT,
                         values=dict(mode=mode, stage=stage)) for stage in (1, 2, 3)]))))
@@ -82,12 +85,18 @@ class ContributorValidationTests(unittest.TestCase):
                 def git(*args, **kwargs):
                     return subprocess.CompletedProcess(args, 0, stdout='b' * 40 if args[0] == 'rev-parse' else 'Developer')
 
+                def platform_probe():
+                    # Linux platform detection may use subprocess.check_output. Keep the
+                    # shared subprocess module real while replacing only the runner's binding.
+                    return subprocess.check_output([sys.executable, '-c', 'print("Test platform")'], text=True).strip()
+
                 with patch.object(tool, 'ROOT', root), patch.object(tool, 'clean_revision', return_value='a' * 40), \
                         patch.object(tool, 'git', side_effect=git), patch.object(tool, 'cpu_model', return_value='Test CPU'), \
                         patch.object(tool.os, 'cpu_count', return_value=8), \
                         patch.object(tool.capture, 'jdk_tools', return_value=(root, 'java', 'jfr', 'JDK 26')), \
                         patch.object(tool.capture, 'stream_run', side_effect=stream), \
-                        patch.object(tool.subprocess, 'run', side_effect=jfr_print), patch('builtins.print'):
+                        patch.object(tool, 'subprocess', SimpleNamespace(run=jfr_print, PIPE=subprocess.PIPE)), \
+                        patch.object(tool.platform, 'platform', side_effect=platform_probe), patch('builtins.print'):
                     if terminal_code == 0:
                         with self.assertRaisesRegex(ValueError, 'exit does not match'):
                             tool.run_diagnostic()
