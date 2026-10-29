@@ -176,16 +176,31 @@ def comparison_report(runs, modes, target_profile='reference'):
              'File acknowledgments follow force of every touched segment. Health requires 95% consumption and offered throughput, zero errors, '
              'HDR p99 within mode/load limits, CPU <=85% of the allocated budget, heap <=1 GiB and heap slope <=1 MiB/s. '
              'CPU qualification is evaluated before display rounding; CPU percentages show four decimal places.', '',
-             '| Mode | Target/s | Median measured/s | Worst target p99 ms | Peak heap MiB | Peak average CPU % | Qualified |',
-             '| --- | ---: | ---: | ---: | ---: | ---: | --- |']
+             'Writes count unique records; each record needs one delivery in this workload. '
+             'Write target achieved compares actual writes with requested writes. Delivery coverage compares unique deliveries '
+             'with completed writes in the same window. Similar write and delivery rates do not guarantee the requested load or other limits were met.', '',
+             '| Mode | Reference writes/s | Median actual writes/s | Write target achieved | Worst target p99 ms | Peak heap MiB | Peak average CPU % | Qualified |',
+             '| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
     for mode, row in totals.items():
-        lines.append(f'| {mode} | {row["target"]:,.0f} | {row["rate"]:,.0f} | {row["p99"]:.3f} | {row["heap_mib"]:.0f} | {row["cpu"]*100:.4f} | {row["qualified"]} |')
-    lines += ['', '| Mode | Repeat | Load | Measured/s | Consumed/s | p99 ms | CPU % | Heap slope MiB/s | Healthy |',
-              '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
+        lines.append(f'| {mode} | {row["target"]:,.0f} | {row["rate"]:,.0f} | {row["rate"]/row["target"]:.1%} | '
+                     f'{row["p99"]:.3f} | {row["heap_mib"]:.0f} | {row["cpu"]*100:.4f} | {row["qualified"]} |')
+    lines += ['', '**Fixed-target traffic**', '',
+              '| Mode | Repeat | Requested writes/s | Actual writes/s | Unique deliveries/s | Write target achieved | Delivery coverage |',
+              '| --- | ---: | ---: | ---: | ---: | ---: | ---: |']
+    for run in runs:
+        for stage in run['stages']:
+            written = float(stage['produced'])
+            coverage = f'{float(stage["consumed"])/written:.1%}' if written else 'n/a'
+            attained = float(stage['produce_per_s']) / float(stage['offered_per_s'])
+            lines.append(f'| {run["config"]["mode"]} | {run["repeat"]} | {float(stage["offered_per_s"]):,.0f} | '
+                         f'{float(stage["produce_per_s"]):,.0f} | {float(stage["consume_per_s"]):,.0f} | '
+                         f'{attained:.1%} | {coverage} |')
+    lines += ['', '**Fixed-target latency and resource checks**', '',
+              '| Mode | Repeat | Load | p99 ms | CPU % | Heap slope MiB/s | Qualified window |',
+              '| --- | ---: | ---: | ---: | ---: | ---: | --- |']
     for run in runs:
         for stage, warmup in zip(run['stages'], run['warmups']):
             lines.append(f'| {run["config"]["mode"]} | {run["repeat"]} | {float(stage["load_fraction"]):.0%} | '
-                         f'{float(stage["produce_per_s"]):,.0f} | {float(stage["consume_per_s"]):,.0f} | '
                          f'{float(stage["p99_ms"]):.3f} | {float(stage["cpu_avg"])*100:.4f} | '
                          f'{float(stage["heap_slope_mib_s"]):.3f} | {healthy(run, stage, warmup)} |')
     rejected = []

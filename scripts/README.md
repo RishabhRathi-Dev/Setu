@@ -32,6 +32,8 @@ python scripts/run-jfr.py --help
 
 For resource-enforced Linux/WSL runs, start with `python3 scripts/run-benchmarks.py --dry-run`. Baseline, target, sustained, and steady expectation misses warn by default; use `--strict` to fail unmet performance expectations. Execution failures remain errors. [The benchmark guide](../setu-benchmark/README.md) defines measurement profiles, CPU/memory enforcement, output schemas, and qualification rules.
 
+The main README, CI summaries and pre-push reports distinguish fixed-target unique traffic from redline fanout. Fixed-target tables compare requested writes with actual writes and unique deliveries. Redline tables show the full delivery demand (writes × consumers), actual deliveries and coverage of that demand; a separate table holds timing, CPU, heap and latency. The derived percentages do not change stored measurements or qualification gates. See [reading the reports](../setu-benchmark/README.md#reading-the-reports) for formulas and examples.
+
 ## Contributor PC check before every push
 
 Install the checked-in Git hook once per checkout, with Python 3.10+ and JDK 26 available:
