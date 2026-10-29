@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "label": "file",
-  "message": "250.00K/s target, 166.24K/s CI, 66% unqualified",
-  "color": "orange",
+  "message": "250.00K/s target, 249.99K/s CI, 100% qualified",
+  "color": "green",
   "sourceScope": "CI",
-  "sourceRevision": "70cc5024fd997d4661e7875bbe5f6550e26da466",
-  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/40917165015"
+  "sourceRevision": "c50491838aa195c37eba13631233c787bae06281",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/40923401078"
 }
