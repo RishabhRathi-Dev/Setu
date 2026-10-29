@@ -32,6 +32,28 @@ python scripts/run-jfr.py --help
 
 For resource-enforced Linux/WSL runs, start with `python3 scripts/run-benchmarks.py --dry-run`. Baseline, target, sustained, and steady expectation misses warn by default; use `--strict` to fail unmet performance expectations. Execution failures remain errors. [The benchmark guide](../setu-benchmark/README.md) defines measurement profiles, CPU/memory enforcement, output schemas, and qualification rules.
 
+## Contributor PC check before every push
+
+Install the checked-in Git hook once per checkout, with Python 3.10+ and JDK 26 available:
+
+```powershell
+python scripts/contributor-performance.py install
+```
+
+This sets the local `core.hooksPath` to `.githooks` and remembers the installing Python interpreter. Existing custom hooks are detected and left intact; integrate the `pre-push` command with those hooks instead. Set `JAVA_HOME` to JDK 26, or pass `install --java-home PATH` to remember a JDK for this checkout. The same Python entry point and shell hook work on Windows Git, Linux and macOS. A normal `git push` runs the diagnostic automatically for the checked-out branch tip. Commit or stash tracked and untracked source changes first; do not edit sources during measurement. Branch deletion and tag-only pushes have no new branch tip to measure.
+
+Each push builds with the Maven Wrapper, then runs both storage modes at 50%, 80% and 100% of their reference targets. Each mode runs in two fresh JVMs, with 5-second minimum adaptive warmup and 10-second measurement per load: at least three minutes of workload plus build, JFR analysis and possible warmup extensions. Records are 1 KiB and batches contain 256 records. JVMs use up to eight active processors, a 512 MiB heap, 128 MiB direct-memory limit and a 64 MiB memory-log budget. No OS CPU quota is imposed. FILE retains the production force-before-ack boundary.
+
+The check fails on build/worker/JFR errors, zero progress, request errors, source changes and failed attachment uploads. Slow throughput and health misses remain visible; they do not block the push. This shorter profile is always **diagnostic and unqualified**. The existing full CI benchmarks and their qualification criteria remain unchanged.
+
+Raw logs, exact commands in `run.json`, recordings and the compact `summary.json` remain under ignored `logs/contributor-performance/`. The attachment contains the contributor's Git name, source commit/tree, timestamps, OS, CPU identification, JDK, filesystem types, JVM limits and all measured windows, including health and force waits. Physical media is labeled unknown rather than inferred. No home-directory paths, raw logs, JFR or credentials are uploaded. To inspect a local run without attaching it, use `python scripts/contributor-performance.py run` (optionally `--java-home PATH`).
+
+The hook stores the summary as a Git note at `refs/notes/setu-performance/<source-commit>` and pushes that attachment ref to the same destination before the original branch push. It never commits or amends source files. A failed branch push can leave an unused attachment; the next push still measures again. Existing notes are fetched before replacement and uploaded with a lease, so concurrent updates cannot silently overwrite each other. The destination must allow writing Git notes.
+
+The `contributor-performance` CI job requires a valid attachment for each pushed/PR branch tip and publishes its summary as a pipeline artifact and job summary. The default-branch badge job also publishes `benchmark-badges/contributor-pc.json` and a separate README block alongside the existing CI results. A GitHub merge can reuse its branch parent's evidence only when their complete Git trees match. A squash, rebase, GitHub edit or conflict resolution producing a different tree needs a fresh locally measured push. Fork PR attachments are read from the fork. Contributor evidence is self-reported, not independently verified PC execution.
+
+Git hooks can be bypassed locally; repository administrators must require the `contributor-performance` status check in branch protection to enforce missing-evidence failures on merges. A bypassed push with an old attachment for exactly the same source cannot be distinguished from a repeated measured push by CI. The installed hook itself always measures and never uses a cached result. Automated badge commits retain `[skip ci]` and do not claim to be new measured source revisions.
+
 ## Badge publication
 
 | Tool | Purpose |

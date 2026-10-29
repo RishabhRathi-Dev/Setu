@@ -329,6 +329,12 @@ Waits are elapsed time inside jdk.FileForce, clipped to each measured stage. Con
 
 </details>
 
+<!-- benchmark-contributor-pc:start -->
+Latest contributor PC run: awaiting the first measured push. Local diagnostics will appear here alongside the CI measurements, with their own machine details and source revision. They do not qualify sustained capacity.
+<!-- benchmark-contributor-pc:end -->
+
+The [mandatory contributor pre-push check](scripts/README.md#contributor-pc-check-before-every-push) attaches local performance evidence. CI validates the attachment and retains it with the pipeline artifacts; default-branch publication refreshes the block above independently of the CI measurements.
+
 ## Help and contributions
 
 For setup help or a reproducible bug, start with [support and troubleshooting](SUPPORT.md). Use the [issue forms](https://github.com/RishabhRathi-Dev/Setu/issues/new/choose) for bugs and feature requests. Report vulnerabilities privately following the [security policy](SECURITY.md).

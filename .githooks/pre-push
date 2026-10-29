@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+root=$(git rev-parse --show-toplevel)
+runner=$(git config --get setu.performancePython || true)
+if [ -n "$runner" ]; then
+    exec "$runner" "$root/scripts/contributor-performance.py" pre-push "$@"
+fi
+if python -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
+    exec python "$root/scripts/contributor-performance.py" pre-push "$@"
+fi
+exec python3 "$root/scripts/contributor-performance.py" pre-push "$@"
