@@ -13,11 +13,13 @@ spec.loader.exec_module(tool)
 
 
 def fixture():
-    document = dict(schema_version=1, scope='contributor PC diagnostic', qualified=False, enforcement='none',
+    from test_redline_report import fixture as redline_fixture
+    document = dict(schema_version=2, scope='contributor PC diagnostic', qualified=False, enforcement='none',
                     source_revision='a' * 40, source_tree='b' * 40, contributor='Developer', profile=dict(tool.PROFILE),
                     started_utc='2026-10-29T00:00:00+00:00', finished_utc='2026-10-29T00:04:00+00:00',
                     host=dict(os='Windows', cpu='Test CPU', logical_cpus=12, active_processors=8,
-                              heap_mib=512, direct_mib=128, jdk='JDK 26', filesystem_media='unknown'), runs=[])
+                              heap_mib=512, direct_mib=128, jdk='JDK 26', filesystem_media='unknown'), runs=[],
+                    redline_profile=dict(tool.redline_report.PROFILE), redline_runs=[redline_fixture(mode) for mode in tool.MODES])
     for mode in tool.MODES:
         for repeat in (1, 2):
             run = dict(mode=mode, repeat=repeat, config=dict(mode=mode, filesystem='NTFS',
@@ -39,6 +41,72 @@ def fixture():
 
 
 class ContributorValidationTests(unittest.TestCase):
+    def test_runner_executes_fixed_targets_then_fresh_redline_workers_and_reports_both(self):
+        from test_redline_report import fixture as redline_fixture, capture as redline_capture
+        scratch = tool.ROOT / 'target/contributor-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        for terminal_code in (42, 0):
+            with self.subTest(terminal_code=terminal_code), tempfile.TemporaryDirectory(dir=scratch) as directory:
+                root = Path(directory)
+                target = root / 'setu-benchmark/target'
+                target.mkdir(parents=True)
+                (target / 'contributor-classpath.txt').write_text('dependencies')
+                commands = []
+                data = fixture()
+
+                def stream(command, log, env, timeout, accepted):
+                    commands.append((command, accepted))
+                    if 'io.setu.benchmark.chaos.ContributorThroughputWorker' in command:
+                        mode = command[-2]
+                        run = next(run for run in data['runs'] if run['mode'] == mode)
+                        lines = ['CONTRIBUTOR_CONFIG ' + ' '.join(f'{key}={value}' for key, value in run['config'].items())]
+                        lines += ['SUSTAINED_STAGE ' + ' '.join(f'{key}={value}' for key, value in stage.items()) for stage in run['stages']]
+                        lines.append(f'CONTRIBUTOR_END mode={mode} qualified=false')
+                        log.write_text('\n'.join(lines))
+                    elif 'io.setu.benchmark.chaos.ProgressiveCapacityChaosWorker' in command:
+                        log.write_text(redline_capture(redline_fixture(command[-2])))
+                        return terminal_code
+                    elif 'io.setu.benchmark.chaos.CapacityJfr' in command:
+                        mode = 'IN_MEMORY' if 'IN_MEMORY' in str(log) else 'FILE'
+                        run = next(run for run in data['runs'] if run['mode'] == mode)
+                        log.write_text('\n'.join('CAPACITY_JFR ' + ' '.join(f'{key}={value}' for key, value in row.items()) for row in run['jfr']))
+                    else:
+                        log.write_text('analysis/build complete')
+                    return 0
+
+                def jfr_print(command, **kwargs):
+                    mode = 'IN_MEMORY' if 'IN_MEMORY' in command[-1] else 'FILE'
+                    kwargs['stdout'].write(json.dumps(dict(recording=dict(events=[dict(type=tool.capture.STAGE_EVENT,
+                        values=dict(mode=mode, stage=stage)) for stage in (1, 2, 3)]))))
+
+                def git(*args, **kwargs):
+                    return subprocess.CompletedProcess(args, 0, stdout='b' * 40 if args[0] == 'rev-parse' else 'Developer')
+
+                with patch.object(tool, 'ROOT', root), patch.object(tool, 'clean_revision', return_value='a' * 40), \
+                        patch.object(tool, 'git', side_effect=git), patch.object(tool, 'cpu_model', return_value='Test CPU'), \
+                        patch.object(tool.os, 'cpu_count', return_value=8), \
+                        patch.object(tool.capture, 'jdk_tools', return_value=(root, 'java', 'jfr', 'JDK 26')), \
+                        patch.object(tool.capture, 'stream_run', side_effect=stream), \
+                        patch.object(tool.subprocess, 'run', side_effect=jfr_print), patch('builtins.print'):
+                    if terminal_code == 0:
+                        with self.assertRaisesRegex(ValueError, 'exit does not match'):
+                            tool.run_diagnostic()
+                        continue
+                    result = tool.run_diagnostic()
+                saved = json.loads(result.read_text())
+                self.assertEqual(4, len(saved['runs']))
+                self.assertEqual(2, len(saved['redline_runs']))
+                self.assertIn('Redline diagnostics', result.with_suffix('.md').read_text())
+                workers = [(command, accepted) for command, accepted in commands if any('Worker' in part for part in command)]
+                self.assertEqual(6, len(workers))
+                for command, accepted in workers[-2:]:
+                    self.assertEqual((0, 42), accepted)
+                    self.assertIn('-Dsetu.benchmark.max.concurrency=0', command)
+                    self.assertIn('-Dsetu.benchmark.min.stages=8', command)
+                    self.assertIn('-Xmx512m', command)
+                manifest = json.loads((result.parent / 'run.json').read_text())
+                self.assertEqual(len(commands), len(manifest['commands']))
+
     def test_hook_resolves_installed_interpreter_before_windows_store_alias(self):
         source = (tool.ROOT / '.githooks/pre-push').read_text()
         self.assertLess(source.index('setu.performancePython'), source.index('exec python3'))
@@ -67,6 +135,11 @@ class ContributorValidationTests(unittest.TestCase):
                      lambda d: d['runs'][0]['jfr'][0].update(stage='2'),
                      lambda d: d['runs'][0]['jfr'][0].update(produced='1'),
                      lambda d: d['runs'][0]['jfr'][0].pop('file_force_count'),
+                     lambda d: d.update(schema_version=1),
+                     lambda d: d['redline_runs'].pop(),
+                     lambda d: d['redline_runs'][0]['stop'].update(reason='CONFIGURED_LIMIT'),
+                     lambda d: d['redline_runs'][0]['stages'][0].update(cpu_avg='inf'),
+                     lambda d: d['redline_runs'][0].update(cpu_budget_cores='4'),
                      lambda d: d['runs'][0]['config'].update(durability='unsafe')]
         for mutate in mutations:
             data = fixture()

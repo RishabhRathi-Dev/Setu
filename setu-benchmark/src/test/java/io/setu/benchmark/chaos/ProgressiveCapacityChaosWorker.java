@@ -133,7 +133,7 @@ final class ProgressiveCapacityChaosWorker {
                     return;
                 } catch (IOException | RuntimeException resourceFailure) {
                     resourceFailure.printStackTrace(System.err);
-                    stop(mode, "RESOURCE_LIMIT", stage, concurrency / 2,
+                    stop(mode, "RESOURCE_LIMIT", stage, concurrency,
                             resourceFailure.getClass().getSimpleName() + ": " + resourceFailure.getMessage());
                     return;
                 }

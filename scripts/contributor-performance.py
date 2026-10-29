@@ -9,12 +9,14 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import uuid
 
 import sustained_report as report
+import redline_report
 
 spec = importlib.util.spec_from_file_location('jfr_capture', Path(__file__).with_name('run-jfr.py'))
 capture = importlib.util.module_from_spec(spec)
@@ -63,10 +65,17 @@ def parse_worker(mode, text, repeat):
 
 
 def validate(document, revision):
-    if (document.get('schema_version') != 1 or document.get('source_revision') != revision
+    if (document.get('schema_version') != 2 or document.get('source_revision') != revision
             or document.get('scope') != 'contributor PC diagnostic' or document.get('qualified') is not False
             or document.get('profile') != PROFILE or document.get('enforcement') != 'none'):
         raise ValueError('Contributor report has wrong revision, scope or profile')
+    if (document.get('redline_profile') != redline_report.PROFILE
+            or sorted(run['mode'] for run in document.get('redline_runs', [])) != sorted(MODES)):
+        raise ValueError('Both modes require a fresh redline ramp')
+    for run in document['redline_runs']:
+        redline_report.validate_run(run)
+        if {key: int(value) for key, value in run['config'].items()} != redline_report.PROFILE:
+            raise ValueError('Wrong contributor redline profile')
     if not re.fullmatch(r'[0-9a-f]{40}', revision):
         raise ValueError('Invalid source revision')
     if not re.fullmatch(r'[0-9a-f]{40}', document.get('source_tree', '')):
@@ -86,6 +95,10 @@ def validate(document, revision):
     for key in ('logical_cpus', 'active_processors', 'heap_mib', 'direct_mib'):
         if type(host.get(key)) is not int or host[key] <= 0:
             raise ValueError('Invalid machine budget: ' + key)
+    for run in document['redline_runs']:
+        if (float(run['cpu_budget_cores']) != host['active_processors']
+                or int(run['runtime']['max_heap_mb']) != host['heap_mib']):
+            raise ValueError('Contributor redline worker budget differs from host settings')
     runs = document['runs']
     if sorted((run['mode'], run['repeat']) for run in runs) != sorted((mode, repeat) for mode in MODES for repeat in (1, 2)):
         raise ValueError('Both modes require two independent repetitions')
@@ -132,24 +145,25 @@ def run_diagnostic(java_home=None):
     active = min(8, os.cpu_count() or 1)
     env = dict(os.environ, JAVA_HOME=str(home))
     env['PATH'] = str(home / 'bin') + os.pathsep + env.get('PATH', '')
-    document = dict(schema_version=1, scope='contributor PC diagnostic', qualified=False, enforcement='none',
+    document = dict(schema_version=2, scope='contributor PC diagnostic', qualified=False, enforcement='none',
                     source_revision=revision, source_tree=git('rev-parse', 'HEAD^{tree}').stdout.strip(),
                     contributor=git('config', 'user.name').stdout.strip(), profile=PROFILE,
                     started_utc=datetime.now(timezone.utc).isoformat(),
                     host=dict(os=platform.platform(), cpu=cpu_model(),
                               logical_cpus=os.cpu_count() or 1, active_processors=active, heap_mib=512, direct_mib=128,
-                              jdk=version, filesystem_media='Filesystem per worker; physical media not detected'), runs=[])
+                              jdk=version, filesystem_media='Filesystem per worker; physical media not detected'), runs=[],
+                    redline_profile=redline_report.PROFILE, redline_runs=[])
     commands = []
 
-    def execute(command, log, timeout=None):
+    def execute(command, log, timeout=None, accepted_exit_codes=(0,)):
         commands.append(command)
         (output / 'run.json').write_text(json.dumps(dict(source_revision=revision, commands=commands), indent=2) + '\n', encoding='utf-8')
-        capture.stream_run(command, log, env, timeout)
+        return capture.stream_run(command, log, env, timeout, accepted_exit_codes)
 
     build = ([str(ROOT / 'mvnw.cmd')] if os.name == 'nt' else ['bash', str(ROOT / 'mvnw')]) + [
         '-B', '-pl', 'setu-benchmark', '-am', '-DskipTests', 'package', 'dependency:build-classpath',
         '-Dmdep.outputFile=target/contributor-classpath.txt']
-    print('Contributor PC check: two repetitions, both modes, three fixed loads; 10s windows.\nEvidence: ' + str(output), flush=True)
+    print('Contributor PC check: two repetitions at three fixed loads, then one redline ramp per mode.\nEvidence: ' + str(output), flush=True)
     execute(build, output / 'build.log')
     target = ROOT / 'setu-benchmark/target'
     classpath = os.pathsep.join([str(target / 'test-classes'), str(target / 'classes'), (target / 'contributor-classpath.txt').read_text().strip()])
@@ -179,13 +193,44 @@ def run_diagnostic(java_home=None):
             execute([java, '-cp', classpath, 'io.setu.benchmark.chaos.CapacityJfr', str(recording)], folder / 'analysis.log', 120)
             text = (folder / 'worker.log').read_text() + '\n' + (folder / 'analysis.log').read_text()
             document['runs'].append(parse_worker(mode, text, repeat))
+    for mode in MODES:
+        folder = output / f'redline-{mode}'
+        folder.mkdir()
+        with tempfile.TemporaryDirectory(prefix='data-', dir=folder) as data:
+            # Keep a sampled 20% free-disk reserve, just as the resource-enforced launcher does.
+            reserve = int(shutil.disk_usage(data).free * .2)
+            command = [java, '@' + str(ROOT / 'config/jvm.options'), '-Xms64m', '-Xmx512m',
+                       '-XX:MaxDirectMemorySize=128m', f'-XX:ActiveProcessorCount={active}',
+                       f'-Dsetu.benchmark.cpu.cores={active}', '-Dsetu.benchmark.memory.log.bytes=67108864',
+                       f'-Dsetu.benchmark.disk.reserve.bytes={reserve}', f'-Djava.io.tmpdir={data}',
+                       '-Dsetu.benchmark.jfr=true', '-Dsetu.log.level=INFO', f'-DSETU_LOG_DIR={folder}',
+                       f'-Dlogback.configurationFile={ROOT / "setu-benchmark/src/test/resources/logback-test.xml"}']
+            properties = dict(record_bytes='record.bytes', batch_records='batch.records', stage_ms='stage.millis',
+                              warmup_ms='warmup.millis', cpu_hold_ms='cpu.hold.millis',
+                              max_concurrency='max.concurrency', min_stages='min.stages')
+            command += [f'-Dsetu.benchmark.{properties[key]}={value}' for key, value in redline_report.PROFILE.items()]
+            command += ['-cp', classpath, 'io.setu.benchmark.chaos.ProgressiveCapacityChaosWorker', mode, data]
+            code = execute(command, folder / 'worker.log', 1500, (0, 42))
+        runs = redline_report.parse_capture((folder / 'worker.log').read_text(encoding='utf-8'), (mode,))
+        if (code == 42) != (runs[0]['stop']['reason'] == 'JVM_OOM'):
+            raise ValueError('Redline worker exit does not match its terminal marker')
+        runs[0]['disk_reserve_bytes'] = reserve
+        document['redline_runs'] += runs
+        # A heap-exhausted JVM can only promise its last atomic JFR checkpoint.
+        execute([java, '-Xmx256m', '-cp', classpath, 'io.setu.benchmark.chaos.CapacityJfr', str(folder / 'capacity.jfr')],
+                folder / 'analysis.log', 120)
+        if not any(line.startswith(f'CAPACITY_JFR mode={mode} stage=1 ') for line in (folder / 'analysis.log').read_text().splitlines()):
+            raise ValueError('Redline JFR is missing its first completed stage')
+        print(redline_report.render_runs(runs), flush=True)
     if clean_revision() != revision:
         raise ValueError('Source changed during measurement; run again')
     document['finished_utc'] = datetime.now(timezone.utc).isoformat()
     validate(document, revision)
     result = output / 'summary.json'
     result.write_text(json.dumps(document, indent=2, allow_nan=False) + '\n', encoding='utf-8')
-    print(render(document), flush=True)
+    summary = render(document)
+    (output / 'summary.md').write_text(summary, encoding='utf-8')
+    print(summary, flush=True)
     return result
 
 
@@ -265,7 +310,7 @@ def render(document):
                          f'{float(stage["produce_per_s"]):,.0f} | {float(stage["consume_per_s"]):,.0f} | '
                          f'{float(stage["p99_ms"]):.3f} | {float(stage["cpu_avg"]):.1%} | '
                          f'{float(jfr["file_force_p99_ms"]):.3f} | {stage["healthy"]} |')
-    return '\n'.join(lines) + '\n'
+    return '\n'.join(lines) + '\n\n' + redline_report.render_runs(document['redline_runs'])
 
 
 def publish(path, readme, destination, workflow_url=None):

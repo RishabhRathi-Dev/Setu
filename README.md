@@ -331,6 +331,14 @@ Waits are elapsed time inside jdk.FileForce, clipped to each measured stage. Con
 
 </details>
 
+### CI redline limits
+
+Each CI run also doubles producer/consumer concurrency until a runtime limit under an enforced CPU/memory budget. These short exhaustion diagnostics show peak rates, sampled CPU/heap, latency and the terminal limit; consumption includes broadcast fanout. They do not qualify sustained capacity. The pre-push check runs the same ramp locally and includes its results in the contributor report below.
+
+<!-- benchmark-redline:start -->
+No CI redline measurements have been published yet. The next CI run will retain raw captures, publish a job summary and refresh this section on the default branch.
+<!-- benchmark-redline:end -->
+
 ### Contributor PC benchmarks
 
 <!-- benchmark-contributor-pc:start -->

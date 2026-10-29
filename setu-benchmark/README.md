@@ -145,6 +145,8 @@ Use the resource-enforced profiles above to measure this adapter on the intended
 
 [CI](../.github/workflows/ci.yml) runs production/helper tests, integration tests, bounded chaos, isolated load, sustained smoke, two full fixed-budget baseline shards and two full node-target shards with JFR on pushes/PRs. Steady, baseline, target and optional full sustained measurements use `--report-only`: completed misses warn and remain visible in captures/reports, while execution failures fail the job. Optional `full_benchmark` dispatch adds eight capacity comparisons across two modes and four payloads.
 
+CI also runs one redline exhaustion shard per storage mode on every ordinary push/PR/manual run. Each shard uses the `github-private` resource profile, the selected resource fraction (default 80%), 512 MiB worker heap, 128 MiB direct memory, a 64 MiB retained-log budget and disk-backed `/var/tmp`. systemd/cgroup v2 enforces the shared process-tree CPU/memory budget; the free-disk reserve is sampled. The dedicated job summary and `redline-<mode>-<attempt>` artifacts retain `redline.json`, `redline.md`, raw output, Surefire reports and JFR, including execution failures. Default-branch publication updates a separate `benchmark-redline` README block and `benchmark-badges/redline-results.json`, preserving fixed-target qualification and contributor reports. Missing/failed captures are labeled incomplete, and stale revisions cannot overwrite newer reports.
+
 `scripts/diagnostics/StorageForceProbe.java` measures two mapped writers with full and data-only barriers at any supplied disk path, independently of broker work. Compile it with Java 26 and run `io.setu.storage.log.StorageForceProbe <directory>` with `@config/jvm.options -Xms64m -Xmx128m -XX:ActiveProcessorCount=2`; use the same OS resource limits when comparing it with a baseline. The probe preserves offered-load backlog and rejects RAM filesystems. It diagnoses a storage path; it does not qualify or replace the full benchmark.
 
 The optional `trace_file_waits` workflow dispatch runs only the original FILE baseline while sampling worker kernel stacks, per-thread scheduler counters, cgroup CPU/memory/I/O counters and disk statistics. The observer's CPU use is recorded. This is an instrumented investigation run, not evidence that an implementation fix has qualified; the other workflow jobs are intentionally skipped.
@@ -172,6 +174,16 @@ python -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 Bounded tests cover process-kill recovery, malformed frames, record-size limits, expiry, quotas and concurrent consumer progress. `ProgressiveCapacityChaosTests` is a separate failure-seeking diagnostic: it continues doubling load toward runtime limits, counts broadcast fanout and uses a coarse latency histogram. Run it explicitly through `--kind capacity`; its peaks do not qualify sustained throughput or update current badges.
+
+```bash
+python3 scripts/run-benchmarks.py --kind capacity --storage-mode FILE --payload-sizes 1024 \
+  --profile github-private --fraction 0.8 --heap-mib 512 --direct-mib 128 \
+  --memory-log-mib 64 --data-directory /var/tmp
+```
+
+The launcher uses one fresh JVM per selected mode, 256-record batches, 2s warmup/windows and no configured concurrency ceiling. From stage eight, sustained CPU saturation adds a 10s observation hold before doubling continues. A measured runtime boundary can occur earlier under a smaller allocation; the launcher requires at least the first completed stage and its JFR evidence, independently of the CPU-hold threshold. Direct Maven runs retain their existing minimum-stage default. A measured heap OOM is an expected terminal result; an OS-killed process without a terminal marker, invalid/missing captures, timeouts and unexpected worker exits remain execution failures. Reports are saved before evaluating failures. The last measured window may precede the terminal attempt; a surviving CPU-hold prefix is labeled partial.
+
+The [contributor pre-push check](../scripts/README.md#contributor-pc-check-before-every-push) runs the same two exhaustion workers after its fixed-target windows, with local JVM limits and no OS CPU/memory quota. Its schema-2 attachment and pipeline summary include both profiles. Redline measurements report peak production, fanout consumption, coarse latency, sampled heap/CPU, attempted concurrency and the stop reason; these short windows do not establish sustained capacity. Heap-exhausted JFR is best effort and can omit the terminal stage.
 
 ## Mixed identified/ordinary writes
 

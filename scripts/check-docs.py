@@ -65,6 +65,10 @@ def check_markers(path):
         start, end = f"<!-- {marker}:start -->", f"<!-- {marker}:end -->"
         if text.count(start) != 1 or text.count(end) != 1 or text.find(start) >= text.find(end):
             errors.append(f"README.md: expected one ordered start/end pair for {marker}")
+    for marker in ("benchmark-redline", "benchmark-contributor-pc"):
+        start, end = f"<!-- {marker}:start -->", f"<!-- {marker}:end -->"
+        if (start in text or end in text) and (text.count(start) != 1 or text.count(end) != 1 or text.find(start) >= text.find(end)):
+            errors.append(f"README.md: expected one ordered start/end pair for {marker}")
     return errors
 
 
