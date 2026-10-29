@@ -18,11 +18,11 @@ The runtime uses Eclipse Temurin **26.0.2.1+1** on Ubuntu Noble, runs as UID/GID
 
 The default [container properties](../docker/server.properties) select FILE storage, broker port 9092 on all container interfaces, and operations port 9093 on container loopback. Compose publishes only plaintext **127.0.0.1:9092** on the host. TLS/mTLS remains an embedding API feature; the properties launcher does not configure it. To accept remote clients, deliberately change the published host address in your deployment configuration.
 
-The defaults follow the fixed FILE [CI baseline](../scripts/run-benchmarks.py), rounding its fractional CPU allocation up:
+The defaults follow the fixed FILE [CI baseline](../scripts/run-benchmarks.py):
 
 | Limit | CI FILE baseline | Docker default |
 | --- | --- | --- |
-| CPU quota | 1.6 CPUs | 2 CPUs |
+| CPU quota | 2 CPUs | 2 CPUs |
 | Container memory | 5 GiB | 5 GiB |
 | Swap | Disabled | Disabled |
 | Initial / maximum heap | 64 / 128 MiB | 64 / 128 MiB |

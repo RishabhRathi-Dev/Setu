@@ -15,7 +15,7 @@ spec.loader.exec_module(publisher)
 def fixture(mode='IN_MEMORY', repeat=1, target_profile='reference'):
     template = run_fixture(mode, repeat)
     target = report.targets_for(target_profile)[mode]
-    cores = 1.6 if target_profile == 'ci-baseline' else 4
+    cores = 2 if target_profile == 'ci-baseline' else 4
     pairs = 1 if mode == 'IN_MEMORY' else 2
     config = dict(mode=mode, record_bytes='1024', target_profile=target_profile, target_per_s=str(target), concurrency=str(pairs),
                   cpu_cores=str(cores), heap_mib='256' if mode == 'IN_MEMORY' else '128',
@@ -107,6 +107,20 @@ class NodeTargetTests(unittest.TestCase):
         self.assertEqual(250000, totals['FILE']['rate'])
         self.assertTrue(all(row['qualified'] for row in totals.values()))
         self.assertIn('50%', report.comparison_report(parsed, report.TARGETS))
+
+    def test_historical_baseline_keeps_its_original_cpu_budget(self):
+        runs = [fixture('FILE', repeat, 'ci-baseline') for repeat in (1, 2, 3)]
+        for run in runs:
+            run['config']['cpu_cores'] = '1.6'
+            for stage in run['stages']:
+                stage['records_per_core'] = str(float(stage['produce_per_s']) / 1.6)
+        parsed = report.parse_capture(capture(runs), ('FILE',), target_profile='ci-baseline')
+        self.assertTrue(report.summaries(parsed, ('FILE',), 'ci-baseline')['FILE']['qualified'])
+        self.assertTrue(all(run['config']['cpu_cores'] == '1.6' for run in parsed))
+        for run in runs:
+            run['config']['cpu_cores'] = '3'
+        with self.assertRaisesRegex(ValueError, 'worker budget'):
+            report.validate_runs(runs, ('FILE',), target_profile='ci-baseline')
 
     def test_rejects_partial_duplicate_mixed_corrupt_and_missing_jfr(self):
         originals = [fixture(repeat=repeat) for repeat in (1,2,3)]

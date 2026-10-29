@@ -102,7 +102,9 @@ def plan(host, cpu_fraction=.8, memory_fraction=.8, disk_fraction=.8, profile='h
          heap_mib=None, direct_mib=None, memory_log_mib=None, memory_limit_mib=None):
     cpu_ceiling, memory_ceiling = {'host': (math.inf, math.inf),
                                  'github-private': (2, 8 * GIB), 'github-public': (4, 16 * GIB)}[profile]
-    cpus = math.floor(min(host['available_cpu_cores'], cpu_ceiling) * fraction(cpu_fraction) * 100) / 100
+    available_cpus = math.floor(min(host['available_cpu_cores'], cpu_ceiling) * 100) / 100
+    # Use whole cores where possible, without exceeding an ancestor quota or profile ceiling.
+    cpus = min(available_cpus, math.ceil(available_cpus * fraction(cpu_fraction)))
     if cpus < .01:
         raise ValueError('CPU budget must allow at least 1% of one core')
     available_memory = min(host['memory_available_bytes'], memory_ceiling)
@@ -292,8 +294,8 @@ def main():
                   args.disk_fraction or args.fraction, args.profile, 2 if args.kind == 'steady' else 1,
                   args.heap_mib, args.direct_mib, args.memory_log_mib,
                   memory_limit_mib=5120 if args.kind == 'baseline' else None)
-    if args.kind == 'baseline' and (budget.cpu_cores != 1.6 or budget.memory_bytes != 5 * GIB):
-        raise ValueError('CI baseline requires at least 2 available CPUs and 5 GiB available memory for its fixed 1.6 CPU/5 GiB envelope')
+    if args.kind == 'baseline' and (budget.cpu_cores != 2 or budget.memory_bytes != 5 * GIB):
+        raise ValueError('CI baseline requires at least 2 available CPUs and 5 GiB available memory for its fixed 2 CPU/5 GiB envelope')
     if args.kind == 'baseline' and (budget.heap_mib != (256 if args.storage_mode == 'IN_MEMORY' else 128)
                                    or budget.direct_mib != 128 or budget.memory_log_bytes != 64 * MIB):
         parser.error('CI baseline requires the default mode heap, 128 MiB direct memory and 64 MiB retained log')

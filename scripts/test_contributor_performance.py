@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -110,6 +111,51 @@ class ContributorValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'checked-out'):
                 tool.pre_push('destination', updates.replace('a' * 40, 'c' * 40))
             self.assertEqual(2, run.call_count)
+
+    def test_ci_and_contributor_publications_preserve_each_others_reports(self):
+        from test_benchmark_node_targets import documents, publisher
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            readme, output = root / 'README.md', root / 'badges'
+            readme.write_text(''.join(f'<!-- {block}:start -->old<!-- {block}:end -->\n' for block in (
+                'benchmark-metrics-badges', 'benchmark-target-diagnostics',
+                'benchmark-capacity-details', 'benchmark-contributor-pc')))
+            attachment = root / 'attachment.json'
+            attachment.write_text(json.dumps(fixture()))
+            # CI must publish successfully before a contributor attachment is available.
+            publisher.publish(documents(), readme, output, 'https://example.com/ci', revision='abc')
+            ci_assets = {path.name: path.read_bytes() for path in output.iterdir()}
+            ci_blocks = re.findall(r'<!-- benchmark-(?:metrics-badges|target-diagnostics|capacity-details):start -->.*?<!-- .*?:end -->',
+                                   readme.read_text(), re.S)
+            tool.publish(attachment, readme, output / 'contributor-pc.json')
+            self.assertTrue(all(block in readme.read_text() for block in ci_blocks))
+            self.assertTrue(all((output / name).read_bytes() == data for name, data in ci_assets.items()))
+            contributor = re.search(r'<!-- benchmark-contributor-pc:start -->.*?<!-- benchmark-contributor-pc:end -->',
+                                    readme.read_text(), re.S).group()
+            pc_snapshot = (output / 'contributor-pc.json').read_bytes()
+            publisher.publish(documents(), readme, output, 'https://example.com/new-ci', revision='abc')
+            self.assertIn(contributor, readme.read_text())
+            self.assertEqual(pc_snapshot, (output / 'contributor-pc.json').read_bytes())
+
+    def test_ci_publication_runs_despite_failed_or_missing_contributor_evidence(self):
+        workflow = (tool.ROOT / '.github/workflows/ci.yml').read_text()
+        job = workflow.split('  publish-benchmark-badges:\n', 1)[1]
+        condition = job.split('    if: >-\n', 1)[1].split('    runs-on:', 1)[0]
+        for contributor in ('success', 'failure', 'skipped', 'cancelled'):
+            for targets in ('success', 'failure', 'cancelled'):
+                for functional in ('success', 'failure'):
+                    with self.subTest(contributor=contributor, targets=targets, functional=functional):
+                        outcomes = {'unit-tests': functional, 'integration-tests': 'success',
+                                    'windows-functional': 'success', 'node-target-benchmark': targets,
+                                    'contributor-performance': contributor}
+                        expression = re.sub(r'needs\.([\w-]+)\.result', lambda match: repr(outcomes[match[1]]), condition)
+                        expression = expression.replace('github.ref', repr('refs/heads/master')).replace(
+                            'github.event.repository.default_branch', repr('master')).replace('github.event_name', repr('push'))
+                        expression = expression.replace('&&', ' and ').replace('||', ' or ')
+                        # Evaluate the trusted workflow expression with GitHub's relevant helpers.
+                        allowed = eval(' '.join(expression.split()), {'__builtins__': {}},
+                                       {'always': lambda: True, 'format': lambda template, value: template.format(value)})
+                        self.assertEqual(functional == 'success' and targets != 'cancelled', allowed)
 
     def test_tag_and_deletion_do_not_launch_workloads(self):
         with patch.object(tool, 'run_diagnostic') as run:
