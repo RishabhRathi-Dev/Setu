@@ -10,6 +10,9 @@ import re
 spec = importlib.util.spec_from_file_location('badge_helpers', Path(__file__).with_name('update-benchmark-badges.py'))
 badges = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(badges)
+contributor_spec = importlib.util.spec_from_file_location('contributor_badge_report', Path(__file__).with_name('contributor-performance.py'))
+contributor = importlib.util.module_from_spec(contributor_spec)
+contributor_spec.loader.exec_module(contributor)
 
 GROUPS = {
     'benchmark-metrics-badges': ('in-memory-sustained', 'file-sustained'),
@@ -40,6 +43,19 @@ def render(readme, output, workflow_url):
             links.append(badges.readme_badge(data['label'], data['message'], data['color'], data.get('sourceUrl', workflow_url), relative))
         source = re.sub(pattern, lambda _: f'<!-- {block}:start -->\n' + '\n'.join(links)
                         + f'\n<!-- {block}:end -->', source, flags=re.S)
+    marker = 'benchmark-contributor-pc'
+    if any(f'<!-- {marker}:{edge} -->' in source for edge in ('start', 'end')):
+        pattern = f'<!-- {marker}:start -->.*?<!-- {marker}:end -->'
+        if len(re.findall(pattern, source, re.S)) != 1:
+            raise ValueError('missing or duplicate contributor README destination')
+        document = json.loads((output / 'contributor-pc.json').read_text(encoding='utf-8'))
+        # Re-present saved evidence with its original profile and provenance.
+        contributor.render(document, require_current=False)
+        relative = Path(os.path.relpath(output, readme.parent)).as_posix()
+        files, links = contributor.contributor_stats.assets(document, output, relative)
+        body = contributor.render(document, badge_links=links, require_current=False)
+        assets.extend(files.items())
+        source = re.sub(pattern, lambda _: f'<!-- {marker}:start -->\n{body}<!-- {marker}:end -->', source, flags=re.S)
     # Validate every input and destination before replacing anything.
     for path, svg in assets:
         badges.write_if_changed(path, svg)

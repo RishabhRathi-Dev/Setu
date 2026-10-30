@@ -365,12 +365,11 @@ jobs:
       - name: Ramp to the runtime limit under an enforced resource budget
         env:
           BENCHMARK_MODE: ${{ matrix.mode }}
-          BENCHMARK_FRACTION: ${{ inputs.resource_fraction || vars.SETU_BENCHMARK_FRACTION || '0.8' }}
         run: >-
           python3 scripts/run-benchmarks.py --kind capacity
           --storage-mode "$BENCHMARK_MODE" --payload-sizes 1024
-          --profile github-private --fraction "$BENCHMARK_FRACTION"
-          --heap-mib 512 --direct-mib 128 --memory-log-mib 64 --data-directory /var/tmp
+          --profile host --cpu-fraction 1 --memory-fraction 1 --disk-fraction 0.8
+          --data-directory /var/tmp
       - name: Show redline measurements and the terminal limit
         if: always()
         run: |

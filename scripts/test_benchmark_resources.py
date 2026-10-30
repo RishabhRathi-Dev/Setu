@@ -290,7 +290,7 @@ class ResourceBudgetTests(unittest.TestCase):
                     if command[0] == 'git':
                         return type('Result', (), {'stdout': 'a' * 40})()
                     calls.append(command)
-                    kwargs['stdout'].write(capture(fixture('FILE', cpu=10)))
+                    kwargs['stdout'].write(capture(fixture('FILE', cpu=12)))
                     return type('Result', (), {'returncode': code})()
 
                 argv = ['run-benchmarks', '--kind', 'capacity', '--storage-mode', 'FILE', '--payload-sizes', '1024',
@@ -307,10 +307,16 @@ class ResourceBudgetTests(unittest.TestCase):
                 self.assertIn('-Dtest=ProgressiveCapacityChaosTests#progressivelyRampsFileProducersAndConsumersUntilTheRuntimeLimit,BenchmarkEnvironmentTests', calls[0])
                 self.assertIn('-Dsetu.benchmark.max.concurrency=0', calls[0])
                 self.assertIn('-Dsetu.benchmark.min.completed.stages=1', calls[0])
+                self.assertIn('-Dsetu.benchmark.batch.records=4096', calls[0])
+                self.assertIn('-Dsetu.benchmark.fetch.bytes=4194304', calls[0])
+                self.assertIn('-Dsetu.benchmark.stage.millis=10000', calls[0])
                 saved = json.loads(next(Path(directory).rglob('redline.json')).read_text())
                 self.assertEqual(['FILE'], [run['mode'] for run in saved['runs']])
                 self.assertEqual(code, saved['execution_exit_code'])
-                self.assertEqual(2000, saved['resources']['stage_millis'])
+                self.assertEqual(10000, saved['resources']['stage_millis'])
+                self.assertEqual(12, saved['resources']['budget']['cpu_cores'])
+                self.assertEqual(16 * resources.GIB, saved['resources']['budget']['memory_bytes'])
+                self.assertEqual(.8, saved['resources']['disk_fraction'])
                 self.assertEqual('a' * 40, saved['resources']['source_revision'])
                 self.assertEqual(bool(code), bool(saved.get('error')))
 

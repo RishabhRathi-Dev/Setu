@@ -18,6 +18,7 @@ import uuid
 import sustained_report
 import node_target_report
 import redline_report
+import redline_resources
 
 MIB = 1024 ** 2
 GIB = 1024 ** 3
@@ -224,7 +225,7 @@ def main():
     parser.add_argument('--measurement', choices=('smoke', 'full'), default='smoke')
     parser.add_argument('--storage-mode', choices=('both', 'IN_MEMORY', 'FILE'), default='both')
     parser.add_argument('--profile', choices=('host', 'github-private', 'github-public'))
-    parser.add_argument('--fraction', type=fraction, default=.8)
+    parser.add_argument('--fraction', type=fraction, help='default: 1 for capacity CPU/memory, 0.8 otherwise')
     parser.add_argument('--cpu-fraction', type=fraction)
     parser.add_argument('--memory-fraction', type=fraction)
     parser.add_argument('--disk-fraction', type=fraction)
@@ -246,10 +247,14 @@ def main():
     policy.add_argument('--strict', action='store_true',
                         help='fail baseline/target/sustained/steady measurements on unmet performance expectations')
     args = parser.parse_args()
+    default_fraction = args.fraction is None
+    args.fraction = args.fraction if args.fraction is not None else (1 if args.kind == 'capacity' else .8)
+    if args.kind == 'capacity' and default_fraction and args.disk_fraction is None:
+        args.disk_fraction = .8
     if args.kind == 'capacity' and (args.repeats not in (None, 1)
-                                   or args.stage_millis not in (None, 2000) or args.warmup_millis not in (None, 2000)
+                                   or args.stage_millis not in (None, 10000) or args.warmup_millis not in (None, 2000)
                                    or args.max_concurrency is not None):
-        parser.error('capacity uses one ramp per mode, 2s warmup/windows and no concurrency ceiling')
+        parser.error('capacity uses one ramp per mode, 2s warmup, 10s windows and no concurrency ceiling')
     if (args.report_only or args.strict) and args.kind not in ('target', 'baseline', 'sustained', 'steady'):
         parser.error('--report-only/--strict apply to baseline, target, sustained and steady measurements')
     args.report_only = not args.strict
@@ -262,7 +267,7 @@ def main():
             parser.error('CI baseline requires the github-private profile, 0.8 CPU fraction and its fixed 5 GiB memory limit')
     full = args.kind in ('sustained', 'target', 'baseline') and args.measurement == 'full'
     args.repeats = args.repeats if args.repeats is not None else (3 if full or args.kind == 'sweep' else 1)
-    args.stage_millis = args.stage_millis if args.stage_millis is not None else (2000 if args.kind == 'capacity' else 30000 if full else 3000)
+    args.stage_millis = args.stage_millis if args.stage_millis is not None else (10000 if args.kind == 'capacity' else 30000 if full else 3000)
     args.warmup_millis = args.warmup_millis if args.warmup_millis is not None else (10000 if full else 2000)
     args.max_concurrency = args.max_concurrency if args.max_concurrency is not None else (32768 if args.kind == 'sustained' else 8)
     if full and (args.repeats != 3 or args.stage_millis < 30000 or args.warmup_millis < 10000):
@@ -286,7 +291,7 @@ def main():
         parser.error('repeats must be 1..10, stage millis 250..60000, warmup millis 0..60000')
     if not 1 <= args.max_concurrency <= 32768 or args.max_concurrency & (args.max_concurrency - 1):
         parser.error('comparison concurrency must be a power of two in 1..32768')
-    batch = 4096 if args.kind == 'large-batch' else 256
+    batch = 4096 if args.kind in ('capacity', 'large-batch') else 256
     if any(batch * (size + 4) + 1024 > 15 * MIB for size in payloads):
         parser.error('payload and batch size exceed the 15 MiB frame limit')
     if args.log and args.kind in ('sweep', 'sustained'):
@@ -330,6 +335,7 @@ def main():
             os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + os.environ['GITHUB_REPOSITORY']
             + '/actions/runs/' + os.environ['GITHUB_RUN_ID']) if 'GITHUB_RUN_ID' in os.environ else None)
     if args.kind == 'capacity':
+        snapshot['budget'].update(redline_resources.transport(budget.heap_mib, payloads[0]))
         snapshot['max_concurrency'] = 0
         snapshot['source_revision'] = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT,
                                                     capture_output=True, text=True, check=True).stdout.strip()
@@ -384,9 +390,11 @@ def main():
             elif args.kind == 'steady':
                 command += ['-Dsetu.benchmark.steady.enforce=' + str(args.strict).lower()]
             elif args.kind == 'capacity':
+                command += [f'-Dsetu.benchmark.{key.replace("_", ".")}={value}'
+                            for key, value in redline_resources.transport(budget.heap_mib, payload).items()]
                 command += ['-Dsetu.benchmark.max.concurrency=0', '-Dsetu.benchmark.min.stages=8',
                             '-Dsetu.benchmark.min.completed.stages=1',
-                            '-Dsetu.benchmark.stage.millis=2000', '-Dsetu.benchmark.warmup.millis=2000',
+                            '-Dsetu.benchmark.stage.millis=10000', '-Dsetu.benchmark.warmup.millis=2000',
                             '-Dsetu.benchmark.cpu.hold.millis=10000', '-Dsetu.benchmark.jfr=true']
             elif args.kind not in ('steady', 'chaos'):
                 ceiling = 2 if args.kind == 'large-batch' else args.max_concurrency

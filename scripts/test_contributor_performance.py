@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -22,6 +23,12 @@ def fixture():
                     host=dict(os='Windows', cpu='Test CPU', logical_cpus=12, active_processors=8,
                               heap_mib=512, direct_mib=128, jdk='JDK 26', filesystem_media='unknown'), runs=[],
                     redline_profile=dict(tool.redline_report.PROFILE), redline_runs=[redline_fixture(mode) for mode in tool.MODES])
+    budget = tool.redline_resources.local_budget(8, 8 * 1024**3)
+    document['redline_budget'] = budget
+    for run in document['redline_runs']:
+        run['runtime']['max_heap_mb'] = str(budget['heap_mib'])
+        run['buffers'] = {key: budget[key] for key in
+                          ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
     for mode in tool.MODES:
         for repeat in (1, 2):
             run = dict(mode=mode, repeat=repeat, config=dict(mode=mode, filesystem='NTFS',
@@ -79,8 +86,16 @@ class ContributorValidationTests(unittest.TestCase):
                         lines.append(f'CONTRIBUTOR_END mode={mode} qualified=false')
                         log.write_text('\n'.join(lines))
                     elif 'io.setu.benchmark.chaos.ProgressiveCapacityChaosWorker' in command:
-                        log.write_text(redline_capture(redline_fixture(command[-2])))
+                        run = redline_fixture(command[-2], cpu=12)
+                        budget = tool.redline_resources.local_budget(12, 8 * 1024**3)
+                        run['runtime']['max_heap_mb'] = str(budget['heap_mib'])
+                        raw = redline_capture(run) + '\nCAPACITY_BUFFERS mode=' + run['mode'] + ' '
+                        raw += ' '.join(f'{key}={budget[key]}' for key in
+                                        ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes'))
+                        log.write_text(raw)
                         return terminal_code
+                    elif 'io.setu.benchmark.chaos.BenchmarkHostResources' in command:
+                        log.write_text(f'REDLINE_HOST processors=12 memory_available_bytes={8 * 1024**3}')
                     elif 'io.setu.benchmark.chaos.CapacityJfr' in command:
                         mode = 'IN_MEMORY' if 'IN_MEMORY' in str(log) else 'FILE'
                         run = next(run for run in data['runs'] if run['mode'] == mode)
@@ -125,7 +140,10 @@ class ContributorValidationTests(unittest.TestCase):
                     self.assertEqual((0, 42), accepted)
                     self.assertIn('-Dsetu.benchmark.max.concurrency=0', command)
                     self.assertIn('-Dsetu.benchmark.min.stages=8', command)
-                    self.assertIn('-Xmx512m', command)
+                    self.assertIn('-Xmx4454m', command)
+                    self.assertIn('-XX:ActiveProcessorCount=12', command)
+                    self.assertIn('-Dsetu.benchmark.batch.records=4096', command)
+                    self.assertIn('-Dsetu.benchmark.stage.millis=10000', command)
                 manifest = json.loads((result.parent / 'run.json').read_text())
                 self.assertEqual(len(commands), len(manifest['commands']))
 
@@ -157,6 +175,29 @@ class ContributorValidationTests(unittest.TestCase):
         self.assertIn('Missed', text)
         self.assertIn('not qualified sustained capacity', text)
 
+    def test_summary_and_badges_use_full_target_median_and_preserve_diagnostic_status(self):
+        data = fixture()
+        # A large lower-load sample must not become the full-target throughput badge.
+        data['runs'][0]['stages'][0]['produce_per_s'] = '9000000'
+        data['runs'][0]['stages'][-1]['produce_per_s'] = '300000'
+        data['runs'][2]['stages'][-1]['produce_per_s'] = '500000'
+        data['runs'][0]['stages'][0].update(cpu_avg='.9', heap_peak_bytes=str(384 * 1024**2))
+        totals = tool.contributor_stats.summaries(data)
+        self.assertEqual(400000, totals['IN_MEMORY']['rate'])
+        self.assertEqual(.9, totals['IN_MEMORY']['cpu'])
+        self.assertEqual(384, totals['IN_MEMORY']['heap_mib'])
+        entries = tool.contributor_stats.entries(data)
+        self.assertEqual(8, len(entries))
+        self.assertIn('400.00K/s actual, 80%, unqualified', entries[0][2])
+        self.assertEqual('measurement unavailable', entries[3][2])
+        for run in data['runs']:
+            for row in run['jfr']:
+                row.update(allocation_mb='20480', gc_pause_ms='2.5')
+        self.assertIn('2.00 GiB/s alloc, 2.5 ms GC', tool.contributor_stats.entries(data)[3][2])
+        data['runs'][0]['jfr'][0]['allocation_mb'] = 'nan'
+        with self.assertRaisesRegex(ValueError, 'badge metric'):
+            tool.contributor_stats.entries(data)
+
     def test_stale_partial_error_and_nonfinite_evidence_is_rejected(self):
         mutations = [lambda d: d.update(source_revision='c' * 40),
                      lambda d: d.update(collection='invalid'),
@@ -175,6 +216,9 @@ class ContributorValidationTests(unittest.TestCase):
                      lambda d: d['redline_runs'][0]['stop'].update(reason='CONFIGURED_LIMIT'),
                      lambda d: d['redline_runs'][0]['stages'][0].update(cpu_avg='inf'),
                      lambda d: d['redline_runs'][0].update(cpu_budget_cores='4'),
+                     lambda d: d.pop('redline_budget'),
+                     lambda d: d['redline_budget'].update(heap_mib=512),
+                     lambda d: d['redline_runs'][0]['buffers'].update(request_buffer_bytes=1),
                      lambda d: d['runs'][0]['config'].update(durability='unsafe')]
         for mutate in mutations:
             data = fixture()
@@ -200,6 +244,15 @@ class ContributorValidationTests(unittest.TestCase):
             self.assertNotIn('<script>', text)
             self.assertNotIn('[unsafe]', text)
             self.assertEqual(data, json.loads(destination.read_text()))
+            self.assertIn('Contributor PC summary', text)
+            self.assertIn('Median actual writes/s', text)
+            self.assertEqual(8, len(list(folder.glob('contributor-*.svg'))))
+            self.assertIn('contributor-memory-throughput.svg', text)
+            svg = ET.fromstring((folder / 'contributor-memory-throughput.svg').read_text())
+            self.assertIn('unqualified', svg.attrib['aria-label'])
+            badge = json.loads((folder / 'contributor-memory-throughput.json').read_text())
+            self.assertEqual(data['source_revision'], badge['sourceRevision'])
+            self.assertFalse(badge['qualified'])
             url = 'https://github.com/owner/repo/actions/runs/123'
             tool.publish(source, readme, destination, url)
             self.assertIn(f'[Report, logs and downloadable results]({url})', readme.read_text())
