@@ -6,7 +6,7 @@ import java.util.List;
 final class BenchmarkSettings {
     static final List<String> PROPERTIES = List.of("setu.benchmark.record.bytes",
             "setu.benchmark.heap.mib", "setu.benchmark.direct.mib", "setu.benchmark.cpu.cores",
-            "setu.benchmark.memory.log.bytes", "setu.benchmark.disk.reserve.bytes", "java.io.tmpdir",
+            "setu.benchmark.memory.log.bytes", "setu.benchmark.unbounded.admission", "setu.benchmark.disk.reserve.bytes", "java.io.tmpdir",
             "setu.benchmark.target.profile");
 
     private BenchmarkSettings() { }

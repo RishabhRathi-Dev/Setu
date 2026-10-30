@@ -23,6 +23,8 @@ java '@config/jvm.options' -jar setu-server/target/setu-server-1.0.0-SNAPSHOT.ja
 
 Distribute the JAR with its adjacent `lib/` runtime dependencies and `config/jvm.options`. Application paths are relative to the launch working directory. `--help` prints usage. [server.properties](../config/server.properties) contains all supported settings; unknown properties fail startup.
 
+FILE admission is configurable with `file.write.queue.max.bytes` (default 32 MiB) and `file.write.queue.max.requests` (default 1,024). Each accepts zero to disable that limit independently, including on recovered partitions. See [configuration](../docs/configuration.md#storage-and-retention) for a larger-queue example and the embedding `FileWriteQueueOptions` API. Force-before-ack durability and draining accepted writes on close are preserved.
+
 Optional AOT training:
 
 ```powershell

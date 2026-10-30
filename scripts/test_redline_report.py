@@ -21,7 +21,12 @@ def capture(run):
     def line(marker, values):
         return marker + ' ' + ' '.join(f'{key}={value}' for key, value in values.items())
     mode = run['mode']
+    extra = []
+    for key, marker in (('buffers', 'CAPACITY_BUFFERS'), ('admission', 'CAPACITY_ADMISSION')):
+        if key in run:
+            extra.append(line(marker, dict(mode=mode, **run[key])))
     return '\n'.join([line('CAPACITY_CONFIG', dict(mode=mode, **run['config'], cpu_budget_cores=run['cpu_budget_cores'])),
+                      *extra,
                       line('CAPACITY_RUNTIME', run['runtime']),
                       line('CAPACITY_STORAGE', dict(mode=mode, filesystem=run['filesystem'], directory='private/path')),
                       *(line('CAPACITY_STAGE', dict(mode=mode, **stage)) for stage in run['stages']),
@@ -35,6 +40,18 @@ def resources():
 
 
 class RedlineReportTests(unittest.TestCase):
+    def test_unbounded_admission_reports_disabled_credits_without_relabeling_bounded_runs(self):
+        run = fixture()
+        run['admission'] = dict(policy='unbounded', file_write_queue_bytes='0', file_write_queue_requests='0')
+        run['buffers'] = dict(request_buffer_bytes=2**63 - 1, response_buffer_bytes=2**63 - 1,
+                              memory_log_bytes=0, fetch_bytes=4 * 1024**2)
+        parsed = report.parse_capture(capture(run), ('IN_MEMORY',))
+        self.assertEqual([run], parsed)
+        self.assertIn('Admission policy: **unbounded**', report.render_runs(parsed))
+        run['admission']['file_write_queue_bytes'] = '33554432'
+        with self.assertRaisesRegex(ValueError, 'bounded admission'):
+            report.validate_run(run)
+
     def test_legacy_batches_and_new_buffer_provenance_remain_distinct(self):
         old = fixture()
         old['config']['batch_records'] = '256'

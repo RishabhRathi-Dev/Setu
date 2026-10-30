@@ -154,10 +154,13 @@ def validate(document, revision, require_current=True):
         raise ValueError('Missing detected redline resource budget; remeasure this attachment')
     if not legacy_budget:
         expected_budget = redline_resources.local_budget(redline_budget['active_processors'],
-                                                         redline_budget['memory_available_bytes'])
+                                                         redline_budget['memory_available_bytes'],
+                                                         unbounded=require_current or redline_budget.get('admission_policy') == 'unbounded')
         if redline_budget != expected_budget:
             raise ValueError('Contributor redline budget differs from detected resources')
     for run in document['redline_runs']:
+        if require_current and run.get('admission', {}).get('policy') != 'unbounded':
+            raise ValueError('Contributor redline requires fresh unbounded-admission evidence')
         if (float(run['cpu_budget_cores']) != redline_budget['active_processors']
                 or int(run['runtime']['cpus']) != redline_budget['active_processors']
                 or int(run['runtime']['max_heap_mb']) != redline_budget['heap_mib']):
@@ -278,6 +281,7 @@ def run_diagnostic(java_home=None):
                        f'-XX:ActiveProcessorCount={redline_budget["active_processors"]}',
                        f'-Dsetu.benchmark.cpu.cores={redline_budget["active_processors"]}',
                        f'-Dsetu.benchmark.memory.log.bytes={redline_budget["memory_log_bytes"]}',
+                       '-Dsetu.benchmark.unbounded.admission=true',
                        f'-Dsetu.benchmark.disk.reserve.bytes={reserve}', f'-Djava.io.tmpdir={data}',
                        '-Dsetu.benchmark.jfr=true', '-Dsetu.log.level=INFO', f'-DSETU_LOG_DIR={folder}',
                        f'-Dlogback.configurationFile={ROOT / "setu-benchmark/src/test/resources/logback-test.xml"}']

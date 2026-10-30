@@ -26,6 +26,7 @@ class BenchmarkCaptureTests(unittest.TestCase):
             run['config'] = {key: str(value) for key, value in old_profile.items()}
             run['runtime']['max_heap_mb'] = '512'
             run.pop('buffers')
+            run.pop('admission')
         with self.assertRaisesRegex(ValueError, 'fresh redline'):
             renderer.contributor.validate(document, document['source_revision'])
         with tempfile.TemporaryDirectory() as directory:

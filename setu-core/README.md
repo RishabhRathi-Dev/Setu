@@ -24,6 +24,20 @@ try (var broker = new DefaultBroker(Path.of("data"), 1024 * 1024)) {
 
 Direct broker calls bypass network authentication, ACLs and quotas. `BrokerException` carries application errors; I/O failures propagate to the embedding application. The server translates these into wire responses.
 
+Embedded applications can configure per-partition FILE queue admission with `FileWriteQueueOptions`. Defaults remain 32 MiB and 1,024 requests; zero disables either limit independently. The options apply during topic creation and recovery. For a larger bounded queue:
+
+```java
+var writes = new io.setu.storage.log.FileWriteQueueOptions(256L * 1024 * 1024, 4096);
+try (var broker = new DefaultBroker(io.setu.storage.log.StorageMode.FILE, Path.of("data"),
+        1024 * 1024, io.setu.storage.log.MessageLogs.DEFAULT_QUEUE_BLOCK_BYTES,
+        DefaultBroker.DEFAULT_ACK_TIMEOUT_MILLIS, DefaultBroker.DEFAULT_CONSUMER_INACTIVITY_TIMEOUT_MILLIS,
+        DefaultBroker.DEFAULT_MAX_RETAINED_MEMORY_BYTES, writes)) {
+    // Serve requests for the application's lifetime.
+}
+```
+
+Use `FileWriteQueueOptions.unlimited()` for unbounded queue admission. The full constructor combines these options with retention and consumer metadata limits. Accepted writes still complete their durable force boundary, and shutdown drains them. Larger or unlimited queues permit more retained work; they do not guarantee higher durable throughput.
+
 ### File retention example
 
 This embedded broker expires completed daily files seven days after their cycle end. Its maintenance task handles existing and new partitions; the application owns the broker's lifetime.

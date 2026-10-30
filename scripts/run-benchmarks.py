@@ -237,6 +237,7 @@ def main():
     parser.add_argument('--heap-mib', type=int)
     parser.add_argument('--direct-mib', type=int)
     parser.add_argument('--memory-log-mib', type=int)
+    parser.add_argument('--bounded-admission', action='store_true', help='capacity only: retain heap-scaled admission caps')
     parser.add_argument('--data-directory', type=Path, default=Path(tempfile.gettempdir()))
     parser.add_argument('--output', type=Path, default=ROOT / 'logs/benchmarks/resources')
     parser.add_argument('--log', type=Path, help='explicit single-profile capture (capacity/steady/large-batch)')
@@ -247,6 +248,10 @@ def main():
     policy.add_argument('--strict', action='store_true',
                         help='fail baseline/target/sustained/steady measurements on unmet performance expectations')
     args = parser.parse_args()
+    if args.bounded_admission and args.kind != 'capacity':
+        parser.error('--bounded-admission applies only to capacity')
+    if args.kind == 'capacity' and not args.bounded_admission and args.memory_log_mib is not None:
+        parser.error('unbounded capacity disables log admission; use --bounded-admission with --memory-log-mib')
     default_fraction = args.fraction is None
     args.fraction = args.fraction if args.fraction is not None else (1 if args.kind == 'capacity' else .8)
     if args.kind == 'capacity' and default_fraction and args.disk_fraction is None:
@@ -306,6 +311,8 @@ def main():
                   memory_limit_mib=5120 if args.kind == 'baseline' else None)
     if args.kind == 'baseline' and (budget.cpu_cores != 2 or budget.memory_bytes != 5 * GIB):
         raise ValueError('CI baseline requires at least 2 available CPUs and 5 GiB available memory for its fixed 2 CPU/5 GiB envelope')
+    if args.kind == 'capacity' and not args.bounded_admission:
+        budget = replace(budget, memory_log_bytes=0)
     if args.kind == 'baseline' and (budget.heap_mib != (256 if args.storage_mode == 'IN_MEMORY' else 128)
                                    or budget.direct_mib != 128 or budget.memory_log_bytes != 64 * MIB):
         parser.error('CI baseline requires the default mode heap, 128 MiB direct memory and 64 MiB retained log')
@@ -335,7 +342,8 @@ def main():
             os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + os.environ['GITHUB_REPOSITORY']
             + '/actions/runs/' + os.environ['GITHUB_RUN_ID']) if 'GITHUB_RUN_ID' in os.environ else None)
     if args.kind == 'capacity':
-        snapshot['budget'].update(redline_resources.transport(budget.heap_mib, payloads[0]))
+        snapshot['admission_policy'] = 'bounded' if args.bounded_admission else 'unbounded'
+        snapshot['budget'].update(redline_resources.transport(budget.heap_mib, payloads[0], not args.bounded_admission))
         snapshot['max_concurrency'] = 0
         snapshot['source_revision'] = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT,
                                                     capture_output=True, text=True, check=True).stdout.strip()
@@ -391,7 +399,8 @@ def main():
                 command += ['-Dsetu.benchmark.steady.enforce=' + str(args.strict).lower()]
             elif args.kind == 'capacity':
                 command += [f'-Dsetu.benchmark.{key.replace("_", ".")}={value}'
-                            for key, value in redline_resources.transport(budget.heap_mib, payload).items()]
+                            for key, value in redline_resources.transport(budget.heap_mib, payload, not args.bounded_admission).items()]
+                command += ['-Dsetu.benchmark.unbounded.admission=' + str(not args.bounded_admission).lower()]
                 command += ['-Dsetu.benchmark.max.concurrency=0', '-Dsetu.benchmark.min.stages=8',
                             '-Dsetu.benchmark.min.completed.stages=1',
                             '-Dsetu.benchmark.stage.millis=10000', '-Dsetu.benchmark.warmup.millis=2000',

@@ -9,6 +9,8 @@ import io.setu.server.dispatcher.BrokerRequestHandler;
 import io.setu.server.tcp.TcpServer;
 import io.setu.server.tcp.TcpServerOptions;
 import io.setu.storage.log.StorageMode;
+import io.setu.storage.log.FileWriteQueueOptions;
+import io.setu.core.broker.ConsumerMetadataLimits;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -30,6 +32,7 @@ import java.util.concurrent.locks.LockSupport;
 /** Child-JVM load generator for an intentionally aggressive, progressively doubled capacity test. */
 final class ProgressiveCapacityChaosWorker {
     private static final int RECORD_BYTES = BenchmarkSettings.recordBytes();
+    private static final boolean UNBOUNDED = Boolean.getBoolean("setu.benchmark.unbounded.admission");
     private static final int MAX_FRAME_BYTES = 15 * 1024 * 1024;
     private static final long STAGE_MILLIS = configuredInt("setu.benchmark.stage.millis", 10_000, 250, 60_000);
     private static final int WARMUP_MILLIS = configuredInt("setu.benchmark.warmup.millis", 2_000, 0, 60_000);
@@ -40,7 +43,7 @@ final class ProgressiveCapacityChaosWorker {
     private static final long RESPONSE_BUFFER_BYTES = configuredBuffer("setu.benchmark.response.buffer.bytes");
     private static final int FETCH_BYTES = configuredInt("setu.benchmark.fetch.bytes", 4 * 1024 * 1024, RECORD_BYTES, 4 * 1024 * 1024);
     private static final int MIN_STAGES = configuredInt("setu.benchmark.min.stages", 8, 1, 16);
-    private static final int MEMORY_LOG_BYTES = configuredInt("setu.benchmark.memory.log.bytes", 256 * 1024 * 1024, 0, Integer.MAX_VALUE);
+    private static final int MEMORY_LOG_BYTES = configuredInt("setu.benchmark.memory.log.bytes", UNBOUNDED ? 0 : 256 * 1024 * 1024, 0, Integer.MAX_VALUE);
     private static final long SAMPLE_MILLIS = 250;
     private static final double CPU_SATURATION = 0.92;
     private static final int SATURATED_SAMPLES_TO_STOP = 4;
@@ -60,6 +63,11 @@ final class ProgressiveCapacityChaosWorker {
             throw new IllegalArgumentException("setu.benchmark.max.concurrency must be zero or a power of two");
         if ((long) BATCH_RECORDS * (RECORD_BYTES + Integer.BYTES) + 1024 > MAX_FRAME_BYTES)
             throw new IllegalArgumentException("Payload size and batch count exceed the 15 MiB frame limit");
+        if (UNBOUNDED && (MEMORY_LOG_BYTES != 0 || REQUEST_BUFFER_BYTES != Long.MAX_VALUE || RESPONSE_BUFFER_BYTES != Long.MAX_VALUE))
+            throw new IllegalArgumentException("Unbounded admission requires a zero memory-log limit and Long.MAX_VALUE transport credits");
+        System.out.printf("CAPACITY_ADMISSION mode=%s policy=%s file_write_queue_bytes=%d file_write_queue_requests=%d%n",
+                mode, UNBOUNDED ? "unbounded" : "bounded", UNBOUNDED ? 0 : FileWriteQueueOptions.defaults().maxBytes(),
+                UNBOUNDED ? 0 : FileWriteQueueOptions.defaults().maxRequests());
         System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d cpu_hold_ms=%d max_concurrency=%d min_stages=%d security_quotas=disabled memory_log_budget=%d cpu_stop=false jfr=%s gc=ZGC string_dedup=true cpu_metric=process_time_per_budget_cpu cpu_budget_cores=%.3f%n",
                 mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, WARMUP_MILLIS, CPU_HOLD_MILLIS, MAX_CONCURRENCY,
                 MIN_STAGES, MEMORY_LOG_BYTES, System.getProperty("setu.benchmark.jfr", "true"), BenchmarkSettings.cpuCores());
@@ -103,10 +111,15 @@ final class ProgressiveCapacityChaosWorker {
         OperatingSystemMXBean os = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
         Path brokerData = mode == StorageMode.FILE ? dataRoot.resolve("broker-data") : null;
         DefaultBroker broker = new DefaultBroker(mode, brokerData, RECORD_BYTES, 64L * 1024 * 1024,
-                60 * 60 * 1000L, 2 * 60 * 60 * 1000L, MEMORY_LOG_BYTES);
+                60 * 60 * 1000L, 2 * 60 * 60 * 1000L, MEMORY_LOG_BYTES, 0, 0,
+                UNBOUNDED ? new ConsumerMetadataLimits(Integer.MAX_VALUE, Integer.MAX_VALUE) : ConsumerMetadataLimits.defaults(),
+                UNBOUNDED ? FileWriteQueueOptions.unlimited() : FileWriteQueueOptions.defaults());
         TcpServer server = new TcpServer(new java.net.InetSocketAddress("127.0.0.1", 0),
                 new FramedConnectionHandler(new BrokerRequestHandler(broker)),
-                new TcpServerOptions(65_536, 65_536, 0, REQUEST_BUFFER_BYTES, RESPONSE_BUFFER_BYTES));
+                new TcpServerOptions(UNBOUNDED ? Integer.MAX_VALUE : 65_536, 65_536, 0,
+                        REQUEST_BUFFER_BYTES, RESPONSE_BUFFER_BYTES,
+                        UNBOUNDED ? Integer.MAX_VALUE : 30_000, UNBOUNDED ? Integer.MAX_VALUE : 10_000,
+                        UNBOUNDED ? Integer.MAX_VALUE : 30_000));
         List<SetuClient> clients = new ArrayList<>();
         int stage = 0;
         int concurrency = 1;
@@ -382,7 +395,7 @@ final class ProgressiveCapacityChaosWorker {
                         && "Partition write queue is full; retry with backoff".equals(response.errorMessage())) {
                     backpressure.increment();
                     if (!running.get()) return;
-                    if (System.nanoTime() - start >= 5_000_000_000L)
+                    if (!UNBOUNDED && System.nanoTime() - start >= 5_000_000_000L)
                         throw new IOException("Partition write queue did not recover within five seconds");
                     LockSupport.parkNanos(1_000_000);
                     if (!running.get()) return;
@@ -443,7 +456,7 @@ final class ProgressiveCapacityChaosWorker {
     }
 
     private static SetuClient connect(int port) throws IOException {
-        return SetuClient.connectPlain("127.0.0.1", port, 5_000, 30_000, MAX_FRAME_BYTES);
+        return SetuClient.connectPlain("127.0.0.1", port, UNBOUNDED ? 0 : 5_000, UNBOUNDED ? 0 : 30_000, MAX_FRAME_BYTES);
     }
 
     private static void requireSuccess(io.setu.core.protocol.BrokerResponse response, String operation)
@@ -501,7 +514,7 @@ final class ProgressiveCapacityChaosWorker {
     }
 
     private static long configuredBuffer(String property) {
-        long fallback = Math.max(32L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 8);
+        long fallback = UNBOUNDED ? Long.MAX_VALUE : Math.max(32L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 8);
         long value = Long.parseLong(System.getProperty(property, Long.toString(fallback)));
         if (value < 32L * 1024 * 1024)
             throw new IllegalArgumentException(property + " must allow at least 32 MiB");

@@ -290,7 +290,11 @@ class ResourceBudgetTests(unittest.TestCase):
                     if command[0] == 'git':
                         return type('Result', (), {'stdout': 'a' * 40})()
                     calls.append(command)
-                    kwargs['stdout'].write(capture(fixture('FILE', cpu=12)))
+                    run = fixture('FILE', cpu=12)
+                    run['admission'] = dict(policy='unbounded', file_write_queue_bytes='0', file_write_queue_requests='0')
+                    run['buffers'] = dict(request_buffer_bytes=2**63 - 1, response_buffer_bytes=2**63 - 1,
+                                          fetch_bytes=4 * resources.MIB, memory_log_bytes=0)
+                    kwargs['stdout'].write(capture(run))
                     return type('Result', (), {'returncode': code})()
 
                 argv = ['run-benchmarks', '--kind', 'capacity', '--storage-mode', 'FILE', '--payload-sizes', '1024',
@@ -310,6 +314,8 @@ class ResourceBudgetTests(unittest.TestCase):
                 self.assertIn('-Dsetu.benchmark.batch.records=4096', calls[0])
                 self.assertIn('-Dsetu.benchmark.fetch.bytes=4194304', calls[0])
                 self.assertIn('-Dsetu.benchmark.stage.millis=10000', calls[0])
+                self.assertIn('-Dsetu.benchmark.unbounded.admission=true', calls[0])
+                self.assertIn('-Dsetu.benchmark.memory.log.bytes=0', calls[0])
                 saved = json.loads(next(Path(directory).rglob('redline.json')).read_text())
                 self.assertEqual(['FILE'], [run['mode'] for run in saved['runs']])
                 self.assertEqual(code, saved['execution_exit_code'])
@@ -317,8 +323,21 @@ class ResourceBudgetTests(unittest.TestCase):
                 self.assertEqual(12, saved['resources']['budget']['cpu_cores'])
                 self.assertEqual(16 * resources.GIB, saved['resources']['budget']['memory_bytes'])
                 self.assertEqual(.8, saved['resources']['disk_fraction'])
+                self.assertEqual('unbounded', saved['resources']['admission_policy'])
                 self.assertEqual('a' * 40, saved['resources']['source_revision'])
                 self.assertEqual(bool(code), bool(saved.get('error')))
+
+    def test_capacity_can_explicitly_select_legacy_bounded_admission(self):
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        with patch.object(resources, 'detect_host', return_value=self.host()), patch('builtins.print') as output, \
+                patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'capacity', '--payload-sizes', '1024',
+                                          '--data-directory', str(Path(__file__).parent), '--bounded-admission', '--dry-run']):
+            resources.main()
+        snapshot = json.loads(output.call_args.args[0].split(' ', 1)[1])
+        self.assertEqual('bounded', snapshot['admission_policy'])
+        self.assertGreater(snapshot['budget']['memory_log_bytes'], 0)
+        self.assertLess(snapshot['budget']['request_buffer_bytes'], 2**63 - 1)
 
     def test_sustained_misses_warn_but_execution_invalid_capture_and_request_errors_fail(self):
         from test_benchmark_sustained import run_fixture, capture
