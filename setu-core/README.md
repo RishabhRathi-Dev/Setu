@@ -2,6 +2,8 @@
 
 `setu-core` owns the single-process broker and protocol types shared by client and server. It uses [setu-storage](../setu-storage/README.md) for partition logs; transport and security enforcement belong to [setu-server](../setu-server/README.md).
 
+For application concurrency, see [choosing a Java client](../setu-client/README.md#choosing-a-client): synchronous serialization is per client connection, and bounded async pooling supports concurrent requests. FILE [transaction scope](../docs/transactions.md#transaction-scope) includes different input/output topics while limiting each transaction to one input offset and one output partition.
+
 ## Broker usage
 
 ```java

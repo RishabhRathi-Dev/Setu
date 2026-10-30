@@ -22,6 +22,7 @@ Build the server with `-pl setu-server -am package` before launching. Set `SETU_
 | [run-jfr.py](run-jfr.py) | Portable TCP workload/JFR smoke capture; verifies worker completion and measured-stage markers |
 | [run-jfr.ps1](run-jfr.ps1) | PowerShell forwarding entry point for `run-jfr.py` |
 | [run-benchmarks.py](run-benchmarks.py) | Linux/WSL resource-enforced profiles, workload orchestration, reports, and qualification |
+| [ClientConcurrencyProbe.java](diagnostics/ClientConcurrencyProbe.java) | Portable opt-in comparison of shared synchronous, per-worker synchronous and async clients; [commands and limitations](../setu-benchmark/README.md#client-concurrency-comparison) |
 | [node_target_report.py](node_target_report.py) | Parse and validate baseline/target captures and summarize qualification |
 | [sustained_report.py](sustained_report.py) | Parse and validate sustained runs, stage metrics, and performance gates |
 

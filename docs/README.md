@@ -8,6 +8,8 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | --- | --- |
 | Try Setu locally | [Quickstart](../README.md#quick-start) → [runnable examples](../examples/README.md) |
 | Add the Java client | [Maven dependency and client API](../setu-client/README.md) → [consumer semantics](../setu-core/README.md#broker-semantics) |
+| Submit concurrent requests | [Client selection and sizing](../setu-client/README.md#choosing-a-client) → [bounded async example](../examples/SetuAsyncProducer.java) → [client comparison](../setu-benchmark/README.md#client-concurrency-comparison) |
+| Check transaction suitability | [Supported input/output scope](transactions.md#transaction-scope) → [atomic consume and produce](transactions.md#atomic-consume-and-produce) |
 | Run or recover a broker | [Configuration](configuration.md) → [operations](operations.md) → [storage contracts](../setu-storage/README.md) |
 | Embed a secure listener | [Secure server wiring](../setu-server/README.md#secure-broker-wiring-example) → [identities, ACLs, and quotas](../setu-security/README.md) |
 | Change the implementation | [Contributing](../CONTRIBUTING.md) → [architecture](architecture.md) → [repository knowledge base](../AGENTS.md) |

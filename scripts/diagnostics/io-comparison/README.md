@@ -147,13 +147,15 @@ The public APIs were checked against the
 
 ## Recorded measurements
 
-The later [master CI qualification](../../../README.md#performance), revision
+The historical CI qualification at revision
 `fb8305b864a1d7334e69a0538526a90cee2a61b2`, achieved a **249,975 records/s FILE
 median** with worst target p99 **5.181 ms**. Both storage targets qualified across
 three repetitions of 50%/80%/100% load. Its host, workload, resource budgets and
-full reports are retained in the published snapshot. This supersedes the target
-status reported by the earlier diagnostic sessions below, without turning them
-into controlled before/after comparisons.
+full reports were retained in that revision's published snapshot. This is evidence
+for that run only; see the [current master CI results](../../../README.md#performance)
+for the latest source revision and qualification status. Neither this historical
+qualification nor the diagnostics below establish a controlled before/after
+comparison or a capacity guarantee for another host or revision.
 
 The earlier integrated Linux Panama/io_uring default produced a median **183,691
 records/s** across four one-minute windows on 28 October 2026. Every run had

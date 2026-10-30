@@ -23,7 +23,7 @@ Read [README.md](README.md) for setup and supported behavior, [CONTRIBUTING.md](
 | `setu-core/` | Broker semantics, topics, partitions, membership, offsets, long polling, wire codec | [Core guide](setu-core/README.md), `DefaultBroker`, `ProtocolCodec` |
 | `setu-security/` | TLS material, DNS SAN identities, exact ACL grants, principal quotas | [Security guide](setu-security/README.md), `TlsContextFactory`, `InMemoryAuthorizer`, `QuotaManager` |
 | `setu-server/` | TCP transports, framing/admission, dispatch, secure composition, standalone main, AOT training | [Server guide](setu-server/README.md), `SetuServerMain`, `SecureServerFactory` |
-| `setu-client/` | Serialized synchronous requests, correlation checking, TLS hostname verification | [Client guide](setu-client/README.md), `SetuClient` |
+| `setu-client/` | Per-connection synchronous exchanges, bounded async pooling/routing/retries, correlation checking, TLS hostname verification | [Client guide](setu-client/README.md#choosing-a-client), `SetuClient`, `AsyncSetuClient` |
 | `setu-integration-tests/` | Public API checks through real TCP and mTLS sockets | [Integration guide](setu-integration-tests/README.md) |
 | `setu-benchmark/` | Throughput, latency, resource/JFR evidence, crash/chaos workloads | [Benchmark guide](setu-benchmark/README.md) |
 | `config/` | Standalone defaults, shared JVM options, packaged Logback configuration | [Configuration reference](docs/configuration.md) |
@@ -63,7 +63,7 @@ Production dependencies: `core → storage`; `client → core + security`; `serv
 - Setu offsets are independent of Chronicle indexes. Recovery validates committed documents and dense offsets; malformed committed data fails startup.
 - File retention expires whole completed UTC daily cycles, ignores consumer progress, and always preserves the newest populated cycle. Preserve the retention checkpoint with the queue files. Memory timed retention is separately configured and lossy.
 - Public byte-array APIs copy defensively. Internal immutable frames/slices may share storage; retaining a slice can keep the backing frame alive. Preserve ownership and memory accounting through admission, rejection, reclamation, and shutdown.
-- Ordinary produces have uncertain retry outcomes. FILE idempotent/transactional writes use producer ID/epoch/sequence, cache only the latest result per producer/partition, and require strict sequencing. Transactions atomically couple one output partition with advancement of one fetched input offset; external effects require their own transaction integration.
+- Ordinary produces have uncertain retry outcomes. FILE idempotent/transactional writes use producer ID/epoch/sequence, cache only the latest result per producer/partition, and require strict sequencing. Transactions atomically couple one output partition with advancement of one fetched input offset, including across different input/output topics. Multi-output-partition writes are unsupported; external effects require their own transaction integration.
 
 ### Transport and security
 
@@ -72,6 +72,7 @@ Production dependencies: `core → storage`; `client → core + security`; `serv
 - The properties launcher serves plaintext. TLS/mTLS is configured through embedding with `SecureServerFactory`; selector transport is plaintext only.
 - Authenticate before dispatch; enforce default-deny exact ACLs and atomic request/byte quotas. A valid certificate alone grants no permission.
 - Preserve client hostname verification. Development credentials are generated locally and are not source fixtures.
+- `SetuClient` serializes per instance/connection, not across all clients or the broker. Independent instances and `AsyncSetuClient` pools provide concurrency. Keyed routing does not guarantee submission order across pooled connections; applications must bound outstanding work and sequence writes when order matters.
 
 ## Verification commands
 
@@ -102,6 +103,7 @@ Maven's own JVM flags are in [.mvn/jvm.config](.mvn/jvm.config). Surefire and th
 - Preserve exactly one start/end pair for each root README marker: `benchmark-metrics-badges`, `benchmark-target-diagnostics`, and `benchmark-capacity-details`. Publication scripts own their contents; put manual prose outside them.
 - Performance evidence must identify source revision, JDK, host/resource budget, filesystem/media, record/batch size, warmup, duration, repetitions, and qualification failures. A smoke run, an unqualified run, or an old backend's result does not establish current sustained capacity.
 - Preserve benchmark qualification criteria. Report-only expectation misses remain unqualified; execution failures remain errors.
+- Associate performance results with the matching mode's runner and source revision. Do not infer a universal storage-class ceiling or a software regression from changing CI hosts. Historical qualification is not current qualification; virtual device names/rotational flags do not independently verify physical media. Client comparison diagnostics are not capacity qualifications.
 
 ## Repository hygiene and boundaries
 
