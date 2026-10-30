@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="24" viewBox="0 0 480 24" role="img" aria-label="memory resources (contributor PC): 24.3% CPU, 498 MiB heap">
+  <title>memory resources (contributor PC): 24.3% CPU, 498 MiB heap</title>
+  <rect width="480" height="24" rx="3" fill="#007ec6"/>
+  <path d="M3 0H280V24H3Q0 24 0 21V3Q0 0 3 0" fill="#555"/>
+  <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="12">
+    <text x="140" y="16">memory resources (contributor PC)</text>
+    <text x="380" y="16">24.3% CPU, 498 MiB heap</text>
+  </g>
+</svg>

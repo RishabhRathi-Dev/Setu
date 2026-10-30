@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 MODES = ('IN_MEMORY', 'FILE')
-PROFILE = dict(record_bytes=1024, batch_records=256, stage_ms=2000, warmup_ms=2000,
+PROFILE = dict(record_bytes=1024, batch_records=4096, stage_ms=10000, warmup_ms=2000,
                cpu_hold_ms=10000, max_concurrency=0, min_stages=8)
 BOUNDARIES = {'JVM_OOM', 'RESOURCE_LIMIT', 'BROKER_OR_CLIENT_LIMIT', 'CLIENT_STALL', 'CONCURRENCY_COUNTER_LIMIT'}
 METRICS = ('duration_s', 'produced', 'produce_per_s', 'consumed', 'consume_per_s',
@@ -78,6 +78,13 @@ def parse_capture(text, modes=MODES):
                 errors.append(error[1])
         if errors:
             run['request_error_codes'] = sorted(set(errors))
+        buffers = [fields(line) for line in text.splitlines()
+                   if line.startswith('CAPACITY_BUFFERS ') and fields(line).get('mode') == mode]
+        if len(buffers) > 1:
+            raise ValueError('Duplicate redline buffer configuration')
+        if buffers:
+            run['buffers'] = {key: int(buffers[0][key]) for key in
+                              ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
         validate_run(run)
         runs.append(run)
     return runs
@@ -85,14 +92,22 @@ def parse_capture(text, modes=MODES):
 
 def validate_run(run):
     mode = run['mode']
-    expected = dict(PROFILE, record_bytes=int(run['config']['record_bytes']))
+    expected = dict(PROFILE, record_bytes=int(run['config']['record_bytes']),
+                    batch_records=int(run['config']['batch_records']), stage_ms=int(run['config']['stage_ms']))
     if (mode not in MODES or not 1 <= expected['record_bytes'] <= 65536
+            or expected['batch_records'] not in (256, 4096)
+            or expected['stage_ms'] not in (2000, 10000)
+            or expected['batch_records'] * (expected['record_bytes'] + 4) + 1024 > 15 * 1024**2
             or {key: int(value) for key, value in run['config'].items()} != expected):
         raise ValueError('Wrong redline mode or profile')
     if number(run, 'cpu_budget_cores') <= 0 or not run['filesystem']:
         raise ValueError('Missing redline budget or filesystem')
     if 'disk_reserve_bytes' in run:
         number(run, 'disk_reserve_bytes')
+    if 'buffers' in run:
+        for key in ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes'):
+            if number(run['buffers'], key) <= 0:
+                raise ValueError('Invalid redline buffer budget')
     if any(not run['runtime'].get(key) for key in ('java', 'os', 'cpus', 'max_heap_mb')):
         raise ValueError('Missing redline runtime provenance')
     if (not re.match(r'^26(?:[.+-]|$)', run['runtime']['java'])
@@ -122,6 +137,8 @@ def validate_run(run):
         if number(row, 'duration_s') <= 0 or (row['stop'] == 'ramp' and (
                 number(row, 'produced') <= 0 or number(row, 'consumed') <= 0)):
             raise ValueError('Redline stage made no progress')
+        if row['stop'] == 'ramp' and number(row, 'duration_s') + .02 < expected['stage_ms'] / 1000:
+            raise ValueError('Redline stage ended before its configured measurement window')
         for counter, rate in (('produced', 'produce_per_s'), ('consumed', 'consume_per_s')):
             # The worker prints duration to two decimals and rates to whole records/s.
             if not math.isclose(number(row, counter), number(row, rate) * number(row, 'duration_s'),
@@ -158,6 +175,8 @@ def render_runs(runs):
     for run in runs:
         validate_run(run)
     sizes = ', '.join(str(size) for size in sorted({int(run['config']['record_bytes']) for run in runs}))
+    batches = ', '.join(str(size) for size in sorted({int(run['config']['batch_records']) for run in runs}))
+    windows = ', '.join(f'{size / 1000:g}s' for size in sorted({int(run['config']['stage_ms']) for run in runs}))
     lines = ['**Redline diagnostics: find a runtime limit (unqualified)**', '',
              '**Unique writes/s** counts records appended once. This is a fanout workload: every consumer reads the same partition, so one write '
              'creates one delivery per consumer. **Deliveries needed/s = unique writes/s × consumers.** '
@@ -167,8 +186,8 @@ def render_runs(runs):
              'Coverage describes aggregate progress during the measurement window, not a record-loss rate or proof that every consumer caught up. '
              'It can slightly exceed 100% when operations cross a window boundary; n/a means no writes completed. '
              'A completed load step is not a health or capacity pass. Peak production is a short-window observation, not sustained capacity.', '',
-             f'One fresh JVM per mode; record bytes {sizes}, 256-record batches, '
-             '2s warmup and 2s ramp windows. From stage eight, CPU saturation adds a 10s hold; concurrency keeps doubling until a runtime limit.', '',
+             f'One fresh JVM per mode; record bytes {sizes}, {batches}-record batches, '
+             f'2s warmup and {windows} ramp windows. From stage eight, CPU saturation adds a 10s hold; concurrency keeps doubling until a runtime limit.', '',
              '| Mode | Highest unique writes/s | Consumers at that rate | Delivery coverage at that rate | Why the test stopped |',
              '| --- | ---: | ---: | ---: | --- |']
     for run in runs:
@@ -209,6 +228,12 @@ def render_runs(runs):
                   f'{int(run["runtime"]["max_heap_mb"])} MiB maximum heap.']
         if 'disk_reserve_bytes' in run:
             lines.append(f'Free-disk reserve: {number(run, "disk_reserve_bytes") / 1024**3:.2f} GiB (sampled).')
+        if 'buffers' in run:
+            buffers = run['buffers']
+            lines.append(f'Admission budgets: requests {buffers["request_buffer_bytes"] / 1024**2:g} MiB, '
+                         f'responses {buffers["response_buffer_bytes"] / 1024**2:g} MiB; '
+                         f'fetch payload {buffers["fetch_bytes"] / 1024**2:g} MiB; '
+                         f'retained log {buffers["memory_log_bytes"] / 1024**2:g} MiB.')
     return '\n'.join(lines) + '\n'
 
 

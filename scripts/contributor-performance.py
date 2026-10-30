@@ -17,6 +17,8 @@ import uuid
 
 import sustained_report as report
 import redline_report
+import redline_resources
+import contributor_stats
 
 spec = importlib.util.spec_from_file_location('jfr_capture', Path(__file__).with_name('run-jfr.py'))
 capture = importlib.util.module_from_spec(spec)
@@ -104,17 +106,21 @@ def parse_worker(mode, text, repeat):
     return dict(mode=mode, repeat=repeat, config=configs[0], stages=stages, jfr=jfr)
 
 
-def validate(document, revision):
+def validate(document, revision, require_current=True):
     if (document.get('schema_version') != 2 or document.get('source_revision') != revision
             or document.get('scope') != 'contributor PC diagnostic' or document.get('qualified') is not False
             or document.get('profile') != PROFILE or document.get('enforcement') != 'none'):
         raise ValueError('Contributor report has wrong revision, scope or profile')
-    if (document.get('redline_profile') != redline_report.PROFILE
+    redline_profile = document.get('redline_profile')
+    historical = (not require_current and redline_profile in (
+        dict(redline_report.PROFILE, batch_records=256, stage_ms=2000),
+        dict(redline_report.PROFILE, stage_ms=2000)))
+    if ((redline_profile != redline_report.PROFILE and not historical)
             or sorted(run['mode'] for run in document.get('redline_runs', [])) != sorted(MODES)):
         raise ValueError('Both modes require a fresh redline ramp')
     for run in document['redline_runs']:
         redline_report.validate_run(run)
-        if {key: int(value) for key, value in run['config'].items()} != redline_report.PROFILE:
+        if {key: int(value) for key, value in run['config'].items()} != redline_profile:
             raise ValueError('Wrong contributor redline profile')
     if not re.fullmatch(r'[0-9a-f]{40}', revision):
         raise ValueError('Invalid source revision')
@@ -140,10 +146,25 @@ def validate(document, revision):
     for key in ('logical_cpus', 'active_processors', 'heap_mib', 'direct_mib'):
         if type(host.get(key)) is not int or host[key] <= 0:
             raise ValueError('Invalid machine budget: ' + key)
+    redline_budget = document.get('redline_budget')
+    legacy_budget = historical and redline_profile['batch_records'] == 256 and redline_budget is None
+    if legacy_budget:
+        redline_budget = host
+    if not isinstance(redline_budget, dict):
+        raise ValueError('Missing detected redline resource budget; remeasure this attachment')
+    if not legacy_budget:
+        expected_budget = redline_resources.local_budget(redline_budget['active_processors'],
+                                                         redline_budget['memory_available_bytes'])
+        if redline_budget != expected_budget:
+            raise ValueError('Contributor redline budget differs from detected resources')
     for run in document['redline_runs']:
-        if (float(run['cpu_budget_cores']) != host['active_processors']
-                or int(run['runtime']['max_heap_mb']) != host['heap_mib']):
+        if (float(run['cpu_budget_cores']) != redline_budget['active_processors']
+                or int(run['runtime']['cpus']) != redline_budget['active_processors']
+                or int(run['runtime']['max_heap_mb']) != redline_budget['heap_mib']):
             raise ValueError('Contributor redline worker budget differs from host settings')
+        if not legacy_budget and run.get('buffers') != {key: redline_budget[key] for key in
+                                  ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}:
+            raise ValueError('Contributor redline buffers differ from detected resources')
     runs = document['runs']
     if sorted((run['mode'], run['repeat']) for run in runs) != sorted((mode, repeat) for mode in MODES for repeat in (1, 2)):
         raise ValueError('Both modes require two independent repetitions')
@@ -238,15 +259,25 @@ def run_diagnostic(java_home=None):
             execute([java, '-cp', classpath, 'io.setu.benchmark.chaos.CapacityJfr', str(recording)], folder / 'analysis.log', 120)
             text = (folder / 'worker.log').read_text() + '\n' + (folder / 'analysis.log').read_text()
             document['runs'].append(parse_worker(mode, text, repeat))
+    execute([java, '-Xmx64m', '-cp', classpath, 'io.setu.benchmark.chaos.BenchmarkHostResources'],
+            output / 'redline-host.log', 60)
+    probe = [redline_report.fields(line) for line in (output / 'redline-host.log').read_text().splitlines()
+             if line.startswith('REDLINE_HOST ')]
+    if len(probe) != 1:
+        raise ValueError('Missing or duplicate redline host resource probe')
+    redline_budget = redline_resources.local_budget(int(probe[0]['processors']), int(probe[0]['memory_available_bytes']))
+    document['redline_budget'] = redline_budget
     for mode in MODES:
         folder = output / f'redline-{mode}'
         folder.mkdir()
         with tempfile.TemporaryDirectory(prefix='data-', dir=folder) as data:
             # Keep a sampled 20% free-disk reserve, just as the resource-enforced launcher does.
             reserve = int(shutil.disk_usage(data).free * .2)
-            command = [java, '@' + str(ROOT / 'config/jvm.options'), '-Xms64m', '-Xmx512m',
-                       '-XX:MaxDirectMemorySize=128m', f'-XX:ActiveProcessorCount={active}',
-                       f'-Dsetu.benchmark.cpu.cores={active}', '-Dsetu.benchmark.memory.log.bytes=67108864',
+            command = [java, '@' + str(ROOT / 'config/jvm.options'), '-Xms64m', f'-Xmx{redline_budget["heap_mib"]}m',
+                       f'-XX:MaxDirectMemorySize={redline_budget["direct_mib"]}m',
+                       f'-XX:ActiveProcessorCount={redline_budget["active_processors"]}',
+                       f'-Dsetu.benchmark.cpu.cores={redline_budget["active_processors"]}',
+                       f'-Dsetu.benchmark.memory.log.bytes={redline_budget["memory_log_bytes"]}',
                        f'-Dsetu.benchmark.disk.reserve.bytes={reserve}', f'-Djava.io.tmpdir={data}',
                        '-Dsetu.benchmark.jfr=true', '-Dsetu.log.level=INFO', f'-DSETU_LOG_DIR={folder}',
                        f'-Dlogback.configurationFile={ROOT / "setu-benchmark/src/test/resources/logback-test.xml"}']
@@ -254,6 +285,8 @@ def run_diagnostic(java_home=None):
                               warmup_ms='warmup.millis', cpu_hold_ms='cpu.hold.millis',
                               max_concurrency='max.concurrency', min_stages='min.stages')
             command += [f'-Dsetu.benchmark.{properties[key]}={value}' for key, value in redline_report.PROFILE.items()]
+            command += [f'-Dsetu.benchmark.{key.replace("_", ".")}={redline_budget[key]}'
+                        for key in ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes')]
             command += ['-cp', classpath, 'io.setu.benchmark.chaos.ProgressiveCapacityChaosWorker', mode, data]
             code = execute(command, folder / 'worker.log', 1500, (0, 42))
         runs = redline_report.parse_capture((folder / 'worker.log').read_text(encoding='utf-8'), (mode,))
@@ -273,7 +306,10 @@ def run_diagnostic(java_home=None):
     validate(document, revision)
     result = output / 'summary.json'
     result.write_text(json.dumps(document, indent=2, allow_nan=False) + '\n', encoding='utf-8')
-    summary = render(document)
+    asset_files, links = contributor_stats.assets(document, output, '.', fallback_url='summary.json')
+    for path, content in asset_files.items():
+        contributor_stats.badges.write_if_changed(path, content)
+    summary = render(document, badge_links=links)
     (output / 'summary.md').write_text(summary, encoding='utf-8')
     print(summary, flush=True)
     return result
@@ -337,8 +373,8 @@ def safe_text(value):
     return re.sub(r'[\r\n|`<>\[\]!*\\]', ' ', str(value))[:300]
 
 
-def render(document):
-    validate(document, document['source_revision'])
+def render(document, badge_links=(), require_current=True):
+    validate(document, document['source_revision'], require_current=require_current)
     host = document['host']
     lines = ['Latest contributor PC run (diagnostic, unqualified)', '',
              f'Contributor: {safe_text(document["contributor"])}; finished {safe_text(document["finished_utc"])}; revision `{document["source_revision"]}`.', '',
@@ -357,6 +393,10 @@ def render(document):
         if not re.fullmatch(r'https://github\.com/[\w.-]+/[\w.-]+/actions/runs/[0-9]+', document['source_url']):
             raise ValueError('Invalid contributor workflow URL')
         lines[2:2] = [f'[Report, logs and downloadable results]({document["source_url"]})', '']
+    summary_at = lines.index('**Fixed target: requested writes versus completed work**')
+    lines[summary_at:summary_at] = [contributor_stats.table(document), '']
+    if badge_links:
+        lines[2:2] = [*badge_links, '']
     for run in document['runs']:
         for stage in run['stages']:
             coverage = float(stage['consumed']) / float(stage['produced'])
@@ -392,7 +432,14 @@ def publish(path, readme, destination, workflow_url=None):
     pattern = f'<!-- {marker}:start -->.*?<!-- {marker}:end -->'
     if len(re.findall(pattern, source, re.S)) != 1:
         raise ValueError('Missing or duplicate contributor README destination')
+    relative = Path(os.path.relpath(destination.parent, readme.parent)).as_posix()
+    fallback = Path(os.path.relpath(destination, readme.parent)).as_posix()
+    asset_files, links = contributor_stats.assets(document, destination.parent, relative, fallback_url=fallback)
+    body = render(document, badge_links=links)
     source = re.sub(pattern, lambda _: f'<!-- {marker}:start -->\n{body}<!-- {marker}:end -->', source, flags=re.S)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    for asset, content in asset_files.items():
+        contributor_stats.badges.write_if_changed(asset, content)
     destination.write_text(json.dumps(document, indent=2, allow_nan=False) + '\n', encoding='utf-8')
     readme.write_text(source, encoding='utf-8')
 

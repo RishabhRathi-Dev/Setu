@@ -12,8 +12,8 @@ def fixture(mode='IN_MEMORY', cpu=8):
                 cpu_budget_cores=str(cpu), runtime=dict(java='26.0.2', os='Windows_11', cpus=str(cpu), max_heap_mb='512'),
                 filesystem='NTFS', stop=dict(reason='JVM_OOM', stage='3', producers='4', consumers='4'),
                 stages=[dict(stage=str(stage), producers=str(1 << (stage - 1)), consumers=str(1 << (stage - 1)),
-                             stop='ramp', duration_s='2.00', produced='2000', produce_per_s='1000',
-                             consumed='4000', consume_per_s='2000', cpu_avg='.5', cpu_peak='.9', heap_mb='200', p99_ms='2')
+                             stop='ramp', duration_s='10.00', produced='10000', produce_per_s='1000',
+                             consumed='20000', consume_per_s='2000', cpu_avg='.5', cpu_peak='.9', heap_mb='200', p99_ms='2')
                         for stage in (1, 2)])
 
 
@@ -35,6 +35,23 @@ def resources():
 
 
 class RedlineReportTests(unittest.TestCase):
+    def test_legacy_batches_and_new_buffer_provenance_remain_distinct(self):
+        old = fixture()
+        old['config']['batch_records'] = '256'
+        old['config']['stage_ms'] = '2000'
+        self.assertIn('256-record batches', report.render_runs([old]))
+        self.assertIn('2s ramp windows', report.render_runs([old]))
+        current = fixture()
+        raw = capture(current) + ('\nCAPACITY_BUFFERS mode=IN_MEMORY request_buffer_bytes=536870912 '
+                                  'response_buffer_bytes=536870912 fetch_bytes=4194304 memory_log_bytes=1073741824')
+        parsed = report.parse_capture(raw, ('IN_MEMORY',))
+        self.assertEqual(536870912, parsed[0]['buffers']['request_buffer_bytes'])
+        self.assertIn('4096-record batches', report.render_runs(parsed))
+        self.assertIn('10s ramp windows', report.render_runs(parsed))
+        self.assertIn('requests 512 MiB', report.render_runs(parsed))
+        with self.assertRaises(ValueError):
+            report.parse_capture(raw + '\n' + raw.splitlines()[-1], ('IN_MEMORY',))
+
     def test_both_modes_roundtrip_and_report_labels_fanout_and_failure_boundary(self):
         runs = [fixture(mode) for mode in report.MODES]
         parsed = report.parse_capture('\n'.join(capture(run) for run in runs))
@@ -43,6 +60,14 @@ class RedlineReportTests(unittest.TestCase):
         for label in ('unqualified', 'fanout', 'JVM_OOM', 'short-window', 'stage 3 with 4 producers and 4 consumers', 'NTFS', '26.0.2'):
             self.assertIn(label, text)
         self.assertNotIn('private/path', json.dumps(parsed))
+
+    def test_short_completed_windows_cannot_masquerade_as_ten_second_stages(self):
+        run = fixture()
+        run['stages'][0].update(duration_s='2.00', produced='2000', consumed='4000')
+        with self.assertRaisesRegex(ValueError, 'measurement window'):
+            report.validate_run(run)
+        run['config']['stage_ms'] = '2000'
+        report.validate_run(run)
 
     def test_delivery_coverage_accounts_for_every_consumer_without_clamping_or_claiming_loss(self):
         stage = dict(consumers='8', produce_per_s='100000', produced='200000', consumed='800000')

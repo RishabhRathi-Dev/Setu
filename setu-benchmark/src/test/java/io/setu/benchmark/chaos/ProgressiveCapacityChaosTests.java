@@ -42,7 +42,7 @@ class ProgressiveCapacityChaosTests {
         List<String> command = new ArrayList<>(List.of(executable));
         BenchmarkSettings.addJvmArguments(command, 768);
         command.add("-DSETU_LOG_DIR=" + logDirectory.toAbsolutePath());
-        for (String property : List.of("setu.benchmark.batch.records", "setu.benchmark.stage.millis", "setu.benchmark.warmup.millis", "setu.benchmark.cpu.hold.millis", "setu.benchmark.max.concurrency", "setu.benchmark.min.stages", "setu.benchmark.memory.log.bytes", "setu.benchmark.jfr", "setu.log.level", "logback.configurationFile")) {
+        for (String property : List.of("setu.benchmark.batch.records", "setu.benchmark.stage.millis", "setu.benchmark.warmup.millis", "setu.benchmark.cpu.hold.millis", "setu.benchmark.max.concurrency", "setu.benchmark.min.stages", "setu.benchmark.memory.log.bytes", "setu.benchmark.request.buffer.bytes", "setu.benchmark.response.buffer.bytes", "setu.benchmark.fetch.bytes", "setu.benchmark.jfr", "setu.log.level", "logback.configurationFile")) {
             String value = System.getProperty(property);
             if (value != null) command.add("-D" + property + "=" + value);
         }

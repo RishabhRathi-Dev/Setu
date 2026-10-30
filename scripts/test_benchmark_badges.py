@@ -16,6 +16,41 @@ render_spec.loader.exec_module(renderer)
 
 
 class BenchmarkCaptureTests(unittest.TestCase):
+    def test_contributor_refresh_preserves_historical_profile_and_rejects_it_for_new_pushes(self):
+        from test_contributor_performance import fixture
+        document = fixture()
+        old_profile = dict(document['redline_profile'], batch_records=256, stage_ms=2000)
+        document['redline_profile'] = old_profile
+        document.pop('redline_budget')
+        for run in document['redline_runs']:
+            run['config'] = {key: str(value) for key, value in old_profile.items()}
+            run['runtime']['max_heap_mb'] = '512'
+            run.pop('buffers')
+        with self.assertRaisesRegex(ValueError, 'fresh redline'):
+            renderer.contributor.validate(document, document['source_revision'])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / 'badges'
+            output.mkdir()
+            readme = root / 'README.md'
+            source = '<!-- benchmark-metrics-badges:start --><!-- benchmark-metrics-badges:end -->\n'
+            source += '<!-- benchmark-contributor-pc:start -->old<!-- benchmark-contributor-pc:end -->'
+            readme.write_text(source)
+            for name in renderer.GROUPS['benchmark-metrics-badges']:
+                (output / (name + '.json')).write_text(json.dumps(dict(label=name, message='CI', color='blue')))
+            snapshot = output / 'contributor-pc.json'
+            snapshot.write_text(json.dumps(document))
+            original = snapshot.read_bytes()
+            renderer.render(readme, output, 'https://example.com/ci')
+            self.assertEqual(original, snapshot.read_bytes())
+            self.assertEqual(8, len(list(output.glob('contributor-*.svg'))))
+            self.assertIn('2s ramp windows', readme.read_text())
+            self.assertIn('Contributor PC summary', readme.read_text())
+            self.assertIn('256-record batches', readme.read_text())
+            before = {path: path.read_bytes() for path in [readme, *output.iterdir()]}
+            renderer.render(readme, output, 'https://example.com/ci')
+            self.assertEqual(before, {path: path.read_bytes() for path in before})
+
     def test_renderer_supports_current_readme_without_historical_assets(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

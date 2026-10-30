@@ -31,11 +31,14 @@ import java.util.concurrent.locks.LockSupport;
 final class ProgressiveCapacityChaosWorker {
     private static final int RECORD_BYTES = BenchmarkSettings.recordBytes();
     private static final int MAX_FRAME_BYTES = 15 * 1024 * 1024;
-    private static final long STAGE_MILLIS = configuredInt("setu.benchmark.stage.millis", 2_000, 250, 60_000);
+    private static final long STAGE_MILLIS = configuredInt("setu.benchmark.stage.millis", 10_000, 250, 60_000);
     private static final int WARMUP_MILLIS = configuredInt("setu.benchmark.warmup.millis", 2_000, 0, 60_000);
     private static final int CPU_HOLD_MILLIS = configuredInt("setu.benchmark.cpu.hold.millis", 10_000, 0, 60_000);
     private static final int MAX_CONCURRENCY = configuredInt("setu.benchmark.max.concurrency", 0, 0, 32_768);
-    private static final int BATCH_RECORDS = configuredInt("setu.benchmark.batch.records", 256, 1, 10_000);
+    private static final int BATCH_RECORDS = configuredInt("setu.benchmark.batch.records", 4096, 1, 10_000);
+    private static final long REQUEST_BUFFER_BYTES = configuredBuffer("setu.benchmark.request.buffer.bytes");
+    private static final long RESPONSE_BUFFER_BYTES = configuredBuffer("setu.benchmark.response.buffer.bytes");
+    private static final int FETCH_BYTES = configuredInt("setu.benchmark.fetch.bytes", 4 * 1024 * 1024, RECORD_BYTES, 4 * 1024 * 1024);
     private static final int MIN_STAGES = configuredInt("setu.benchmark.min.stages", 8, 1, 16);
     private static final int MEMORY_LOG_BYTES = configuredInt("setu.benchmark.memory.log.bytes", 256 * 1024 * 1024, 0, Integer.MAX_VALUE);
     private static final long SAMPLE_MILLIS = 250;
@@ -61,6 +64,8 @@ final class ProgressiveCapacityChaosWorker {
                 mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, WARMUP_MILLIS, CPU_HOLD_MILLIS, MAX_CONCURRENCY,
                 MIN_STAGES, MEMORY_LOG_BYTES, System.getProperty("setu.benchmark.jfr", "true"), BenchmarkSettings.cpuCores());
         Path dataRoot = Path.of(args[1]);
+        System.out.printf("CAPACITY_BUFFERS mode=%s request_buffer_bytes=%d response_buffer_bytes=%d fetch_bytes=%d memory_log_bytes=%d%n",
+                mode, REQUEST_BUFFER_BYTES, RESPONSE_BUFFER_BYTES, FETCH_BYTES, MEMORY_LOG_BYTES);
         System.out.printf(Locale.ROOT, "CAPACITY_RUNTIME java=%s os=%s cpus=%d max_heap_mb=%d log_level=%s log_directory=%s tcp_nodelay=true%n",
                 System.getProperty("java.version"), System.getProperty("os.name").replace(' ', '_'),
                 Runtime.getRuntime().availableProcessors(), Runtime.getRuntime().maxMemory() / (1024 * 1024),
@@ -101,7 +106,7 @@ final class ProgressiveCapacityChaosWorker {
                 60 * 60 * 1000L, 2 * 60 * 60 * 1000L, MEMORY_LOG_BYTES);
         TcpServer server = new TcpServer(new java.net.InetSocketAddress("127.0.0.1", 0),
                 new FramedConnectionHandler(new BrokerRequestHandler(broker)),
-                new TcpServerOptions(65_536, 65_536, 0));
+                new TcpServerOptions(65_536, 65_536, 0, REQUEST_BUFFER_BYTES, RESPONSE_BUFFER_BYTES));
         List<SetuClient> clients = new ArrayList<>();
         int stage = 0;
         int concurrency = 1;
@@ -370,7 +375,7 @@ final class ProgressiveCapacityChaosWorker {
                 }
                 long start = System.nanoTime();
                 var response = client.produceBatch(topic, 0, PRODUCE_BATCH);
-                // The 32 MiB writer budget can reject 128 simultaneous 256 KiB batches.
+                // The production writer budget can reject simultaneous batches.
                 // Retry this transient rejection without increasing production limits; count it
                 // and include the retry delay in successful-request latency.
                 while (mode == StorageMode.FILE && response.errorCode() == ErrorCode.QUOTA_EXCEEDED
@@ -411,7 +416,7 @@ final class ProgressiveCapacityChaosWorker {
         try {
             while (running.get()) {
                 long start = System.nanoTime();
-                var response = client.fetch(group, member, topic, 0, offset, 256 * 1024);
+                var response = client.fetch(group, member, topic, 0, offset, FETCH_BYTES);
                 if (response.errorCode() != ErrorCode.NONE)
                     throw new IOException("fetch rejected: " + response.errorCode() + " " + response.errorMessage());
                 if (response.records().isEmpty()) {
@@ -493,6 +498,14 @@ final class ProgressiveCapacityChaosWorker {
         } catch (ReflectiveOperationException failure) {
             throw new ExceptionInInitializerError(failure);
         }
+    }
+
+    private static long configuredBuffer(String property) {
+        long fallback = Math.max(32L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 8);
+        long value = Long.parseLong(System.getProperty(property, Long.toString(fallback)));
+        if (value < 32L * 1024 * 1024)
+            throw new IllegalArgumentException(property + " must allow at least 32 MiB");
+        return value;
     }
 
     private static int configuredInt(String property, int fallback, int minimum, int maximum) {

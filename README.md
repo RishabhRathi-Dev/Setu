@@ -497,6 +497,15 @@ IN_MEMORY: JDK 26.0.2.1; Linux; filesystem ext4; CPU percentages use 2 cores as 
 <!-- benchmark-contributor-pc:start -->
 Latest contributor PC run (diagnostic, unqualified)
 
+[![memory writes (contributor PC): 500.00K/s target, 499.79K/s actual, 100%, unqualified](benchmark-badges/contributor-memory-throughput.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![memory p99 (contributor PC): 14.68 ms at target](benchmark-badges/contributor-memory-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![memory resources (contributor PC): 24.3% CPU, 498 MiB heap](benchmark-badges/contributor-memory-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![memory JFR (contributor PC): 1.68 GiB/s alloc, 1.1 ms GC](benchmark-badges/contributor-memory-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![file writes (contributor PC): 250.00K/s target, 48.50K/s actual, 19%, unqualified](benchmark-badges/contributor-file-throughput.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![file p99 (contributor PC): 8002.73 ms at target](benchmark-badges/contributor-file-latency.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![file resources (contributor PC): 31.5% CPU, 466 MiB heap](benchmark-badges/contributor-file-resources.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+[![file JFR (contributor PC): 0.23 GiB/s alloc, 0.4 ms GC](benchmark-badges/contributor-file-jfr.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
+
 [Report, logs and downloadable results](https://github.com/RishabhRathi-Dev/Setu/actions/runs/40952170823)
 
 Contributor: Rishabh Rathi; finished 2026-10-29T20:22:07.396396+00:00; revision `d0fa4423bb81e846eec74e6346152226ede5d526`.
@@ -506,6 +515,15 @@ Windows-11-10.0.26100-SP0; AMD Ryzen 5 7600X 6-Core Processor; 8 JVM active proc
 JDK: openjdk version "26.0.2.1" 2026-08-18 OpenJDK Runtime Environment Temurin-26.0.2.1+1 (build 26.0.2.1+1) OpenJDK 64-Bit Server VM Temurin-26.0.2.1+1 (build 26.0.2.1+1, mixed mode, sharing). Media: Filesystem per worker; physical media not detected.
 
 Two fresh JVMs per mode; 1 KiB records; 256-record batches; 5s minimum adaptive warmup and 10s measurement at each load. Broker and clients share the PC. These results are contributor supplied and do not qualify sustained capacity.
+
+**Contributor PC summary (diagnostic, unqualified)**
+
+CI-style summary: median actual writes/s across the two full-target windows; worst p99 at that target. Heap, average CPU, allocation rate and GC pause values are maxima across all fixed-target windows. Window checks may pass while these contributor measurements remain unqualified.
+
+| Mode | Reference writes/s | Median actual writes/s | Write target achieved | Worst target p99 ms | Peak heap MiB | Peak average CPU % | Window checks | Status |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| IN_MEMORY | 500,000 | 499,789 | 100.0% | 14.680 | 498.0 | 24.2944 | Missed | Unqualified |
+| FILE | 250,000 | 48,499 | 19.4% | 8002.732 | 466.0 | 31.4986 | Missed | Unqualified |
 
 **Fixed target: requested writes versus completed work**
 
