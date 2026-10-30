@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="360" height="24" viewBox="0 0 360 24" role="img" aria-label="file JFR: 0.71 GiB/s alloc, 12.7 ms GC (CI)">
-  <title>file JFR: 0.71 GiB/s alloc, 12.7 ms GC (CI)</title>
-  <rect width="360" height="24" rx="3" fill="#b55200"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="352" height="24" viewBox="0 0 352 24" role="img" aria-label="file JFR: 0.63 GiB/s alloc, 7.5 ms GC (CI)">
+  <title>file JFR: 0.63 GiB/s alloc, 7.5 ms GC (CI)</title>
+  <rect width="352" height="24" rx="3" fill="#b55200"/>
   <path d="M3 0H80V24H3Q0 24 0 21V3Q0 0 3 0" fill="#555"/>
   <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="12">
     <text x="40" y="16">file JFR</text>
-    <text x="220" y="16">0.71 GiB/s alloc, 12.7 ms GC (CI)</text>
+    <text x="216" y="16">0.63 GiB/s alloc, 7.5 ms GC (CI)</text>
   </g>
 </svg>
