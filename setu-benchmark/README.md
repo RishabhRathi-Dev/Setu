@@ -114,6 +114,28 @@ By default, missed scheduled load emits a warning and all four configurations co
 
 These short diagnostics do not qualify sustained capacity. CPU scheduling, JIT/GC, and storage stalls can affect offered-load attainment; inspect the retained timings and resource measurements before attributing a miss to any one cause.
 
+## Client pool and batch comparison
+
+`ClientComparisonBenchmarkTests` is an opt-in closed-loop diagnostic with fresh, separate broker and client JVMs for every candidate. It compares one shared synchronous connection (`SHARED`), independent synchronous connections borrowed from a bounded pool (`POOLED`), async `request(BrokerRequest)` batches (`ASYNC_REQUEST`), and typed async `produceBatch` using each connection's reusable encoder (`ASYNC_BATCH`). The synchronous client remains serialized per connection.
+
+```powershell
+.\mvnw.cmd -pl setu-benchmark -am '-Dtest=ClientComparisonBenchmarkTests' '-Dsurefire.failIfNoSpecifiedTests=false' '-Dsetu.benchmark.clients=true' '-Dsetu.benchmark.cpu.cores=4' test
+```
+
+Defaults are IN_MEMORY, 1 KiB records, pool sizes 1/4, batch sizes 1/256, partition counts 1/4, 10s warmup then 30s measurement, two fresh-process repetitions, and a 64-request async queue. Each configuration uses twice the pool size in submitting virtual threads for every candidate, including SHARED. The full default matrix takes about 45 minutes plus startup. Candidate order rotates between repetitions. Both processes use the shared JVM flags and 512 MiB heap by default; `setu.benchmark.cpu.cores` sets active processor count for each JVM, without imposing an OS CPU quota.
+
+One consumer connection per partition fetches and acknowledges the same workload in every candidate. Warmup records drain before measurement, and every accepted record must drain after it. Request errors, delivery gaps, failed drain, missing allocation samples and worker failures fail the run. Queue rejections are counted separately and back off for 1ms. Results include achieved records/s, submission-to-reply p99 (including snapshot/queue/pool wait), rejection count, minimum/maximum successful requests per submitting lane, drain time and estimated allocation bytes/record. Measurement duration includes completion of requests started before its deadline; post-window consumer drain is reported separately. This closed-loop test does not measure offered-load latency or prove starvation freedom.
+
+Client JFR starts before warmup; allocation samples and GC pauses are filtered to the measured window, whose exact UTC start/end are saved with the result. Allocation is a weighted JFR estimate for the entire client JVM, including producer scheduling and background consumers, rather than an exact encoder-only count. Recordings retain allocation stacks for investigation. Broker CPU/heap are sampled separately in `broker.log`. All results are unqualified local diagnostics; existing capacity qualification and published badges are unchanged.
+
+Configure lists through `setu.benchmark.clients.pools`, `.batches`, `.partitions`, `.kinds` and `.modes` (`IN_MEMORY,FILE`); scalar settings are `.warmup.seconds`, `.seconds`, `.repeats`, `.queue` and `.submitters`. Prefix each with `-D`. Payload size and JVM limits use existing `setu.benchmark.record.bytes`, `.heap.mib`, `.direct.mib` and `.cpu.cores` properties. FILE runs retain production durable forcing and keep their data under their new capture directory; allow disk space for warmup plus sustained traffic.
+
+`setu.benchmark.clients.max.backlog.records` optionally bounds unacknowledged records across producers; zero (default) leaves production unpaced. Use `65536` with 1 KiB records to keep about 64 MiB of payload backlog, for example when checking the single-partition matrix. The limit must fit one batch, applies equally to all candidates, releases credits only after consumer acknowledgement, and includes credit wait in request latency. Unpaced producers can outrun a consumer and hit the broker's retained-log quota; that remains an execution failure with its evidence preserved, rather than a queue rejection or successful comparison.
+
+For a bounded representative sustained comparison, add `'-Dsetu.benchmark.clients.pools=4' '-Dsetu.benchmark.clients.batches=256' '-Dsetu.benchmark.clients.partitions=4'` (about six minutes). For an overload diagnostic, select `ASYNC_REQUEST,ASYNC_BATCH` with pool `1`, queue `1` and submitters `16`; inspect rejections, allocation estimates and per-lane progress together. Shorten warmup/windows only for mechanics checks. Controlled socket tests for slow replies, long polls, cancellation and close live in [integration tests](../setu-integration-tests/README.md).
+
+Captures live in ignored `logs/benchmarks/client-comparison/<id>/`, with aggregate `results.txt`, per-candidate logs/results/JFR, exact JVM arguments, source revision/status/diff/file hashes, JDK, CPU identification, filesystem and resource-limit evidence. Media is explicitly unknown. Dirty checkouts are labeled and hashed so local measurements are not attributed to an unchanged commit. Keep raw captures when reporting an optimization.
+
 ## Direct node-target verification
 
 The mandatory [contributor PC pre-push diagnostic](../scripts/README.md#contributor-pc-check-before-every-push) runs separately from these full target measurements: two fresh JVMs per mode, 5-second minimum adaptive warmups and 10-second fixed-load windows. It uses the same TCP workload, targets, record/batch sizes and durability boundary, but has no OS resource quota and is always unqualified. CI retains the attached PC report alongside its own benchmarks; default-branch publication displays both sources separately.

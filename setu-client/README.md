@@ -148,12 +148,18 @@ try (var client = new io.setu.client.AsyncSetuClient(
         4, 128, 1)) {
     var response = client.produce("orders", "customer-42", new byte[]{1}).join();
     if (response.errorCode() != ErrorCode.NONE) throw new IllegalStateException(response.errorMessage());
+    var batch = client.produceBatch("orders", 0, List.of(new byte[]{2}, new byte[]{3})).join();
+    if (batch.errorCode() != ErrorCode.NONE) throw new IllegalStateException(batch.errorMessage());
 }
 ```
 
-The keyed overload queries and caches immutable topic partition counts, routing via `floorMod(key.hashCode(), count)`. The explicit partition overload preserves application routing. Neither overload orders concurrent writes across connections; await one result before submitting the next when order matters. `request(BrokerRequest)` exposes the other commands asynchronously. Payloads are copied before scheduling by public byte-array APIs.
+The keyed overload queries and caches immutable topic partition counts, routing via `floorMod(key.hashCode(), count)`. The explicit partition overload preserves application routing. `produceBatch(topic, partition, values)` appends an ordinary batch and returns its first assigned offset. It snapshots the list and caller bytes before returning, then uses the same reusable batch encoder as `SetuClient` on the assigned connection. It uses default durable acknowledgements and never retries an uncertain write. Configured acknowledgements and other commands remain available through `request(BrokerRequest)`.
+
+Concurrent writes across connections have no submission-order guarantee; await one result before submitting the next when order matters. Public byte-array APIs copy payloads before scheduling. Explicit `produce` and `produceBatch` reserve submission capacity before taking that copy; a full pool rejects them without copying their payloads. Admission counts preparing/running requests plus queued requests, bounded by connection count plus queue capacity. This is a request-count bound, not a payload-byte budget. A caller constructing a `BrokerRequest` owns that construction cost before `request` can admit it.
 
 `METADATA`, `FETCH`, `FETCH_OFFSET`, `GROUP_ASSIGNMENT`, `PRODUCE_IDEMPOTENT` and `TRANSACT` retry I/O failures within the configured count. Identified write retries preserve producer epoch, sequence and contents. Structured broker errors and ordinary/accepted writes are never retried. Cancellation skips a task that has not started; cancelling a future does not undo an active broker operation. `close()` closes sockets and completes running/queued request futures exceptionally. Read timeouts must still exceed long-poll waits.
+
+A slow response or long poll occupies one worker/connection until completion. Other workers can serve queued requests; if every connection is occupied, later requests wait in the bounded FIFO queue or are rejected when full. A cancelled queued task keeps its slot until a worker dequeues and skips it. Applications needing independent long-poll and write latency can use separate client pools. See the [isolated client comparison](../setu-benchmark/README.md#client-pool-and-batch-comparison) for sustained measurements and saturation diagnostics. `SetuClient` continues to serialize exchanges on each connection.
 
 ## Managed and transactional APIs
 
