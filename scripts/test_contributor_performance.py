@@ -27,6 +27,7 @@ def fixture():
     document['redline_budget'] = budget
     for run in document['redline_runs']:
         run['runtime']['max_heap_mb'] = str(budget['heap_mib'])
+        run['admission'] = dict(policy='unbounded', file_write_queue_bytes='0', file_write_queue_requests='0')
         run['buffers'] = {key: budget[key] for key in
                           ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
     for mode in tool.MODES:
@@ -89,10 +90,10 @@ class ContributorValidationTests(unittest.TestCase):
                         run = redline_fixture(command[-2], cpu=12)
                         budget = tool.redline_resources.local_budget(12, 8 * 1024**3)
                         run['runtime']['max_heap_mb'] = str(budget['heap_mib'])
-                        raw = redline_capture(run) + '\nCAPACITY_BUFFERS mode=' + run['mode'] + ' '
-                        raw += ' '.join(f'{key}={budget[key]}' for key in
-                                        ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes'))
-                        log.write_text(raw)
+                        run['buffers'] = {key: budget[key] for key in
+                                          ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
+                        run['admission'] = dict(policy='unbounded', file_write_queue_bytes='0', file_write_queue_requests='0')
+                        log.write_text(redline_capture(run))
                         return terminal_code
                     elif 'io.setu.benchmark.chaos.BenchmarkHostResources' in command:
                         log.write_text(f'REDLINE_HOST processors=12 memory_available_bytes={8 * 1024**3}')
@@ -144,6 +145,8 @@ class ContributorValidationTests(unittest.TestCase):
                     self.assertIn('-XX:ActiveProcessorCount=12', command)
                     self.assertIn('-Dsetu.benchmark.batch.records=4096', command)
                     self.assertIn('-Dsetu.benchmark.stage.millis=10000', command)
+                    self.assertIn('-Dsetu.benchmark.unbounded.admission=true', command)
+                    self.assertIn('-Dsetu.benchmark.memory.log.bytes=0', command)
                 manifest = json.loads((result.parent / 'run.json').read_text())
                 self.assertEqual(len(commands), len(manifest['commands']))
 
@@ -163,6 +166,18 @@ class ContributorValidationTests(unittest.TestCase):
         stage.update(healthy='false', warmup_stable='false', produce_per_s='1', consumed='10', produced='10', consume_per_s='1')
         data['runs'][0]['jfr'][0].update(produced='10', consumed='10')
         self.assertFalse(tool.validate(data, 'a' * 40)['qualified'])
+
+    def test_previous_bounded_budget_can_be_rendered_but_cannot_qualify_a_new_push(self):
+        data = fixture()
+        budget = tool.redline_resources.local_budget(8, 8 * 1024**3, unbounded=False)
+        data['redline_budget'] = budget
+        for run in data['redline_runs']:
+            run.pop('admission')
+            run['buffers'] = {key: budget[key] for key in
+                              ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
+        with self.assertRaises(ValueError):
+            tool.validate(data, 'a' * 40)
+        self.assertIn('Admission budgets:', tool.render(data, require_current=False))
 
     def test_report_separates_write_target_misses_from_consumers_keeping_up(self):
         data = fixture()

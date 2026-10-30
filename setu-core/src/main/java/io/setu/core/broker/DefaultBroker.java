@@ -13,6 +13,7 @@ import io.setu.core.protocol.GroupAssignment;
 import io.setu.core.protocol.AcknowledgementMode;
 import io.setu.storage.log.MessageLog;
 import io.setu.storage.log.MessageLogs;
+import io.setu.storage.log.FileWriteQueueOptions;
 import io.setu.storage.log.StorageMode;
 import io.setu.storage.log.MemoryLogBudget;
 import io.setu.storage.log.LogCapacityExceededException;
@@ -45,6 +46,7 @@ public final class DefaultBroker implements Broker {
     private final long ackTimeoutNanos;
     private final long consumerInactivityTimeoutNanos;
     private final MemoryLogBudget memoryBudget;
+    private final FileWriteQueueOptions fileWriteQueue;
     private final Map<String, TopicState> topics = new ConcurrentHashMap<>();
     private final ConsumerMetadataLimits consumerMetadataLimits;
     private int consumerPartitionMemberships;
@@ -110,6 +112,15 @@ public final class DefaultBroker implements Broker {
                 consumerInactivityTimeoutMillis, maxRetainedMemoryBytes, 0);
     }
 
+    /** Creates a broker with explicit per-partition FILE write admission. */
+    public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
+                         long queueBlockBytes, long ackTimeoutMillis, long consumerInactivityTimeoutMillis,
+                         long maxRetainedMemoryBytes, FileWriteQueueOptions fileWriteQueue) throws IOException {
+        this(storageMode, dataDirectory, maxRecordBytes, queueBlockBytes, ackTimeoutMillis,
+                consumerInactivityTimeoutMillis, maxRetainedMemoryBytes, 0, 0,
+                ConsumerMetadataLimits.defaults(), fileWriteQueue);
+    }
+
     /** Positive retention enables lossy memory expiry even when a consumer never acknowledges. */
     public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
                          long queueBlockBytes, long ackTimeoutMillis, long consumerInactivityTimeoutMillis,
@@ -132,6 +143,17 @@ public final class DefaultBroker implements Broker {
                          long queueBlockBytes, long ackTimeoutMillis, long consumerInactivityTimeoutMillis,
                          long maxRetainedMemoryBytes, long memoryRetentionMillis, long fileRetentionMillis,
                          ConsumerMetadataLimits consumerMetadataLimits) throws IOException {
+        this(storageMode, dataDirectory, maxRecordBytes, queueBlockBytes, ackTimeoutMillis,
+                consumerInactivityTimeoutMillis, maxRetainedMemoryBytes, memoryRetentionMillis,
+                fileRetentionMillis, consumerMetadataLimits, FileWriteQueueOptions.defaults());
+    }
+
+    /** Configures FILE admission independently of memory retention and consumer metadata. */
+    public DefaultBroker(StorageMode storageMode, Path dataDirectory, int maxRecordBytes,
+                         long queueBlockBytes, long ackTimeoutMillis, long consumerInactivityTimeoutMillis,
+                         long maxRetainedMemoryBytes, long memoryRetentionMillis, long fileRetentionMillis,
+                         ConsumerMetadataLimits consumerMetadataLimits, FileWriteQueueOptions fileWriteQueue) throws IOException {
+        this.fileWriteQueue = Objects.requireNonNull(fileWriteQueue, "fileWriteQueue");
         this.consumerMetadataLimits = Objects.requireNonNull(consumerMetadataLimits, "consumerMetadataLimits");
         this.storageMode = Objects.requireNonNull(storageMode, "storageMode");
         if (storageMode == StorageMode.FILE && dataDirectory == null)
@@ -268,7 +290,7 @@ public final class DefaultBroker implements Broker {
                     Files.createDirectories(partitionDir);
                     file = partitionDir;
                 }
-                partitions.add(MessageLogs.open(storageMode, file, maxRecordBytes, queueBlockBytes, memoryBudget, memoryRetentionNanos > 0));
+                partitions.add(MessageLogs.open(storageMode, file, maxRecordBytes, queueBlockBytes, memoryBudget, memoryRetentionNanos > 0, fileWriteQueue));
             }
             topics.put(request.topic(), new TopicState(List.copyOf(partitions)));
             LOG.info("Topic created topic={} partitions={} storage={}", LogText.escape(request.topic()), partitions.size(), storageMode);
@@ -847,7 +869,7 @@ public final class DefaultBroker implements Broker {
                         int partitionId = Integer.parseInt(partitionPaths.get(i).getFileName().toString().substring(10));
                         if (partitionId != i) throw new IOException("Partition directories must be contiguous for topic " + name);
                         logs.add(MessageLogs.open(storageMode,
-                                partitionPaths.get(i), maxRecordBytes, queueBlockBytes, memoryBudget));
+                                partitionPaths.get(i), maxRecordBytes, queueBlockBytes, memoryBudget, false, fileWriteQueue));
                     }
                     topics.put(name, new TopicState(List.copyOf(logs)));
                     LOG.info("Topic recovered topic={} partitions={} directory={}", name, logs.size(), topicPath);

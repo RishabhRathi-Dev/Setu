@@ -85,6 +85,13 @@ def parse_capture(text, modes=MODES):
         if buffers:
             run['buffers'] = {key: int(buffers[0][key]) for key in
                               ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
+        admission = [fields(line) for line in text.splitlines()
+                     if line.startswith('CAPACITY_ADMISSION ') and fields(line).get('mode') == mode]
+        if len(admission) > 1:
+            raise ValueError('Duplicate redline admission policy')
+        if admission:
+            run['admission'] = {key: admission[0][key] for key in
+                                ('policy', 'file_write_queue_bytes', 'file_write_queue_requests')}
         validate_run(run)
         runs.append(run)
     return runs
@@ -104,9 +111,20 @@ def validate_run(run):
         raise ValueError('Missing redline budget or filesystem')
     if 'disk_reserve_bytes' in run:
         number(run, 'disk_reserve_bytes')
+    admission = run.get('admission', {})
+    if admission:
+        if admission.get('policy') not in ('bounded', 'unbounded'):
+            raise ValueError('Invalid redline admission policy')
+        for key in ('file_write_queue_bytes', 'file_write_queue_requests'):
+            number(admission, key)
+        if admission['policy'] == 'unbounded' and (number(admission, 'file_write_queue_bytes') != 0
+                or number(admission, 'file_write_queue_requests') != 0
+                or run.get('buffers', {}).get('memory_log_bytes') != 0
+                or any(run.get('buffers', {}).get(key) != 2**63 - 1 for key in ('request_buffer_bytes', 'response_buffer_bytes'))):
+            raise ValueError('Unbounded redline has bounded admission credits')
     if 'buffers' in run:
         for key in ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes'):
-            if number(run['buffers'], key) <= 0:
+            if number(run['buffers'], key) <= 0 and not (key == 'memory_log_bytes' and admission.get('policy') == 'unbounded'):
                 raise ValueError('Invalid redline buffer budget')
     if any(not run['runtime'].get(key) for key in ('java', 'os', 'cpus', 'max_heap_mb')):
         raise ValueError('Missing redline runtime provenance')
@@ -230,7 +248,13 @@ def render_runs(runs):
             lines.append(f'Free-disk reserve: {number(run, "disk_reserve_bytes") / 1024**3:.2f} GiB (sampled).')
         if 'buffers' in run:
             buffers = run['buffers']
-            lines.append(f'Admission budgets: requests {buffers["request_buffer_bytes"] / 1024**2:g} MiB, '
+            if run.get('admission', {}).get('policy') == 'unbounded':
+                lines.append('Admission policy: **unbounded**. Retained-log and FILE write-queue admission are disabled; '
+                             'request/response credits use Long.MAX_VALUE. JVM/OS bounds, protocol constraints, '
+                             'the disk reserve and outer watchdog still apply. '
+                             f'Fetch payload: {buffers["fetch_bytes"] / 1024**2:g} MiB.')
+            else:
+                lines.append(f'Admission budgets: requests {buffers["request_buffer_bytes"] / 1024**2:g} MiB, '
                          f'responses {buffers["response_buffer_bytes"] / 1024**2:g} MiB; '
                          f'fetch payload {buffers["fetch_bytes"] / 1024**2:g} MiB; '
                          f'retained log {buffers["memory_log_bytes"] / 1024**2:g} MiB.')
@@ -265,7 +289,10 @@ def save_capture(text, output, resources, modes, exit_code):
     errors = []
     for mode in modes:
         try:
-            document['runs'] += parse_capture(text, (mode,))
+            runs = parse_capture(text, (mode,))
+            if resources.get('admission_policy') and runs[0].get('admission', {}).get('policy') != resources['admission_policy']:
+                raise ValueError('Redline worker admission differs from its launch plan')
+            document['runs'] += runs
         except (ValueError, KeyError, TypeError) as error:
             errors.append(str(error))
     if exit_code:

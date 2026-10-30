@@ -7,6 +7,7 @@ import io.setu.server.connection.FramedConnectionHandler;
 import io.setu.server.dispatcher.BrokerRequestHandler;
 import io.setu.server.tcp.TcpServer;
 import io.setu.storage.log.StorageMode;
+import io.setu.storage.log.FileWriteQueueOptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -25,6 +26,32 @@ class StorageModesIntegrationTests {
     private static final int MAX_FRAME = 15 * 1024 * 1024;
 
     @TempDir Path tempDir;
+
+    @Test
+    void fileWriteAdmissionAppliesToNewAndRecoveredPartitionsWithoutChangingOffsets() throws Exception {
+        Path data = tempDir.resolve("file-admission");
+        for (int run = 0; run < 3; run++) {
+            var limits = run == 1 ? FileWriteQueueOptions.unlimited() : new FileWriteQueueOptions(1, 0);
+            try (var broker = new DefaultBroker(StorageMode.FILE, data, 1024, 64L << 20,
+                    5000, 10000, 0, limits); var server = start(broker)) {
+                server.start();
+                try (var client = client(server.localAddress().getPort())) {
+                    if (run == 0) assertEquals(ErrorCode.NONE, client.createTopic(TOPIC, 1).errorCode());
+                    var reply = client.produce(TOPIC, 0, bytes("durable"));
+                    assertEquals(run == 1 ? ErrorCode.NONE : ErrorCode.QUOTA_EXCEEDED, reply.errorCode());
+                    if (run == 1) assertEquals(0, reply.offset());
+                    var records = client.fetch(TOPIC, 0, 0, 1024).records();
+                    assertEquals(run == 0 ? 0 : 1, records.size());
+                    if (!records.isEmpty()) assertEquals("durable", text(records.getFirst().value()));
+                    if (run == 2) {
+                        assertEquals(ErrorCode.NONE, client.createTopic("new-partition", 1).errorCode());
+                        assertEquals(ErrorCode.QUOTA_EXCEEDED,
+                                client.produce("new-partition", 0, bytes("also bounded")).errorCode());
+                    }
+                }
+            }
+        }
+    }
 
     @Test
     void reusedClientBatchFramePreservesEarlierRecordsInBothStorageModes() throws Exception {

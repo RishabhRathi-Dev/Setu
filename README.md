@@ -123,7 +123,7 @@ Records are opaque byte arrays. Ordering and dense, zero-based offsets apply **w
 | Restart | Topics and records recover from disk | Topics and records are lost |
 | Consumer join | Starts at offset zero | Starts at the current partition end |
 | Reclamation | Optional age-based retention of completed daily files | Slowest registered member's progress; no members allows immediate reclamation |
-| Primary admission | 32 MiB / 1,024 outstanding writes per partition | Shared 256 MiB accounted retained-log budget |
+| Primary admission | Configurable; defaults to 32 MiB / 1,024 outstanding writes per partition | Shared 256 MiB accounted retained-log budget |
 
 In memory mode, **join before producing records a member needs**. Acknowledgement, leaving, and member expiry can release retained prefixes. Optional timed expiry is lossy and disabled by default. Buffer budgets are separate from retained-log admission and do not cap total process memory.
 
