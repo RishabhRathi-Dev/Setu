@@ -6,6 +6,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SustainedThroughputBenchmarkTests {
@@ -39,9 +41,13 @@ class SustainedThroughputBenchmarkTests {
             assertEquals(0, child.exitValue(), report);
             assertTrue(report.contains("SUSTAINED_STAGE mode=" + mode + " kind=ramp concurrency=1"), report);
             assertTrue(report.contains("SUSTAINED_END mode=" + mode), report);
-            if (Boolean.getBoolean("setu.benchmark.jfr")) CapacityJfr.report(capture.resolve("sustained.jfr"));
+            if (Boolean.getBoolean("setu.benchmark.jfr")) {
+                int count = (int) report.lines().filter(line -> line.startsWith("SUSTAINED_STAGE ")).count();
+                assertEquals(IntStream.rangeClosed(1, count).boxed().collect(Collectors.toSet()),
+                        CapacityJfr.report(capture.resolve("recordings")));
+            }
         } finally {
-            if (child.isAlive()) child.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
+            BenchmarkStageProcess.terminate(child);
         }
     }
 }

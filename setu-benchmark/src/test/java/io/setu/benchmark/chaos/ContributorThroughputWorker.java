@@ -18,13 +18,11 @@ final class ContributorThroughputWorker {
         Path root = Files.createDirectories(Path.of(args[1]));
         double target = mode == StorageMode.IN_MEMORY ? 500000 : 250000;
         int pairs = mode == StorageMode.IN_MEMORY ? 1 : 2;
-        System.out.printf("CONTRIBUTOR_CONFIG mode=%s filesystem=%s durability=%s%n", mode,
+        System.out.printf("CONTRIBUTOR_CONFIG mode=%s filesystem=%s durability=%s jvm_scope=stage%n", mode,
                 Files.getFileStore(root).type(), mode == StorageMode.FILE ? "force_each_group_commit_before_ack" : "volatile");
-        CapacityJfr.start(Path.of(System.getProperty("SETU_LOG_DIR"), "contributor.jfr"));
-        try {
-            for (double fraction : new double[]{.5, .8, 1})
-                SustainedThroughputWorker.run(mode, root, pairs, target * fraction, fraction);
-        } finally { CapacityJfr.finish(); }
+        int stage = 0;
+        for (double fraction : new double[]{.5, .8, 1})
+            BenchmarkStageProcess.sustained(++stage, mode.name(), root, pairs, target * fraction, fraction);
         System.out.printf("CONTRIBUTOR_END mode=%s qualified=false%n", mode);
     }
 }

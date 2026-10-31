@@ -17,7 +17,7 @@ spec.loader.exec_module(tool)
 
 def fixture():
     from test_redline_report import fixture as redline_fixture
-    document = dict(schema_version=2, scope='contributor PC diagnostic', qualified=False, enforcement='none',
+    document = dict(schema_version=2, scope='contributor PC diagnostic', qualified=False, enforcement='none', jvm_scope='stage',
                     source_revision='a' * 40, source_tree='b' * 40, contributor='Developer', profile=dict(tool.PROFILE),
                     started_utc='2026-10-29T00:00:00+00:00', finished_utc='2026-10-29T00:04:00+00:00',
                     host=dict(os='Windows', cpu='Test CPU', logical_cpus=12, active_processors=8,
@@ -26,17 +26,23 @@ def fixture():
     budget = tool.redline_resources.local_budget(8, 8 * 1024**3)
     document['redline_budget'] = budget
     for run in document['redline_runs']:
+        run['jvm_scope'] = 'stage'
+        run['warmups'] = []
+        for row in run['stages']:
+            row['jvm_pid'] = str(100 + int(row['stage']))
+            run['warmups'].append(dict(mode=run['mode'], stage=row['stage'], producers=row['producers'],
+                                       consumers=row['consumers'], duration_ms='2000', jvm_pid=row['jvm_pid']))
         run['runtime']['max_heap_mb'] = str(budget['heap_mib'])
         run['admission'] = dict(policy='unbounded', file_write_queue_bytes='0', file_write_queue_requests='0')
         run['buffers'] = {key: budget[key] for key in
                           ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
     for mode in tool.MODES:
         for repeat in (1, 2):
-            run = dict(mode=mode, repeat=repeat, config=dict(mode=mode, filesystem='NTFS',
+            run = dict(mode=mode, repeat=repeat, config=dict(mode=mode, filesystem='NTFS', jvm_scope='stage',
                        durability='volatile' if mode == 'IN_MEMORY' else 'force_each_group_commit_before_ack'), stages=[], jfr=[])
             for index, fraction in enumerate((.5, .8, 1.), 1):
                 rate = tool.report.TARGETS[mode] * fraction
-                stage = dict(mode=mode, kind='latency', concurrency=1 if mode == 'IN_MEMORY' else 2,
+                stage = dict(mode=mode, kind='latency', concurrency=1 if mode == 'IN_MEMORY' else 2, jvm_pid=100 + index,
                              load_fraction=fraction, offered_per_s=rate, duration_s=10, errors=0,
                              produced=rate * 10, consumed=rate * 10, produce_per_s=rate, consume_per_s=rate,
                              qualified='false', p99_ms=2, produce_p99_ms=2, fetch_p99_ms=.2, ack_p99_ms=1,
@@ -51,6 +57,23 @@ def fixture():
 
 
 class ContributorValidationTests(unittest.TestCase):
+    def test_previous_mode_scoped_captures_remain_renderable_but_require_remeasurement_for_pushes(self):
+        data = fixture()
+        data.pop('jvm_scope')
+        for run in data['runs']:
+            run['config'].pop('jvm_scope')
+            for stage in run['stages']:
+                stage.pop('jvm_pid')
+        for run in data['redline_runs']:
+            run.pop('jvm_scope')
+            run.pop('warmups')
+            for stage in run['stages']:
+                stage.pop('jvm_pid')
+        with self.assertRaisesRegex(ValueError, 'fresh JVM per stage'):
+            tool.validate(data, 'a' * 40)
+        self.assertIs(data, tool.validate(data, 'a' * 40, require_current=False))
+        self.assertIn('Historical', tool.render(data, require_current=False))
+
     def test_generated_readme_normalization_preserves_manual_text_and_rejects_bad_markers(self):
         source = 'manual before\n' + ''.join(
             f'<!-- {marker}:start -->generated<!-- {marker}:end -->\n' for marker in tool.PUBLICATION_MARKERS) + 'manual after\n'
@@ -65,7 +88,7 @@ class ContributorValidationTests(unittest.TestCase):
                 tool.without_publication_blocks(text)
 
     def test_runner_executes_fixed_targets_then_fresh_redline_workers_and_reports_both(self):
-        from test_redline_report import fixture as redline_fixture, capture as redline_capture
+        from test_redline_report import capture as redline_capture
         scratch = tool.ROOT / 'target/contributor-tests'
         scratch.mkdir(parents=True, exist_ok=True)
         for terminal_code in (42, 0):
@@ -86,8 +109,13 @@ class ContributorValidationTests(unittest.TestCase):
                         lines += ['SUSTAINED_STAGE ' + ' '.join(f'{key}={value}' for key, value in stage.items()) for stage in run['stages']]
                         lines.append(f'CONTRIBUTOR_END mode={mode} qualified=false')
                         log.write_text('\n'.join(lines))
+                        recordings = log.parent / 'recordings'
+                        recordings.mkdir()
+                        for stage in (1, 2, 3):
+                            (recordings / f'{stage:04d}.jfr').touch()
                     elif 'io.setu.benchmark.chaos.ProgressiveCapacityChaosWorker' in command:
-                        run = redline_fixture(command[-2], cpu=12)
+                        run = next(run for run in data['redline_runs'] if run['mode'] == command[-2])
+                        run['cpu_budget_cores'] = run['runtime']['cpus'] = '12'
                         budget = tool.redline_resources.local_budget(12, 8 * 1024**3)
                         run['runtime']['max_heap_mb'] = str(budget['heap_mib'])
                         run['buffers'] = {key: budget[key] for key in
@@ -109,7 +137,7 @@ class ContributorValidationTests(unittest.TestCase):
                     self.assertEqual(['jfr', 'print', '--json', '--events'], command[:4])
                     mode = 'IN_MEMORY' if 'IN_MEMORY' in command[-1] else 'FILE'
                     kwargs['stdout'].write(json.dumps(dict(recording=dict(events=[dict(type=tool.capture.STAGE_EVENT,
-                        values=dict(mode=mode, stage=stage)) for stage in (1, 2, 3)]))))
+                        values=dict(mode=mode, stage=int(Path(command[-1]).stem)))]))))
 
                 def git(*args, **kwargs):
                     return subprocess.CompletedProcess(args, 0, stdout='b' * 40 if args[0] == 'rev-parse' else 'Developer')

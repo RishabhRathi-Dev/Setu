@@ -111,6 +111,8 @@ def validate(document, revision, require_current=True):
             or document.get('scope') != 'contributor PC diagnostic' or document.get('qualified') is not False
             or document.get('profile') != PROFILE or document.get('enforcement') != 'none'):
         raise ValueError('Contributor report has wrong revision, scope or profile')
+    if require_current and document.get('jvm_scope') != 'stage':
+        raise ValueError('Contributor report requires a fresh JVM per stage; remeasure this attachment')
     redline_profile = document.get('redline_profile')
     historical = (not require_current and redline_profile in (
         dict(redline_report.PROFILE, batch_records=256, stage_ms=2000),
@@ -119,6 +121,8 @@ def validate(document, revision, require_current=True):
             or sorted(run['mode'] for run in document.get('redline_runs', [])) != sorted(MODES)):
         raise ValueError('Both modes require a fresh redline ramp')
     for run in document['redline_runs']:
+        if require_current and run.get('jvm_scope') != 'stage':
+            raise ValueError('Redline requires a fresh JVM per stage')
         redline_report.validate_run(run)
         if {key: int(value) for key, value in run['config'].items()} != redline_profile:
             raise ValueError('Wrong contributor redline profile')
@@ -178,6 +182,10 @@ def validate(document, revision, require_current=True):
             raise ValueError('Wrong storage durability or missing filesystem')
         if len(run['stages']) != 3 or len(run['jfr']) != 3:
             raise ValueError('Missing fixed-load windows or JFR summaries')
+        if require_current and run['config'].get('jvm_scope') != 'stage':
+            raise ValueError('Fixed-load windows require a fresh JVM per stage')
+        if run['config'].get('jvm_scope') == 'stage':
+            report.validate_stage_processes(run['stages'])
         for index, (stage, jfr, fraction) in enumerate(zip(run['stages'], run['jfr'], (.5, .8, 1.)), 1):
             if (stage['mode'] != mode or stage['kind'] != 'latency' or stage['qualified'] != 'false'
                     or int(stage['concurrency']) != (1 if mode == 'IN_MEMORY' else 2)
@@ -214,7 +222,7 @@ def run_diagnostic(java_home=None):
     active = min(8, os.cpu_count() or 1)
     env = dict(os.environ, JAVA_HOME=str(home))
     env['PATH'] = str(home / 'bin') + os.pathsep + env.get('PATH', '')
-    document = dict(schema_version=2, scope='contributor PC diagnostic', qualified=False, enforcement='none',
+    document = dict(schema_version=2, scope='contributor PC diagnostic', qualified=False, enforcement='none', jvm_scope='stage',
                     source_revision=revision, source_tree=git('rev-parse', 'HEAD^{tree}').stdout.strip(),
                     contributor=git('config', 'user.name').stdout.strip(), profile=PROFILE,
                     started_utc=datetime.now(timezone.utc).isoformat(),
@@ -251,11 +259,8 @@ def run_diagnostic(java_home=None):
                            f'-Dlogback.configurationFile={ROOT / "setu-benchmark/src/test/resources/logback-test.xml"}',
                            '-cp', classpath, 'io.setu.benchmark.chaos.ContributorThroughputWorker', mode, data]
                 execute(command, folder / 'worker.log', 1200)
-            recording = folder / 'contributor.jfr'
-            with (folder / 'stages.json').open('w', encoding='utf-8') as events:
-                subprocess.run([jfr, 'print', '--json', '--events', capture.STAGE_EVENT, str(recording)],
-                               stdout=events, stderr=subprocess.PIPE, text=True, check=True, timeout=60)
-            markers = json.loads((folder / 'stages.json').read_text())['recording']['events']
+            recording = folder / 'recordings'
+            markers = capture.read_stage_events(jfr, recording, folder / 'stages.json', subprocess.run)['recording']['events']
             values = [event['values'] for event in markers if event['type'] == capture.STAGE_EVENT]
             if sorted(value['stage'] for value in values) != [1, 2, 3] or any(value['mode'] != mode for value in values):
                 raise ValueError('Missing or duplicate JFR stage markers')
@@ -299,7 +304,7 @@ def run_diagnostic(java_home=None):
         runs[0]['disk_reserve_bytes'] = reserve
         document['redline_runs'] += runs
         # A heap-exhausted JVM can only promise its last atomic JFR checkpoint.
-        execute([java, '-Xmx256m', '-cp', classpath, 'io.setu.benchmark.chaos.CapacityJfr', str(folder / 'capacity.jfr')],
+        execute([java, '-Xmx256m', '-cp', classpath, 'io.setu.benchmark.chaos.CapacityJfr', str(folder / 'recordings')],
                 folder / 'analysis.log', 120)
         if not any(line.startswith(f'CAPACITY_JFR mode={mode} stage=1 ') for line in (folder / 'analysis.log').read_text().splitlines()):
             raise ValueError('Redline JFR is missing its first completed stage')

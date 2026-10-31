@@ -231,6 +231,8 @@ def main():
     parser.add_argument('--disk-fraction', type=fraction)
     parser.add_argument('--payload-sizes', default='256,512,1024,4096')
     parser.add_argument('--repeats', type=int)
+    parser.add_argument('--target-repeat', type=int, choices=(1, 2, 3),
+                        help='baseline/target only: run one repetition on an independent CI runner')
     parser.add_argument('--max-concurrency', type=int)
     parser.add_argument('--stage-millis', type=int)
     parser.add_argument('--warmup-millis', type=int)
@@ -264,6 +266,9 @@ def main():
         parser.error('--report-only/--strict apply to baseline, target, sustained and steady measurements')
     args.report_only = not args.strict
     target_kind = args.kind in ('target', 'baseline')
+    if args.target_repeat is not None and not target_kind:
+        parser.error('--target-repeat applies only to baseline/target')
+    expected_repeats = (args.target_repeat,) if args.target_repeat is not None else (1, 2, 3)
     target_profile = 'ci-baseline' if args.kind == 'baseline' else 'reference'
     args.profile = args.profile or ('github-private' if args.kind == 'baseline' else 'host')
     if args.kind == 'baseline':
@@ -337,6 +342,8 @@ def main():
     if args.kind in ('baseline', 'target', 'sustained', 'steady'):
         snapshot['expectation_policy'] = 'report-only' if args.report_only else 'strict'
     if target_kind:
+        snapshot['target_repeats'] = list(expected_repeats)
+        snapshot['repeats'] = len(expected_repeats)
         snapshot.update(target_profile=target_profile, target_policy='report-only' if args.report_only else 'strict',
                         source_revision=os.environ.get('GITHUB_SHA'), run_url=(
             os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + os.environ['GITHUB_REPOSITORY']
@@ -390,6 +397,8 @@ def main():
                 command += ['-Dsetu.benchmark.node.targets=true', '-Dsetu.benchmark.jfr=true',
                             '-Dsetu.benchmark.node.targets.enforce=false',
                             '-Dsetu.benchmark.target.profile=' + target_profile]
+                if args.target_repeat is not None:
+                    command += [f'-Dsetu.benchmark.target.repeat={args.target_repeat}']
             elif args.kind == 'sustained':
                 command += [f'-Dsetu.benchmark.measurement={args.measurement}',
                             f'-Dsetu.benchmark.max.concurrency={args.max_concurrency}',
@@ -429,15 +438,21 @@ def main():
             if target_kind:
                 captured = capture.read_text(encoding='utf-8')
                 try:
-                    runs = node_target_report.parse_capture(captured, modes, target_profile=target_profile)
+                    runs = node_target_report.parse_capture(captured, modes, target_profile=target_profile,
+                                                            expected_repeats=expected_repeats)
                 except (ValueError, KeyError) as failure:
                     print('\n'.join(captured.splitlines()[-60:]), flush=True)
+                    if result.returncode:
+                        message = save_execution_failure(output, capture, snapshot, result.returncode, str(failure))
+                        raise RuntimeError(message) from failure
                     raise RuntimeError(f'node-target measurement incomplete or invalid (exit {result.returncode}): '
                                        f'{failure}; capture: {capture}') from failure
                 rows += runs
-                print(node_target_report.save(output, rows, snapshot, modes, target_profile), flush=True)
+                print(node_target_report.save(output, rows, snapshot, modes, target_profile, expected_repeats), flush=True)
             if result.returncode:
                 print('\n'.join(capture.read_text(encoding='utf-8').splitlines()[-60:]), flush=True)
+                if target_kind:
+                    raise RuntimeError(save_execution_failure(output, capture, snapshot, result.returncode))
                 raise RuntimeError(f'benchmark execution failed (exit {result.returncode}); capture: {capture}')
             if args.kind == 'steady':
                 for line in capture.read_text(encoding='utf-8').splitlines():
@@ -450,8 +465,10 @@ def main():
                 if any(float(stage['errors']) != 0 or float(stage['produced']) <= 0 or float(stage['consumed']) <= 0
                        for run in runs for stage in run['stages']):
                     raise RuntimeError(f'node-target workload failed: request errors or no completed records; capture: {capture}')
-                failed = [mode for mode, summary in node_target_report.summaries(runs, modes, target_profile).items()
-                          if not summary['qualified']]
+                failed = [mode for mode in modes if any(
+                    not node_target_report.healthy(run, stage, warmup)
+                    for run in runs if run['config']['mode'] == mode
+                    for stage, warmup in zip(run['stages'], run['warmups']))]
                 if failed:
                     label = 'CI baseline' if args.kind == 'baseline' else 'Node target'
                     message = label + ' not qualified: ' + ', '.join(failed) + '; see measured limits above.'
@@ -476,6 +493,20 @@ def main():
         failed = sustained_report.gate_failures(rows, modes)
         if failed:
             expectation_miss('Sustained expectations unmet: ' + '; '.join(failed), output, args.report_only)
+
+
+def save_execution_failure(output, capture, snapshot, exit_code, validation_error=None):
+    """Keep a failed worker's cause primary, even when its incomplete capture cannot qualify."""
+    causes = [line.strip().removeprefix('Caused by: ') for line in capture.read_text(encoding='utf-8').splitlines()
+              if line.strip().startswith('Caused by: ')]
+    message = f'benchmark execution failed (exit {exit_code})'
+    if causes:
+        message += ': ' + causes[-1]
+    document = dict(resources=snapshot, execution_exit_code=exit_code, error=message, capture=str(capture))
+    if validation_error is not None:
+        document['validation_error'] = validation_error
+    (output / 'failure.json').write_text(json.dumps(document, indent=2) + '\n', encoding='utf-8')
+    return message + '; capture: ' + str(capture)
 
 
 def expectation_miss(message, output, report_only):

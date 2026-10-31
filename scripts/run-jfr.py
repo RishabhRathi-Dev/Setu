@@ -7,6 +7,7 @@ import os
 import platform
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -79,7 +80,8 @@ def stream_run(command, log, env, timeout=None, accepted_exit_codes=(0,)):
     """Tee the actual child output while retaining failures and bounding worker lifetime."""
     with log.open('w', encoding='utf-8') as capture:
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                                   stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace',
+                                   start_new_session=os.name != 'nt')
 
         def pump():
             for line in process.stdout:
@@ -92,11 +94,25 @@ def stream_run(command, log, env, timeout=None, accepted_exit_codes=(0,)):
         try:
             code = process.wait(timeout=timeout)
         except BaseException:
-            process.terminate()
+            if os.name == 'nt':
+                # Windows termination does not run the coordinator's JVM shutdown hook.
+                subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            else:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                process.kill()
+                if os.name == 'nt':
+                    process.kill()
+                else:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                 process.wait()
             raise
         finally:
@@ -123,6 +139,23 @@ def validate_capture(mode, log, events):
     return len(stages)
 
 
+def read_stage_events(jfr, recordings, output, runner=None):
+    """Read each JVM's recording separately; their event metadata and clocks are independent."""
+    runner = runner or subprocess.run
+    paths = sorted(recordings.glob('*.jfr'))
+    if not paths:
+        raise ValueError('Missing per-stage JFR recordings: ' + str(recordings))
+    combined = dict(recording=dict(events=[]))
+    for recording in paths:
+        with output.with_name('stages-' + recording.stem + '.json').open('w', encoding='utf-8') as stream:
+            runner([jfr, 'print', '--json', '--events', STAGE_EVENT, str(recording)],
+                   stdout=stream, stderr=subprocess.PIPE, text=True, check=True, timeout=60)
+        events = json.loads(output.with_name('stages-' + recording.stem + '.json').read_text(encoding='utf-8'))
+        combined['recording']['events'].extend(events['recording']['events'])
+    output.write_text(json.dumps(combined, indent=2) + '\n', encoding='utf-8')
+    return combined
+
+
 def main():
     args = arguments()
     home, java, jfr, version = jdk_tools(args.java_home)
@@ -135,7 +168,7 @@ def main():
                                                   for key, value in vars(args).items()},
                     host=platform.platform(), processor=platform.processor(), cpu_count=os.cpu_count(),
                     filesystem_media='filesystem recorded in worker.log; physical media not detected',
-                    scope='diagnostic smoke; broker and clients share one JVM; no OS resource quota', runs=[])
+                    scope='diagnostic smoke; fresh JVM per stage; broker and clients share that JVM; no OS resource quota', runs=[])
     revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True, text=True)
     manifest['source_revision'] = revision.stdout.strip()
     manifest['source_status'] = subprocess.run(['git', 'status', '--short'], cwd=ROOT,
@@ -158,7 +191,7 @@ def main():
         for mode in modes:
             capture = output / mode
             capture.mkdir()
-            run = dict(mode=mode, status='running', recording=str(capture / 'sustained.jfr'))
+            run = dict(mode=mode, status='running', recording_directory=str(capture / 'recordings'))
             manifest['runs'].append(run)
             save()
             # Unique scratch directory: the worker removes each stage's broker data.
@@ -181,18 +214,18 @@ def main():
                 print(f'\nStarting {mode} TCP workload with JFR...', flush=True)
                 stream_run(command, capture / 'worker.log', env, args.timeout_seconds)
             # Read only custom markers to verify completeness; do not run the analysis reports.
-            with (capture / 'stages.json').open('w', encoding='utf-8') as events_file:
-                subprocess.run([jfr, 'print', '--json', '--events', STAGE_EVENT, run['recording']],
-                               stdout=events_file, stderr=subprocess.PIPE, text=True, check=True, timeout=60)
+            recordings = Path(run['recording_directory'])
+            events = read_stage_events(jfr, recordings, capture / 'stages.json')
             run['completed_stages'] = validate_capture(mode, (capture / 'worker.log').read_text(encoding='utf-8'),
-                                                       json.loads((capture / 'stages.json').read_text(encoding='utf-8')))
-            run['recording_bytes'] = Path(run['recording']).stat().st_size
+                                                       events)
+            run['recordings'] = [str(path) for path in sorted(recordings.glob('*.jfr'))]
+            run['recording_bytes'] = sum(Path(path).stat().st_size for path in run['recordings'])
             if args.analyze:
-                run['analysis_command'] = [java, '-cp', classpath, 'io.setu.benchmark.chaos.CapacityJfr', run['recording']]
+                run['analysis_command'] = [java, '-cp', classpath, 'io.setu.benchmark.chaos.CapacityJfr', str(recordings)]
                 stream_run(run['analysis_command'], capture / 'write-path.txt', env, 120)
             run['status'] = 'passed'
             save()
-            print(f'JFR verified: {run["recording"]} ({run["completed_stages"]} completed stages)', flush=True)
+            print(f'JFR verified: {recordings} ({run["completed_stages"]} completed stages)', flush=True)
         manifest['status'] = 'passed'
     except BaseException as failure:
         manifest['status'] = 'interrupted' if isinstance(failure, KeyboardInterrupt) else 'failed'
