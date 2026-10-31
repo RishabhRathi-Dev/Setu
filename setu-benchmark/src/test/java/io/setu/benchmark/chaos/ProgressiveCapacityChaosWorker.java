@@ -85,6 +85,7 @@ final class ProgressiveCapacityChaosWorker {
         Thread.setDefaultUncaughtExceptionHandler((thread, failure) -> {
             if (failure instanceof OutOfMemoryError) stopReporter.heapExhausted();
             else {
+                stopReporter.awaitHeapExhaustionIfReported();
                 System.err.println("WORKER_THREAD_FAILURE thread=" + thread.getName());
                 failure.printStackTrace(System.err);
             }
@@ -105,6 +106,7 @@ final class ProgressiveCapacityChaosWorker {
         } catch (OutOfMemoryError exhausted) {
             stopReporter.heapExhausted();
         } catch (Throwable failure) {
+            stopReporter.awaitHeapExhaustionIfReported();
             failure.printStackTrace(System.err);
             int stage = Integer.getInteger("setu.benchmark.stage.id", 0);
             stop(mode, "WORKER_FAILURE", stage, stage == 0 ? 0 : 1 << (stage - 1), failure.toString());
@@ -178,12 +180,14 @@ final class ProgressiveCapacityChaosWorker {
                 stopReporter.heapExhausted();
                 return;
             } catch (IOException | RuntimeException resourceFailure) {
+                stopReporter.awaitHeapExhaustionIfReported();
                 resourceFailure.printStackTrace(System.err);
                 stop(mode, "RESOURCE_LIMIT", stage, concurrency,
                         resourceFailure.getClass().getSimpleName() + ": " + resourceFailure.getMessage());
                 return;
             }
 
+            stopReporter.awaitHeapExhaustionIfReported();
             printStage(mode, result, result.cpuHoldStarted ? "CAPACITY_STAGE_TOTAL" : "CAPACITY_STAGE");
             if (outOfMemory.get() || "JVM_OOM".equals(result.reason)) {
                 stopReporter.heapExhausted();
@@ -199,6 +203,7 @@ final class ProgressiveCapacityChaosWorker {
         } catch (OutOfMemoryError exhausted) {
             stopReporter.heapExhausted();
         } finally {
+            stopReporter.awaitHeapExhaustionIfReported();
             for (SetuClient client : clients) closeQuietly(client);
             server.close();
             broker.close();
@@ -271,6 +276,7 @@ final class ProgressiveCapacityChaosWorker {
             long warmupDeadline = warmupStart + WARMUP_MILLIS * 1_000_000L;
             while (System.nanoTime() < warmupDeadline && workerFailure.get() == null) {
                 Thread.sleep(Math.min(50, Math.max(1, (warmupDeadline - System.nanoTime()) / 1_000_000)));
+                stopReporter.awaitHeapExhaustionIfReported();
                 long reserve = Long.getLong("setu.benchmark.disk.reserve.bytes", 0);
                 if (mode == StorageMode.FILE && reserve > 0
                         && Files.getFileStore(Path.of(System.getProperty("java.io.tmpdir"))).getUsableSpace() <= reserve)
@@ -294,6 +300,7 @@ final class ProgressiveCapacityChaosWorker {
             long nextDiagnostic = started + 1_000_000_000L;
             while (System.nanoTime() < deadline && running.get()) {
                 Thread.sleep(SAMPLE_MILLIS);
+                stopReporter.awaitHeapExhaustionIfReported();
                 if (outOfMemory.get()) { reason = "JVM_OOM"; break; }
                 Throwable failure = workerFailure.get();
                 if (failure != null) {
@@ -380,6 +387,7 @@ final class ProgressiveCapacityChaosWorker {
         } catch (OutOfMemoryError exhausted) {
             stopReporter.heapExhausted();
         } finally {
+            stopReporter.awaitHeapExhaustionIfReported();
             latency.measuring = false;
             running.set(false);
             if (outOfMemory.get()) {
@@ -530,6 +538,7 @@ final class ProgressiveCapacityChaosWorker {
     }
 
     private static void stop(StorageMode mode, String reason, int stage, int concurrency, String detail) {
+        stopReporter.awaitHeapExhaustionIfReported();
         System.out.printf(Locale.ROOT, "CAPACITY_STOP mode=%s reason=%s stage=%d producers=%d consumers=%d detail=%s%n",
                 mode, reason, stage, concurrency, concurrency, detail.replace('\n', ' '));
         System.out.flush();
