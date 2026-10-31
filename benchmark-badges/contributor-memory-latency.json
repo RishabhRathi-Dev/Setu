@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "label": "memory p99 (contributor PC)",
-  "message": "2.15 ms at target",
+  "message": "2.04 ms at target",
   "color": "blue",
   "sourceScope": "contributor PC diagnostic",
-  "sourceRevision": "9a0bba7fa852d032321ade7b3dd3954b509aa264",
-  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/41127515368",
+  "sourceRevision": "e525bc6440e96abc3eed445712939aaf2481352d",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/41180557125",
   "qualified": false
 }
