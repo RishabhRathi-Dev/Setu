@@ -20,7 +20,10 @@ class NodeTargetThroughputBenchmarkTests {
 
     private void run(String mode) throws Exception {
         List<String> failed = new ArrayList<>();
+        int selected = Integer.getInteger("setu.benchmark.target.repeat", 0);
+        assertTrue(selected >= 0 && selected <= 3, "target repeat must be 1..3, or 0 for all");
         for (int repeat = 1; repeat <= 3; repeat++) {
+            if (selected != 0 && selected != repeat) continue;
             Path capture = Files.createDirectories(Path.of(System.getProperty("SETU_LOG_DIR", "logs"))
                     .resolve(System.getProperty("setu.benchmark.target.profile", "reference").equals("ci-baseline")
                             ? "ci-baseline" : "node-target").resolve(mode + "-" + repeat + "-" + UUID.randomUUID()));
@@ -43,9 +46,9 @@ class NodeTargetThroughputBenchmarkTests {
                 assertEquals(0, child.exitValue(), report);
                 if (!report.contains("NODE_TARGET_END mode=" + mode + " qualified=true")) failed.add(log.toString());
                 if (Boolean.parseBoolean(System.getProperty("setu.benchmark.jfr", "true")))
-                    assertEquals(Set.of(1, 2, 3), CapacityJfr.report(capture.resolve("node-target.jfr")));
+                    assertEquals(Set.of(1, 2, 3), CapacityJfr.report(capture.resolve("recordings")));
             } finally {
-                if (child.isAlive()) child.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
+                BenchmarkStageProcess.terminate(child);
             }
         }
         if (Boolean.parseBoolean(System.getProperty("setu.benchmark.node.targets.enforce", "false")))

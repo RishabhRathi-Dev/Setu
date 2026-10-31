@@ -166,6 +166,32 @@ class ResourceBudgetTests(unittest.TestCase):
             self.assertEqual(64*resources.MIB, snapshot['budget']['memory_log_bytes'])
             self.assertEqual('systemd-cgroup-v2', snapshot['enforcement'])
 
+    def test_target_repeat_runs_only_selected_shard_and_retains_unqualified_aggregate_status(self):
+        from test_benchmark_node_targets import fixture, capture
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        commands = []
+        def workload(command, **kwargs):
+            commands.append(command)
+            kwargs['stdout'].write(capture([fixture(repeat=2)]))
+            return type('Result', (), {'returncode': 0})()
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(resources, 'detect_host', return_value=self.host(cores=5)), \
+             patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
+             patch.object(resources.subprocess, 'run', side_effect=workload), patch('builtins.print'), \
+             patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'target', '--measurement', 'full', '--storage-mode', 'IN_MEMORY',
+                                      '--payload-sizes', '1024', '--target-repeat', '2', '--strict',
+                                      '--data-directory', directory, '--output', directory]):
+            resources.main()
+            self.assertEqual(1, len(commands))
+            self.assertIn('-Dsetu.benchmark.target.repeat=2', commands[0])
+            saved = json.loads(next(Path(directory).rglob('comparison.json')).read_text())
+            self.assertEqual([2], saved['resources']['target_repeats'])
+            self.assertEqual(1, saved['resources']['repeats'])
+            self.assertEqual([2], [run['repeat'] for run in saved['runs']])
+            with self.assertRaises(ValueError):
+                resources.node_target_report.summaries(saved['runs'], ('IN_MEMORY',))
+
     def test_node_target_launcher_runs_java_repetitions_once_and_saves_failed_health(self):
         from test_benchmark_node_targets import fixture, capture
         old_handler = signal.getsignal(signal.SIGTERM)

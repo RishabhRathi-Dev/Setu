@@ -25,10 +25,12 @@ def capture(run):
     for key, marker in (('buffers', 'CAPACITY_BUFFERS'), ('admission', 'CAPACITY_ADMISSION')):
         if key in run:
             extra.append(line(marker, dict(mode=mode, **run[key])))
-    return '\n'.join([line('CAPACITY_CONFIG', dict(mode=mode, **run['config'], cpu_budget_cores=run['cpu_budget_cores'])),
+    scope = dict(jvm_scope=run['jvm_scope']) if 'jvm_scope' in run else {}
+    return '\n'.join([line('CAPACITY_CONFIG', dict(mode=mode, **run['config'], cpu_budget_cores=run['cpu_budget_cores'], **scope)),
                       *extra,
                       line('CAPACITY_RUNTIME', run['runtime']),
                       line('CAPACITY_STORAGE', dict(mode=mode, filesystem=run['filesystem'], directory='private/path')),
+                      *(line('CAPACITY_WARMUP', row) for row in run.get('warmups', [])),
                       *(line('CAPACITY_STAGE', dict(mode=mode, **stage)) for stage in run['stages']),
                       line('CAPACITY_STOP', dict(mode=mode, **run['stop'], detail='private/path'))])
 
@@ -40,6 +42,26 @@ def resources():
 
 
 class RedlineReportTests(unittest.TestCase):
+    def test_stage_scoped_redline_requires_warmup_at_each_measured_concurrency(self):
+        run = fixture()
+        run['jvm_scope'] = 'stage'
+        run['warmups'] = []
+        for stage in run['stages']:
+            stage['jvm_pid'] = str(100 + int(stage['stage']))
+            run['warmups'].append(dict(mode=run['mode'], stage=stage['stage'], producers=stage['producers'],
+                                       consumers=stage['consumers'], duration_ms='2000', jvm_pid=stage['jvm_pid']))
+        self.assertEqual([run], report.parse_capture(capture(run), ('IN_MEMORY',)))
+        self.assertIn('One fresh JVM per stage', report.render_runs([run]))
+        for case in ('missing', 'short', 'concurrency', 'reused', 'different_jvm'):
+            broken = copy.deepcopy(run)
+            if case == 'missing': broken['warmups'].pop()
+            if case == 'short': broken['warmups'][0]['duration_ms'] = '1999'
+            if case == 'concurrency': broken['warmups'][1]['producers'] = '1'
+            if case == 'reused': broken['stages'][1]['jvm_pid'] = '101'
+            if case == 'different_jvm': broken['warmups'][0]['jvm_pid'] = '999'
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                report.parse_capture(capture(broken), ('IN_MEMORY',))
+
     def test_unbounded_admission_reports_disabled_credits_without_relabeling_bounded_runs(self):
         run = fixture()
         run['admission'] = dict(policy='unbounded', file_write_queue_bytes='0', file_write_queue_requests='0')

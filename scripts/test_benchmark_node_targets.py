@@ -59,6 +59,35 @@ def documents():
 
 
 class NodeTargetTests(unittest.TestCase):
+    def test_stage_scoped_capture_pairs_warmup_with_distinct_measurement_processes(self):
+        runs = [fixture(repeat=repeat) for repeat in (1, 2, 3)]
+        for run in runs:
+            run['config']['jvm_scope'] = 'stage'
+            for index, (stage, warmup) in enumerate(zip(run['stages'], run['warmups']), 1):
+                stage['jvm_pid'] = warmup['jvm_pid'] = str(100 + index)
+        report.parse_capture(capture(runs), ('IN_MEMORY',))
+        runs[0]['warmups'][0]['jvm_pid'] = '999'
+        with self.assertRaisesRegex(ValueError, 'share the stage JVM'):
+            report.parse_capture(capture(runs), ('IN_MEMORY',))
+        runs[0]['warmups'][0]['jvm_pid'] = '101'
+        runs[0]['stages'][1]['jvm_pid'] = '101'
+        with self.assertRaisesRegex(ValueError, 'distinct'):
+            report.parse_capture(capture(runs), ('IN_MEMORY',))
+
+    def test_repetition_shards_require_explicit_selection_and_complete_aggregation(self):
+        runs = [fixture(repeat=2)]
+        with self.assertRaisesRegex(ValueError, 'three distinct'):
+            report.parse_capture(capture(runs), ('IN_MEMORY',))
+        parsed = report.parse_capture(capture(runs), ('IN_MEMORY',), expected_repeats=(2,))
+        self.assertFalse(report.summaries(parsed, ('IN_MEMORY',), expected_repeats=(2,))['IN_MEMORY']['qualified'])
+        self.assertIn('Repetition shard 2', report.comparison_report(parsed, ('IN_MEMORY',), expected_repeats=(2,)))
+        for broken in ([fixture(repeat=1)], [fixture(repeat=2), fixture(repeat=2)]):
+            with self.assertRaises(ValueError):
+                report.parse_capture(capture(broken), ('IN_MEMORY',), expected_repeats=(2,))
+        documents_by_repeat = [dict(document, runs=[run]) for document in documents() for run in document['runs']]
+        combined = [run for document in documents_by_repeat for run in document['runs']]
+        self.assertTrue(all(row['qualified'] for row in report.summaries(combined, report.TARGETS).values()))
+
     def test_reports_force_waits_and_latency_components_and_rejects_corrupt_wait_metrics(self):
         runs = [fixture('FILE', repeat, 'ci-baseline') for repeat in (1, 2, 3)]
         waits = dict(file_force_count='200', file_force_total_ms='3500.123456',

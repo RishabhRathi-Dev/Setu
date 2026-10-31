@@ -69,6 +69,15 @@ def parse_capture(text, modes=MODES):
                    stop={key: rows['CAPACITY_STOP'][key] for key in ('reason', 'stage', 'producers', 'consumers')},
                    stages=[{key: row[key] for key in ('stage', 'producers', 'consumers', 'stop', *METRICS)}
                            for _, row in sorted(stages.items())])
+        if config.get('jvm_scope') == 'stage':
+            run['jvm_scope'] = 'stage'
+            run['warmups'] = [fields(line) for line in text.splitlines()
+                              if line.startswith('CAPACITY_WARMUP ') and fields(line).get('mode') == mode]
+            for stage in run['stages']:
+                original = stages[int(stage['stage'])]
+                stage['jvm_pid'] = original['jvm_pid']
+                if 'jvm_start_millis' in original:
+                    stage['jvm_start_millis'] = original['jvm_start_millis']
         current, errors = None, []
         for line in text.splitlines():
             if line.startswith('CAPACITY_CONFIG '):
@@ -132,6 +141,18 @@ def validate_run(run):
             or any(int(run['runtime'][key]) <= 0 for key in ('cpus', 'max_heap_mb'))):
         raise ValueError('Invalid redline JVM')
     stop, stages = run['stop'], run['stages']
+    if run.get('jvm_scope') == 'stage':
+        import sustained_report
+        warmups = run.get('warmups', [])
+        by_stage = {int(row['stage']): row for row in warmups}
+        if len(by_stage) != len(warmups) or any(int(row['stage']) not in by_stage for row in stages):
+            raise ValueError('Missing or duplicate redline stage warmup')
+        measured_warmups = [by_stage[int(row['stage'])] for row in stages]
+        sustained_report.validate_stage_processes(stages, measured_warmups)
+        for row, warmup in zip(stages, measured_warmups):
+            if (warmup['mode'] != mode or warmup['producers'] != row['producers']
+                    or warmup['consumers'] != row['consumers'] or number(warmup, 'duration_ms') < expected['warmup_ms']):
+                raise ValueError('Redline warmup does not match stage load')
     if stop['reason'] not in BOUNDARIES:
         raise ValueError('Redline did not reach a runtime boundary: ' + stop['reason'])
     if any(not re.fullmatch(r'[A-Z_]{1,64}', code) for code in run.get('request_error_codes', [])):
@@ -204,7 +225,9 @@ def render_runs(runs):
              'Coverage describes aggregate progress during the measurement window, not a record-loss rate or proof that every consumer caught up. '
              'It can slightly exceed 100% when operations cross a window boundary; n/a means no writes completed. '
              'A completed load step is not a health or capacity pass. Peak production is a short-window observation, not sustained capacity.', '',
-             f'One fresh JVM per mode; record bytes {sizes}, {batches}-record batches, '
+             ('One fresh JVM per stage; warmup and measurement share that JVM. Heap, connections and broker state '
+              'start fresh at each concurrency level. ' if all(run.get('jvm_scope') == 'stage' for run in runs)
+              else 'Historical one-JVM-per-mode or mixed captures. ') + f'Record bytes {sizes}, {batches}-record batches, '
              f'2s warmup and {windows} ramp windows. From stage eight, CPU saturation adds a 10s hold; concurrency keeps doubling until a runtime limit.', '',
              '| Mode | Highest unique writes/s | Consumers at that rate | Delivery coverage at that rate | Why the test stopped |',
              '| --- | ---: | ---: | ---: | --- |']
