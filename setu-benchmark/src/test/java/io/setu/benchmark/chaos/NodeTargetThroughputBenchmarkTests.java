@@ -43,7 +43,9 @@ class NodeTargetThroughputBenchmarkTests {
                 String report = Files.readString(log);
                 System.out.printf("NODE_TARGET_CAPTURE mode=%s repeat=%d path=%s%n", mode, repeat, log.toAbsolutePath());
                 System.out.print(report);
-                assertEquals(0, child.exitValue(), report);
+                // The raw output was printed above. Repeating it in the assertion makes Surefire
+                // replay protocol markers, which can hide the original failure in report parsing.
+                assertEquals(0, child.exitValue(), "Node target worker failed; capture: " + log);
                 if (!report.contains("NODE_TARGET_END mode=" + mode + " qualified=true")) failed.add(log.toString());
                 if (Boolean.parseBoolean(System.getProperty("setu.benchmark.jfr", "true")))
                     assertEquals(Set.of(1, 2, 3), CapacityJfr.report(capture.resolve("recordings")));

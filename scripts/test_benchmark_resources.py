@@ -216,6 +216,33 @@ class ResourceBudgetTests(unittest.TestCase):
             self.assertEqual(1, len(documents))
             self.assertEqual(3, len(json.loads(documents[0].read_text())['runs']))
 
+    def test_failed_shard_keeps_timeout_primary_despite_surefire_replayed_markers(self):
+        from test_benchmark_node_targets import fixture, capture
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        incomplete = capture([fixture('FILE', repeat=2)]).split('NODE_TARGET_END')[0]
+        replay = incomplete.split('\n', 1)[1]
+        text = incomplete + '\n' + replay + '\nCaused by: java.net.SocketTimeoutException: Read timed out\n'
+        def workload(command, **kwargs):
+            kwargs['stdout'].write(text)
+            return type('Result', (), {'returncode': 1})()
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(resources, 'detect_host', return_value=self.host(cores=5)), \
+             patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
+             patch.object(resources.subprocess, 'run', side_effect=workload), patch('builtins.print'), \
+             patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'target', '--measurement', 'full', '--storage-mode', 'FILE',
+                                      '--payload-sizes', '1024', '--target-repeat', '2', '--report-only',
+                                      '--data-directory', directory, '--output', directory]):
+            with self.assertRaisesRegex(RuntimeError, 'execution failed.*1.*SocketTimeoutException: Read timed out'):
+                resources.main()
+            saved = json.loads(next(Path(directory).rglob('failure.json')).read_text())
+            self.assertEqual(1, saved['execution_exit_code'])
+            self.assertEqual([2], saved['resources']['target_repeats'])
+            self.assertIn('expected independent repetitions [2], found [2, 2]', saved['validation_error'])
+            self.assertNotIn('three distinct', saved['validation_error'])
+            self.assertFalse(list(Path(directory).rglob('comparison.json')))
+            self.assertTrue(Path(saved['capture']).read_text().endswith(text))
+
     def test_target_and_baseline_warn_by_default_but_fail_execution_and_explicit_strict_gates(self):
         from test_benchmark_node_targets import fixture, capture
         old_handler = signal.getsignal(signal.SIGTERM)
@@ -244,7 +271,7 @@ class ResourceBudgetTests(unittest.TestCase):
                             resources.main()
                         else:
                             expected = {'strict': 'not qualified', 'worker-exit': 'execution failed.*137',
-                                        'partial': 'incomplete or invalid.*137', 'request-error': 'request errors',
+                                        'partial': 'execution failed.*137', 'request-error': 'request errors',
                                         'no-consumption': 'no completed records'}[case]
                             with self.assertRaisesRegex(RuntimeError, expected): resources.main()
                     printed = '\n'.join(str(call.args[0]) for call in output.call_args_list)

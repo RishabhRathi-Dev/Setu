@@ -442,12 +442,17 @@ def main():
                                                             expected_repeats=expected_repeats)
                 except (ValueError, KeyError) as failure:
                     print('\n'.join(captured.splitlines()[-60:]), flush=True)
+                    if result.returncode:
+                        message = save_execution_failure(output, capture, snapshot, result.returncode, str(failure))
+                        raise RuntimeError(message) from failure
                     raise RuntimeError(f'node-target measurement incomplete or invalid (exit {result.returncode}): '
                                        f'{failure}; capture: {capture}') from failure
                 rows += runs
                 print(node_target_report.save(output, rows, snapshot, modes, target_profile, expected_repeats), flush=True)
             if result.returncode:
                 print('\n'.join(capture.read_text(encoding='utf-8').splitlines()[-60:]), flush=True)
+                if target_kind:
+                    raise RuntimeError(save_execution_failure(output, capture, snapshot, result.returncode))
                 raise RuntimeError(f'benchmark execution failed (exit {result.returncode}); capture: {capture}')
             if args.kind == 'steady':
                 for line in capture.read_text(encoding='utf-8').splitlines():
@@ -488,6 +493,20 @@ def main():
         failed = sustained_report.gate_failures(rows, modes)
         if failed:
             expectation_miss('Sustained expectations unmet: ' + '; '.join(failed), output, args.report_only)
+
+
+def save_execution_failure(output, capture, snapshot, exit_code, validation_error=None):
+    """Keep a failed worker's cause primary, even when its incomplete capture cannot qualify."""
+    causes = [line.strip().removeprefix('Caused by: ') for line in capture.read_text(encoding='utf-8').splitlines()
+              if line.strip().startswith('Caused by: ')]
+    message = f'benchmark execution failed (exit {exit_code})'
+    if causes:
+        message += ': ' + causes[-1]
+    document = dict(resources=snapshot, execution_exit_code=exit_code, error=message, capture=str(capture))
+    if validation_error is not None:
+        document['validation_error'] = validation_error
+    (output / 'failure.json').write_text(json.dumps(document, indent=2) + '\n', encoding='utf-8')
+    return message + '; capture: ' + str(capture)
 
 
 def expectation_miss(message, output, report_only):

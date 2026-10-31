@@ -51,7 +51,9 @@ def validate_runs(runs, modes, require_jfr=True, target_profile='reference', exp
     for mode in modes:
         selected = [run for run in runs if run['config']['mode'] == mode]
         if sorted(run['repeat'] for run in selected) != list(expected_repeats):
-            raise ValueError(f'{mode}: three distinct independent repetitions required')
+            found = sorted(run['repeat'] for run in selected)
+            label = 'three distinct independent repetitions required; ' if tuple(expected_repeats) == (1, 2, 3) else ''
+            raise ValueError(f'{mode}: {label}expected independent repetitions {list(expected_repeats)}, found {found}')
         captures = [run['capture'] for run in selected]
         if len(set(captures)) != len(expected_repeats): raise ValueError('duplicate target capture')
         settings = ('record_bytes', 'target_per_s', 'concurrency', 'cpu_cores', 'heap_mib', 'durability')

@@ -55,7 +55,8 @@ final class BenchmarkStageProcess {
                                                      int concurrency, double offered, double fraction) throws Exception {
         Result result = run(SustainedStageWorker.class, stage, mode, root.toString(),
                 Integer.toString(concurrency), Double.toString(offered), Double.toString(fraction));
-        if (result.exitCode != 0) throw new IOException("Sustained stage exited " + result.exitCode);
+        if (result.exitCode != 0) throw new IOException("Sustained stage exited " + result.exitCode
+                + ": mode=" + mode + " stage=" + stage + " concurrency=" + concurrency + " load_fraction=" + fraction);
         Map<String, String> row = result.only("SUSTAINED_STAGE ");
         if (!mode.equals(row.get("mode")) || Integer.parseInt(row.get("concurrency")) != concurrency
                 || Integer.parseInt(row.get("stage")) != stage
