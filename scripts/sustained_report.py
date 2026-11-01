@@ -52,6 +52,18 @@ def number(row, key):
     return value
 
 
+def validate_stage_processes(stages, warmups=None):
+    """New captures identify the stage JVM; historical mode-scoped captures remain readable."""
+    identities = [(int(row['jvm_pid']), row.get('jvm_start_millis')) for row in stages]
+    if len(set(identities)) != len(identities) or any(pid <= 0 for pid, _ in identities):
+        raise ValueError('stage JVM identities must be distinct and positive')
+    if warmups is not None and (len(warmups) != len(stages)
+            or any(stage['jvm_pid'] != warmup.get('jvm_pid')
+                   or stage.get('jvm_start_millis') != warmup.get('jvm_start_millis')
+                   for stage, warmup in zip(stages, warmups))):
+        raise ValueError('warmup and measurement must share the stage JVM')
+
+
 def qualifies(config, stage):
     """Recompute qualification from raw measurements; do not trust the worker flag."""
     half = number(stage, 'load_fraction') == .5
@@ -113,6 +125,8 @@ def validate_run(run):
         raise ValueError('wrong durability or consumer delivery semantics')
     if not stages or 'end' not in run:
         raise ValueError('incomplete sustained capture')
+    if config.get('jvm_scope') == 'stage':
+        validate_stage_processes(stages)
     ceiling = int(config['max_concurrency'])
     if number(config, 'cpu_cores') <= 0:
         raise ValueError('CPU allocation must be positive')

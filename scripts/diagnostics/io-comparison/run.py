@@ -110,7 +110,7 @@ def main():
             target = overlay / path.name
             target.write_text(text)
             files.append(target)
-        for name in ["CapacityJfr", "SustainedThroughputWorker"]:
+        for name in ["CapacityJfr", "SustainedThroughputWorker", "BenchmarkStageProcess", "SustainedStageWorker"]:
             text = (args.repo / "setu-benchmark/src/test/java/io/setu/benchmark/chaos" / (name + ".java")).read_text()
             if name == "CapacityJfr" and not args.production:
                 text = text.replace('recording.enable("jdk.FileForce").withThreshold(java.time.Duration.ZERO);',

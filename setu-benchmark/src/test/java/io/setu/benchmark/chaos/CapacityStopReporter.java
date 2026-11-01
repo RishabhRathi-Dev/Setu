@@ -29,7 +29,10 @@ final class CapacityStopReporter {
     }
 
     void heapExhausted() {
-        if (!reported.compareAndSet(false, true)) return;
+        if (!reported.compareAndSet(false, true)) {
+            awaitHeapExhaustionIfReported();
+            return;
+        }
         emergencyReserve = null;
         try { stdout.write(marker); stdout.flush(); }
         catch (IOException ignored) { /* A broken stdout cannot be recovered during heap exhaustion. */ }
@@ -37,5 +40,12 @@ final class CapacityStopReporter {
             CapacityJfr.emergencyDump();
             runtime.halt(42);
         }
+    }
+
+    boolean isHeapExhausted() { return reported.get(); }
+
+    /** The reporting thread owns the terminal marker and exit while its best-effort dump runs. */
+    void awaitHeapExhaustionIfReported() {
+        while (reported.get()) java.util.concurrent.locks.LockSupport.parkNanos(1_000_000L);
     }
 }

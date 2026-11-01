@@ -24,6 +24,17 @@ class CapacityOomReportingChaosTests {
     }
 
     @Test
+    void concurrentCleanupFailureCannotReplaceTheReportedHeapExhaustion() throws Exception {
+        for (String mode : new String[]{"FILE", "IN_MEMORY"}) {
+            Result result = runWorker(mode, "racing");
+            assertEquals(42, result.exit, result.output);
+            assertEquals(1, result.output.lines().filter(line -> line.startsWith("CAPACITY_STOP")).count(), result.output);
+            assertTrue(result.output.contains("reason=JVM_OOM stage=3 producers=4 consumers=4"), result.output);
+            assertFalse(result.output.contains("Concurrent cleanup failure"), result.output);
+        }
+    }
+
+    @Test
     void doesNotReportAnUnexpectedCrashAsHeapExhaustion() throws Exception {
         Result result = runWorker("FILE", "unexpected");
         assertEquals(1, result.exit, result.output);

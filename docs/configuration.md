@@ -47,11 +47,22 @@ native-access options. See [FILE I/O ownership and limits](../setu-storage/READM
 | `data.dir` | `data` | File-mode data root; unused by memory mode |
 | `record.max.bytes` | `1048576` (1 MiB) | Maximum record payload; 0–15 MiB, also subject to frame/protocol limits |
 | `queue.block.bytes` | `67108864` (64 MiB) | Positive Chronicle mapping block size; effective minimum 64 MiB |
+| `file.write.queue.max.bytes` | `33554432` (32 MiB) | Non-negative outstanding payload/reference bytes per FILE partition, including active flush; zero disables byte admission |
+| `file.write.queue.max.requests` | `1024` | Non-negative outstanding requests per FILE partition, including active flush; zero disables request admission; maximum `2147483647` |
 | `memory.log.max.bytes` | `268435456` (256 MiB) | Non-negative shared accounted memory-log budget; zero disables the budget |
 | `memory.retention.millis` | `0` | Lossy maximum age in memory mode; 0–365 days; zero disables timed expiry |
 | `file.retention.millis` | `0` | File-mode age limit from the end of each daily cycle; 0–365 days; zero disables expiry |
 
-Chronicle rolls files daily. Mapping block size does not cap daily file growth. Positive `file.retention.millis` enables cleanup at startup and every minute, independently of consumer progress. Only whole completed cycles expire; the newest populated file is always retained, even while idle. Record age can therefore exceed the configured duration by up to one daily cycle plus the sweep delay, and the newest file remains until a later cycle receives data. Fetches before the retained boundary return `OFFSET_OUT_OF_RANGE` with a resume offset. For seven days, set `file.retention.millis=604800000`. Monitor free disk for durable workloads. File write admission is fixed at 32 MiB / 1,024 outstanding requests per partition; it is not a standalone property.
+Chronicle rolls files daily. Mapping block size does not cap daily file growth. Positive `file.retention.millis` enables cleanup at startup and every minute, independently of consumer progress. Only whole completed cycles expire; the newest populated file is always retained, even while idle. Record age can therefore exceed the configured duration by up to one daily cycle plus the sweep delay, and the newest file remains until a later cycle receives data. Fetches before the retained boundary return `OFFSET_OUT_OF_RANGE` with a resume offset. For seven days, set `file.retention.millis=604800000`. Monitor free disk for durable workloads.
+
+FILE write admission defaults to 32 MiB / 1,024 outstanding requests per partition. Set either `file.write.queue.max.bytes` or `file.write.queue.max.requests` to `0` to disable that limit independently; set both to `0` for unbounded admission within JVM/OS and counter limits. Larger queues retain more unforced work in memory; they do not increase storage-device bandwidth. Rejection remains whole-batch and leaves offsets unchanged. Durable success still follows force, and close drains accepted work. Settings apply to both newly created and recovered partitions at startup and are unused in IN_MEMORY mode. These options do not change the separate io_uring submission/native-scratch bounds.
+
+```properties
+# Larger bounded FILE queue for each partition:
+file.write.queue.max.bytes=268435456
+file.write.queue.max.requests=4096
+# To remove queue admission, use 0 for both values instead.
+```
 
 Memory reclamation normally follows registered members' progress. Members start at the partition end on join; no members allows immediate reclamation. Positive timed retention can discard records a consumer has not processed. These memory-only settings do not configure file retention or a JVM/process memory limit.
 

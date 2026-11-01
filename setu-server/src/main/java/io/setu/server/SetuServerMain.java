@@ -7,6 +7,7 @@ import io.setu.server.tcp.SelectorTcpServer;
 import io.setu.server.tcp.TcpServer;
 import io.setu.server.tcp.TcpServerOptions;
 import io.setu.storage.log.MessageLogs;
+import io.setu.storage.log.FileWriteQueueOptions;
 import io.setu.storage.log.StorageMode;
 import org.slf4j.LoggerFactory;
 
@@ -44,7 +45,7 @@ public final class SetuServerMain {
                 "handshake.timeout.millis", "frame.timeout.millis", "consumers.max", "consumer.partitions.max",
                 "socket.timeout.millis", "ack.timeout.millis", "consumer.timeout.millis", "transport", "memory.log.max.bytes",
                 "requests.max.bytes", "responses.max.bytes", "memory.retention.millis", "file.retention.millis", "write.timeout.millis",
-                "journal.compact.bytes", "operations.port");
+                "journal.compact.bytes", "operations.port", "file.write.queue.max.bytes", "file.write.queue.max.requests");
         for (String key : properties.stringPropertyNames())
             if (!supported.contains(key)) throw new IllegalArgumentException("Unknown configuration property: " + key);
         StorageMode mode = StorageMode.valueOf(properties.getProperty("storage.mode", "FILE"));
@@ -65,6 +66,9 @@ public final class SetuServerMain {
             throw new IllegalArgumentException("journal.compact.bytes must be nonnegative; operations.port must be -1..65535");
         if (!Set.of("blocking", "selector").contains(transport))
             throw new IllegalArgumentException("transport must be blocking or selector");
+        var fileWriteQueue = new FileWriteQueueOptions(
+                number(properties, "file.write.queue.max.bytes", FileWriteQueueOptions.defaults().maxBytes()),
+                Math.toIntExact(number(properties, "file.write.queue.max.requests", FileWriteQueueOptions.defaults().maxRequests())));
         var logger = LoggerFactory.getLogger(SetuServerMain.class);
         logger.info("JVM garbage collectors: {}", java.lang.management.ManagementFactory.getGarbageCollectorMXBeans()
                 .stream().map(java.lang.management.GarbageCollectorMXBean::getName).toList());
@@ -82,7 +86,7 @@ public final class SetuServerMain {
                 number(properties, "file.retention.millis", 0),
                 new io.setu.core.broker.ConsumerMetadataLimits(
                         Math.toIntExact(number(properties, "consumers.max", 10_000)),
-                        Math.toIntExact(number(properties, "consumer.partitions.max", 100_000))))) {
+                        Math.toIntExact(number(properties, "consumer.partitions.max", 100_000))), fileWriteQueue)) {
             broker.configureJournalCompaction(compactBytes);
             var metrics = new io.setu.server.observability.BrokerMetrics(broker);
             BrokerRequestHandler handler = new BrokerRequestHandler(metrics);

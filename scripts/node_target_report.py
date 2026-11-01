@@ -13,7 +13,7 @@ def targets_for(profile):
     return {'reference': TARGETS, 'ci-baseline': BASELINES}[profile]
 
 
-def parse_capture(text, modes, captures=None, target_profile='reference'):
+def parse_capture(text, modes, captures=None, target_profile='reference', expected_repeats=(1, 2, 3)):
     runs, current, identity, selected = [], None, None, True
     for line in text.splitlines():
         if line.startswith('NODE_TARGET_CAPTURE '):
@@ -40,20 +40,22 @@ def parse_capture(text, modes, captures=None, target_profile='reference'):
             else:
                 key = 'stages' if line.startswith('SUSTAINED_STAGE ') else 'warmups' if line.startswith('SUSTAINED_WARMUP ') else 'jfr'
                 current[key].append(row)
-    validate_runs(runs, modes, target_profile=target_profile)
+    validate_runs(runs, modes, target_profile=target_profile, expected_repeats=expected_repeats)
     return runs
 
 
-def validate_runs(runs, modes, require_jfr=True, target_profile='reference'):
+def validate_runs(runs, modes, require_jfr=True, target_profile='reference', expected_repeats=(1, 2, 3)):
     targets = targets_for(target_profile)
     if any(run['config']['mode'] not in modes for run in runs):
         raise ValueError('unexpected target mode')
     for mode in modes:
         selected = [run for run in runs if run['config']['mode'] == mode]
-        if sorted(run['repeat'] for run in selected) != [1, 2, 3]:
-            raise ValueError(f'{mode}: three distinct independent repetitions required')
+        if sorted(run['repeat'] for run in selected) != list(expected_repeats):
+            found = sorted(run['repeat'] for run in selected)
+            label = 'three distinct independent repetitions required; ' if tuple(expected_repeats) == (1, 2, 3) else ''
+            raise ValueError(f'{mode}: {label}expected independent repetitions {list(expected_repeats)}, found {found}')
         captures = [run['capture'] for run in selected]
-        if len(set(captures)) != 3: raise ValueError('duplicate target capture')
+        if len(set(captures)) != len(expected_repeats): raise ValueError('duplicate target capture')
         settings = ('record_bytes', 'target_per_s', 'concurrency', 'cpu_cores', 'heap_mib', 'durability')
         if len({tuple(run['config'][key] for key in settings) for run in selected}) != 1:
             raise ValueError('target repetitions use different settings')
@@ -82,6 +84,8 @@ def validate_runs(runs, modes, require_jfr=True, target_profile='reference'):
                 raise ValueError('incorrect target durability')
             if 'end' not in run or run['end']['mode'] != mode or len(run['stages']) != 3 or len(run['warmups']) != 3:
                 raise ValueError('incomplete target capture')
+            if config.get('jvm_scope') == 'stage':
+                sustained.validate_stage_processes(run['stages'], run['warmups'])
             for stage, warmup, fraction in zip(run['stages'], run['warmups'], (.5, .8, 1.)):
                 if target_profile == 'ci-baseline' and (stage.get('heap_sampling') != 'jitter_40_70_ms'
                         or number(stage, 'heap_samples') < 300):
@@ -151,8 +155,8 @@ def qualification_failures(run, stage, warmup):
     return failures
 
 
-def summaries(runs, modes, target_profile='reference'):
-    validate_runs(runs, modes, target_profile=target_profile)
+def summaries(runs, modes, target_profile='reference', expected_repeats=(1, 2, 3)):
+    validate_runs(runs, modes, target_profile=target_profile, expected_repeats=expected_repeats)
     targets = targets_for(target_profile)
     result = {}
     for mode in modes:
@@ -161,7 +165,7 @@ def summaries(runs, modes, target_profile='reference'):
         profiles = [next(row for row in run['jfr'] if int(row['stage']) == 3) for run in selected]
         passed = all(healthy(run, stage, warmup) for run in selected for stage, warmup in zip(run['stages'], run['warmups']))
         result[mode] = dict(target=targets[mode], rate=statistics.median(float(row['produce_per_s']) for row in stages),
-                            qualified=passed, p99=max(float(row['p99_ms']) for row in stages),
+                            qualified=passed and tuple(expected_repeats) == (1, 2, 3), p99=max(float(row['p99_ms']) for row in stages),
                             heap_mib=max(float(row['heap_peak_bytes']) / 1024**2 for run in selected for row in run['stages']),
                             cpu=max(float(row['cpu_avg']) for run in selected for row in run['stages']),
                             allocation_mib_s=statistics.median(float(row['allocation_mb']) / float(row['duration_s']) for row in profiles),
@@ -169,8 +173,8 @@ def summaries(runs, modes, target_profile='reference'):
     return result
 
 
-def comparison_report(runs, modes, target_profile='reference'):
-    totals = summaries(runs, modes, target_profile)
+def comparison_report(runs, modes, target_profile='reference', expected_repeats=(1, 2, 3)):
+    totals = summaries(runs, modes, target_profile, expected_repeats)
     lines = ['# CI performance baseline' if target_profile == 'ci-baseline' else '# Node-target measurements', '',
              'Three independent repetitions; 1 KiB records; 10s or longer warmup and 30s measurement at 50%, 80% and 100% of target. '
              'File acknowledgments follow force of every touched segment. Health requires 95% consumption and offered throughput, zero errors, '
@@ -181,6 +185,12 @@ def comparison_report(runs, modes, target_profile='reference'):
              'with completed writes in the same window. Similar write and delivery rates do not guarantee the requested load or other limits were met.', '',
              '| Mode | Reference writes/s | Median actual writes/s | Write target achieved | Worst target p99 ms | Peak heap MiB | Peak average CPU % | Qualified |',
              '| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
+    if tuple(expected_repeats) != (1, 2, 3):
+        lines.insert(2, 'Repetition shard ' + ', '.join(map(str, expected_repeats))
+                     + '; aggregate qualification requires all three repetitions.\n')
+    scopes = {run['config'].get('jvm_scope', 'mode') for run in runs}
+    lines.insert(2, ('Each load stage uses a fresh JVM; warmup and measurement share that JVM.\n'
+                    if scopes == {'stage'} else 'JVM scope: historical per-mode or mixed captures.\n'))
     for mode, row in totals.items():
         lines.append(f'| {mode} | {row["target"]:,.0f} | {row["rate"]:,.0f} | {row["rate"]/row["target"]:.1%} | '
                      f'{row["p99"]:.3f} | {row["heap_mib"]:.0f} | {row["cpu"]*100:.4f} | {row["qualified"]} |')
@@ -225,10 +235,10 @@ def comparison_report(runs, modes, target_profile='reference'):
     return '\n'.join(lines) + '\n' + sustained.force_wait_report(runs)
 
 
-def save(output, runs, snapshot, modes, target_profile='reference'):
-    validate_runs(runs, modes, target_profile=target_profile)
+def save(output, runs, snapshot, modes, target_profile='reference', expected_repeats=(1, 2, 3)):
+    validate_runs(runs, modes, target_profile=target_profile, expected_repeats=expected_repeats)
     kind = 'ci-baseline' if target_profile == 'ci-baseline' else 'node-target'
     (output / 'comparison.json').write_text(json.dumps(dict(kind=kind, resources=snapshot, runs=runs), indent=2) + '\n')
-    text = comparison_report(runs, modes, target_profile)
+    text = comparison_report(runs, modes, target_profile, expected_repeats)
     (output / 'comparison.txt').write_text(text, encoding='utf-8')
     return text

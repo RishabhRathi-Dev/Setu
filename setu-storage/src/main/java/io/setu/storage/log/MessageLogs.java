@@ -26,12 +26,20 @@ public final class MessageLogs {
 
     public static MessageLog open(StorageMode mode, Path directory, int maxRecordBytes,
                                   long queueBlockBytes, MemoryLogBudget memoryBudget, boolean timedRetention) throws IOException {
+        return open(mode, directory, maxRecordBytes, queueBlockBytes, memoryBudget, timedRetention,
+                FileWriteQueueOptions.defaults());
+    }
+
+    public static MessageLog open(StorageMode mode, Path directory, int maxRecordBytes,
+                                  long queueBlockBytes, MemoryLogBudget memoryBudget, boolean timedRetention,
+                                  FileWriteQueueOptions fileWriteQueue) throws IOException {
         Objects.requireNonNull(mode, "mode");
+        Objects.requireNonNull(fileWriteQueue, "fileWriteQueue");
         return switch (mode) {
             case IN_MEMORY -> new InMemoryMessageLog(maxRecordBytes, memoryBudget, timedRetention);
             case FILE -> new GroupCommitMessageLog(new ChronicleMessageLog(
                     Objects.requireNonNull(directory, "directory").toAbsolutePath(),
-                    maxRecordBytes, queueBlockBytes), 32L * 1024 * 1024, 1024, 250_000);
+                    maxRecordBytes, queueBlockBytes), fileWriteQueue.maxBytes(), fileWriteQueue.maxRequests(), 250_000);
         };
     }
 }

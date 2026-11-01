@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "label": "file writes (contributor PC)",
+  "message": "250.00K/s target, 56.76K/s actual, 23%, unqualified",
+  "color": "orange",
+  "sourceScope": "contributor PC diagnostic",
+  "sourceRevision": "e525bc6440e96abc3eed445712939aaf2481352d",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/41180557125",
+  "qualified": false
+}

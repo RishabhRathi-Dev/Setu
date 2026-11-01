@@ -39,6 +39,16 @@ def capture(run):
 
 
 class SustainedReportTests(unittest.TestCase):
+    def test_stage_scoped_capture_rejects_reused_process_identity(self):
+        run = run_fixture()
+        run['config']['jvm_scope'] = 'stage'
+        for index, row in enumerate(run['stages'], 1):
+            row['jvm_pid'] = str(index)
+        report.parse_capture(capture(run), 1024, ('IN_MEMORY',))
+        run['stages'][-1]['jvm_pid'] = '1'
+        with self.assertRaisesRegex(ValueError, 'distinct'):
+            report.parse_capture(capture(run), 1024, ('IN_MEMORY',))
+
     def test_jfr_force_metrics_are_preserved_and_require_all_measured_stages(self):
         run = run_fixture('FILE')
         run['config']['jfr'] = 'true'

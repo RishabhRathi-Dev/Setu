@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 MODES = ('IN_MEMORY', 'FILE')
-PROFILE = dict(record_bytes=1024, batch_records=256, stage_ms=2000, warmup_ms=2000,
+PROFILE = dict(record_bytes=1024, batch_records=4096, stage_ms=10000, warmup_ms=2000,
                cpu_hold_ms=10000, max_concurrency=0, min_stages=8)
 BOUNDARIES = {'JVM_OOM', 'RESOURCE_LIMIT', 'BROKER_OR_CLIENT_LIMIT', 'CLIENT_STALL', 'CONCURRENCY_COUNTER_LIMIT'}
 METRICS = ('duration_s', 'produced', 'produce_per_s', 'consumed', 'consume_per_s',
@@ -69,6 +69,15 @@ def parse_capture(text, modes=MODES):
                    stop={key: rows['CAPACITY_STOP'][key] for key in ('reason', 'stage', 'producers', 'consumers')},
                    stages=[{key: row[key] for key in ('stage', 'producers', 'consumers', 'stop', *METRICS)}
                            for _, row in sorted(stages.items())])
+        if config.get('jvm_scope') == 'stage':
+            run['jvm_scope'] = 'stage'
+            run['warmups'] = [fields(line) for line in text.splitlines()
+                              if line.startswith('CAPACITY_WARMUP ') and fields(line).get('mode') == mode]
+            for stage in run['stages']:
+                original = stages[int(stage['stage'])]
+                stage['jvm_pid'] = original['jvm_pid']
+                if 'jvm_start_millis' in original:
+                    stage['jvm_start_millis'] = original['jvm_start_millis']
         current, errors = None, []
         for line in text.splitlines():
             if line.startswith('CAPACITY_CONFIG '):
@@ -78,6 +87,20 @@ def parse_capture(text, modes=MODES):
                 errors.append(error[1])
         if errors:
             run['request_error_codes'] = sorted(set(errors))
+        buffers = [fields(line) for line in text.splitlines()
+                   if line.startswith('CAPACITY_BUFFERS ') and fields(line).get('mode') == mode]
+        if len(buffers) > 1:
+            raise ValueError('Duplicate redline buffer configuration')
+        if buffers:
+            run['buffers'] = {key: int(buffers[0][key]) for key in
+                              ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
+        admission = [fields(line) for line in text.splitlines()
+                     if line.startswith('CAPACITY_ADMISSION ') and fields(line).get('mode') == mode]
+        if len(admission) > 1:
+            raise ValueError('Duplicate redline admission policy')
+        if admission:
+            run['admission'] = {key: admission[0][key] for key in
+                                ('policy', 'file_write_queue_bytes', 'file_write_queue_requests')}
         validate_run(run)
         runs.append(run)
     return runs
@@ -85,20 +108,51 @@ def parse_capture(text, modes=MODES):
 
 def validate_run(run):
     mode = run['mode']
-    expected = dict(PROFILE, record_bytes=int(run['config']['record_bytes']))
+    expected = dict(PROFILE, record_bytes=int(run['config']['record_bytes']),
+                    batch_records=int(run['config']['batch_records']), stage_ms=int(run['config']['stage_ms']))
     if (mode not in MODES or not 1 <= expected['record_bytes'] <= 65536
+            or expected['batch_records'] not in (256, 4096)
+            or expected['stage_ms'] not in (2000, 10000)
+            or expected['batch_records'] * (expected['record_bytes'] + 4) + 1024 > 15 * 1024**2
             or {key: int(value) for key, value in run['config'].items()} != expected):
         raise ValueError('Wrong redline mode or profile')
     if number(run, 'cpu_budget_cores') <= 0 or not run['filesystem']:
         raise ValueError('Missing redline budget or filesystem')
     if 'disk_reserve_bytes' in run:
         number(run, 'disk_reserve_bytes')
+    admission = run.get('admission', {})
+    if admission:
+        if admission.get('policy') not in ('bounded', 'unbounded'):
+            raise ValueError('Invalid redline admission policy')
+        for key in ('file_write_queue_bytes', 'file_write_queue_requests'):
+            number(admission, key)
+        if admission['policy'] == 'unbounded' and (number(admission, 'file_write_queue_bytes') != 0
+                or number(admission, 'file_write_queue_requests') != 0
+                or run.get('buffers', {}).get('memory_log_bytes') != 0
+                or any(run.get('buffers', {}).get(key) != 2**63 - 1 for key in ('request_buffer_bytes', 'response_buffer_bytes'))):
+            raise ValueError('Unbounded redline has bounded admission credits')
+    if 'buffers' in run:
+        for key in ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes'):
+            if number(run['buffers'], key) <= 0 and not (key == 'memory_log_bytes' and admission.get('policy') == 'unbounded'):
+                raise ValueError('Invalid redline buffer budget')
     if any(not run['runtime'].get(key) for key in ('java', 'os', 'cpus', 'max_heap_mb')):
         raise ValueError('Missing redline runtime provenance')
     if (not re.match(r'^26(?:[.+-]|$)', run['runtime']['java'])
             or any(int(run['runtime'][key]) <= 0 for key in ('cpus', 'max_heap_mb'))):
         raise ValueError('Invalid redline JVM')
     stop, stages = run['stop'], run['stages']
+    if run.get('jvm_scope') == 'stage':
+        import sustained_report
+        warmups = run.get('warmups', [])
+        by_stage = {int(row['stage']): row for row in warmups}
+        if len(by_stage) != len(warmups) or any(int(row['stage']) not in by_stage for row in stages):
+            raise ValueError('Missing or duplicate redline stage warmup')
+        measured_warmups = [by_stage[int(row['stage'])] for row in stages]
+        sustained_report.validate_stage_processes(stages, measured_warmups)
+        for row, warmup in zip(stages, measured_warmups):
+            if (warmup['mode'] != mode or warmup['producers'] != row['producers']
+                    or warmup['consumers'] != row['consumers'] or number(warmup, 'duration_ms') < expected['warmup_ms']):
+                raise ValueError('Redline warmup does not match stage load')
     if stop['reason'] not in BOUNDARIES:
         raise ValueError('Redline did not reach a runtime boundary: ' + stop['reason'])
     if any(not re.fullmatch(r'[A-Z_]{1,64}', code) for code in run.get('request_error_codes', [])):
@@ -122,6 +176,8 @@ def validate_run(run):
         if number(row, 'duration_s') <= 0 or (row['stop'] == 'ramp' and (
                 number(row, 'produced') <= 0 or number(row, 'consumed') <= 0)):
             raise ValueError('Redline stage made no progress')
+        if row['stop'] == 'ramp' and number(row, 'duration_s') + .02 < expected['stage_ms'] / 1000:
+            raise ValueError('Redline stage ended before its configured measurement window')
         for counter, rate in (('produced', 'produce_per_s'), ('consumed', 'consume_per_s')):
             # The worker prints duration to two decimals and rates to whole records/s.
             if not math.isclose(number(row, counter), number(row, rate) * number(row, 'duration_s'),
@@ -158,6 +214,8 @@ def render_runs(runs):
     for run in runs:
         validate_run(run)
     sizes = ', '.join(str(size) for size in sorted({int(run['config']['record_bytes']) for run in runs}))
+    batches = ', '.join(str(size) for size in sorted({int(run['config']['batch_records']) for run in runs}))
+    windows = ', '.join(f'{size / 1000:g}s' for size in sorted({int(run['config']['stage_ms']) for run in runs}))
     lines = ['**Redline diagnostics: find a runtime limit (unqualified)**', '',
              '**Unique writes/s** counts records appended once. This is a fanout workload: every consumer reads the same partition, so one write '
              'creates one delivery per consumer. **Deliveries needed/s = unique writes/s × consumers.** '
@@ -167,8 +225,10 @@ def render_runs(runs):
              'Coverage describes aggregate progress during the measurement window, not a record-loss rate or proof that every consumer caught up. '
              'It can slightly exceed 100% when operations cross a window boundary; n/a means no writes completed. '
              'A completed load step is not a health or capacity pass. Peak production is a short-window observation, not sustained capacity.', '',
-             f'One fresh JVM per mode; record bytes {sizes}, 256-record batches, '
-             '2s warmup and 2s ramp windows. From stage eight, CPU saturation adds a 10s hold; concurrency keeps doubling until a runtime limit.', '',
+             ('One fresh JVM per stage; warmup and measurement share that JVM. Heap, connections and broker state '
+              'start fresh at each concurrency level. ' if all(run.get('jvm_scope') == 'stage' for run in runs)
+              else 'Historical one-JVM-per-mode or mixed captures. ') + f'Record bytes {sizes}, {batches}-record batches, '
+             f'2s warmup and {windows} ramp windows. From stage eight, CPU saturation adds a 10s hold; concurrency keeps doubling until a runtime limit.', '',
              '| Mode | Highest unique writes/s | Consumers at that rate | Delivery coverage at that rate | Why the test stopped |',
              '| --- | ---: | ---: | ---: | --- |']
     for run in runs:
@@ -209,6 +269,18 @@ def render_runs(runs):
                   f'{int(run["runtime"]["max_heap_mb"])} MiB maximum heap.']
         if 'disk_reserve_bytes' in run:
             lines.append(f'Free-disk reserve: {number(run, "disk_reserve_bytes") / 1024**3:.2f} GiB (sampled).')
+        if 'buffers' in run:
+            buffers = run['buffers']
+            if run.get('admission', {}).get('policy') == 'unbounded':
+                lines.append('Admission policy: **unbounded**. Retained-log and FILE write-queue admission are disabled; '
+                             'request/response credits use Long.MAX_VALUE. JVM/OS bounds, protocol constraints, '
+                             'the disk reserve and outer watchdog still apply. '
+                             f'Fetch payload: {buffers["fetch_bytes"] / 1024**2:g} MiB.')
+            else:
+                lines.append(f'Admission budgets: requests {buffers["request_buffer_bytes"] / 1024**2:g} MiB, '
+                         f'responses {buffers["response_buffer_bytes"] / 1024**2:g} MiB; '
+                         f'fetch payload {buffers["fetch_bytes"] / 1024**2:g} MiB; '
+                         f'retained log {buffers["memory_log_bytes"] / 1024**2:g} MiB.')
     return '\n'.join(lines) + '\n'
 
 
@@ -240,7 +312,10 @@ def save_capture(text, output, resources, modes, exit_code):
     errors = []
     for mode in modes:
         try:
-            document['runs'] += parse_capture(text, (mode,))
+            runs = parse_capture(text, (mode,))
+            if resources.get('admission_policy') and runs[0].get('admission', {}).get('policy') != resources['admission_policy']:
+                raise ValueError('Redline worker admission differs from its launch plan')
+            document['runs'] += runs
         except (ValueError, KeyError, TypeError) as error:
             errors.append(str(error))
     if exit_code:

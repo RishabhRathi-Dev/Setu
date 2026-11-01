@@ -1,7 +1,9 @@
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
+import time
 import sys
 import tempfile
 import unittest
@@ -27,6 +29,24 @@ class CaptureValidationTests(unittest.TestCase):
 
     def test_complete_unqualified_capture_is_accepted_without_performance_analysis(self):
         self.assertEqual(2, capture.validate_capture('FILE', self.log(), self.events(stages=(2, 1))))
+
+    def test_stage_markers_are_read_from_independent_recordings(self):
+        with tempfile.TemporaryDirectory(dir=self.scratch) as directory:
+            directory = Path(directory)
+            recordings = directory / 'recordings'
+            recordings.mkdir()
+            for stage in (1, 2, 3):
+                (recordings / f'{stage:04d}.jfr').touch()
+            calls = []
+            def read(command, **kwargs):
+                calls.append(command[-1])
+                kwargs['stdout'].write(json.dumps(self.events((int(Path(command[-1]).stem),))))
+            events = capture.read_stage_events('jfr', recordings, directory / 'stages.json', read)
+            self.assertEqual(3, len(calls))
+            self.assertEqual([1, 2, 3], [event['values']['stage'] for event in events['recording']['events']])
+            self.assertEqual(3, capture.validate_capture('FILE', self.log(3), events))
+            with self.assertRaisesRegex(ValueError, 'Missing per-stage'):
+                capture.read_stage_events('jfr', directory / 'missing', directory / 'unused.json', read)
 
     def test_rolling_truncation_duplicates_and_wrong_mode_are_rejected(self):
         for events in (self.events((2,)), self.events((1, 1)), self.events(mode='IN_MEMORY'), self.events(())):
@@ -57,6 +77,17 @@ class CaptureValidationTests(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired):
                 capture.stream_run(command, log, dict(os.environ), timeout=1)
             self.assertIn('started', log.read_text())
+
+    def test_timeout_also_terminates_the_coordinators_stage_child(self):
+        with tempfile.TemporaryDirectory(dir=self.scratch) as directory:
+            directory = Path(directory)
+            marker = directory / 'orphan-marker'
+            child = 'import time; from pathlib import Path; time.sleep(3); Path(' + repr(str(marker)) + ').write_text("orphan")'
+            parent = 'import subprocess, sys, time; subprocess.Popen([sys.executable, "-c", ' + repr(child) + ']); print("child started", flush=True); time.sleep(60)'
+            with self.assertRaises(subprocess.TimeoutExpired):
+                capture.stream_run([sys.executable, '-u', '-c', parent], directory / 'worker.log', dict(os.environ), timeout=1)
+            time.sleep(3)
+            self.assertFalse(marker.exists(), 'a stage child survived coordinator timeout')
 
     def test_oom_exit_is_only_accepted_when_requested_by_redline_caller(self):
         with tempfile.TemporaryDirectory(dir=self.scratch) as directory:

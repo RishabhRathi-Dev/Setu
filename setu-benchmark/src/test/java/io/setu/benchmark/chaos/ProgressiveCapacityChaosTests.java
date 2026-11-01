@@ -42,7 +42,7 @@ class ProgressiveCapacityChaosTests {
         List<String> command = new ArrayList<>(List.of(executable));
         BenchmarkSettings.addJvmArguments(command, 768);
         command.add("-DSETU_LOG_DIR=" + logDirectory.toAbsolutePath());
-        for (String property : List.of("setu.benchmark.batch.records", "setu.benchmark.stage.millis", "setu.benchmark.warmup.millis", "setu.benchmark.cpu.hold.millis", "setu.benchmark.max.concurrency", "setu.benchmark.min.stages", "setu.benchmark.memory.log.bytes", "setu.benchmark.jfr", "setu.log.level", "logback.configurationFile")) {
+        for (String property : List.of("setu.benchmark.batch.records", "setu.benchmark.stage.millis", "setu.benchmark.warmup.millis", "setu.benchmark.cpu.hold.millis", "setu.benchmark.max.concurrency", "setu.benchmark.min.stages", "setu.benchmark.memory.log.bytes", "setu.benchmark.request.buffer.bytes", "setu.benchmark.response.buffer.bytes", "setu.benchmark.fetch.bytes", "setu.benchmark.jfr", "setu.log.level", "logback.configurationFile")) {
             String value = System.getProperty(property);
             if (value != null) command.add("-D" + property + "=" + value);
         }
@@ -52,8 +52,7 @@ class ProgressiveCapacityChaosTests {
                 .redirectErrorStream(true).redirectOutput(output.toFile()).start();
         try {
             if (!child.waitFor(Duration.ofMinutes(25).toMillis(), TimeUnit.MILLISECONDS)) {
-                child.destroyForcibly();
-                child.waitFor(10, TimeUnit.SECONDS);
+                BenchmarkStageProcess.terminate(child);
                 throw new AssertionError("Capacity ramp exceeded 25 minutes for " + mode + ":\n" + readOutput(output));
             }
             String report = readOutput(output);
@@ -80,7 +79,7 @@ class ProgressiveCapacityChaosTests {
                                 && line.endsWith("stop=ramp")),
                         "Capacity worker stopped before completing the required stage " + minimumStages + ":\n" + report);
             if (Boolean.parseBoolean(System.getProperty("setu.benchmark.jfr", "true"))) {
-                Path recording = logDirectory.resolve("capacity.jfr");
+                Path recording = logDirectory.resolve("recordings");
                 System.out.printf("CAPACITY_JFR_CAPTURE mode=%s path=%s terminal_capture=%s%n", mode,
                         recording.toAbsolutePath(), child.exitValue() == 42 ? "best_effort" : "complete");
                 var recordedStages = CapacityJfr.report(recording);
@@ -89,7 +88,7 @@ class ProgressiveCapacityChaosTests {
                         assertTrue(recordedStages.contains(stage), "JFR is missing completed stage " + stage + " for " + mode);
             }
         } finally {
-            if (child.isAlive()) child.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
+            BenchmarkStageProcess.terminate(child);
         }
     }
 

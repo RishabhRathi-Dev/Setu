@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -16,19 +17,32 @@ spec.loader.exec_module(tool)
 
 def fixture():
     from test_redline_report import fixture as redline_fixture
-    document = dict(schema_version=2, scope='contributor PC diagnostic', qualified=False, enforcement='none',
+    document = dict(schema_version=2, scope='contributor PC diagnostic', qualified=False, enforcement='none', jvm_scope='stage',
                     source_revision='a' * 40, source_tree='b' * 40, contributor='Developer', profile=dict(tool.PROFILE),
                     started_utc='2026-10-29T00:00:00+00:00', finished_utc='2026-10-29T00:04:00+00:00',
                     host=dict(os='Windows', cpu='Test CPU', logical_cpus=12, active_processors=8,
                               heap_mib=512, direct_mib=128, jdk='JDK 26', filesystem_media='unknown'), runs=[],
                     redline_profile=dict(tool.redline_report.PROFILE), redline_runs=[redline_fixture(mode) for mode in tool.MODES])
+    budget = tool.redline_resources.local_budget(8, 8 * 1024**3)
+    document['redline_budget'] = budget
+    for run in document['redline_runs']:
+        run['jvm_scope'] = 'stage'
+        run['warmups'] = []
+        for row in run['stages']:
+            row['jvm_pid'] = str(100 + int(row['stage']))
+            run['warmups'].append(dict(mode=run['mode'], stage=row['stage'], producers=row['producers'],
+                                       consumers=row['consumers'], duration_ms='2000', jvm_pid=row['jvm_pid']))
+        run['runtime']['max_heap_mb'] = str(budget['heap_mib'])
+        run['admission'] = dict(policy='unbounded', file_write_queue_bytes='0', file_write_queue_requests='0')
+        run['buffers'] = {key: budget[key] for key in
+                          ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
     for mode in tool.MODES:
         for repeat in (1, 2):
-            run = dict(mode=mode, repeat=repeat, config=dict(mode=mode, filesystem='NTFS',
+            run = dict(mode=mode, repeat=repeat, config=dict(mode=mode, filesystem='NTFS', jvm_scope='stage',
                        durability='volatile' if mode == 'IN_MEMORY' else 'force_each_group_commit_before_ack'), stages=[], jfr=[])
             for index, fraction in enumerate((.5, .8, 1.), 1):
                 rate = tool.report.TARGETS[mode] * fraction
-                stage = dict(mode=mode, kind='latency', concurrency=1 if mode == 'IN_MEMORY' else 2,
+                stage = dict(mode=mode, kind='latency', concurrency=1 if mode == 'IN_MEMORY' else 2, jvm_pid=100 + index,
                              load_fraction=fraction, offered_per_s=rate, duration_s=10, errors=0,
                              produced=rate * 10, consumed=rate * 10, produce_per_s=rate, consume_per_s=rate,
                              qualified='false', p99_ms=2, produce_p99_ms=2, fetch_p99_ms=.2, ack_p99_ms=1,
@@ -43,6 +57,23 @@ def fixture():
 
 
 class ContributorValidationTests(unittest.TestCase):
+    def test_previous_mode_scoped_captures_remain_renderable_but_require_remeasurement_for_pushes(self):
+        data = fixture()
+        data.pop('jvm_scope')
+        for run in data['runs']:
+            run['config'].pop('jvm_scope')
+            for stage in run['stages']:
+                stage.pop('jvm_pid')
+        for run in data['redline_runs']:
+            run.pop('jvm_scope')
+            run.pop('warmups')
+            for stage in run['stages']:
+                stage.pop('jvm_pid')
+        with self.assertRaisesRegex(ValueError, 'fresh JVM per stage'):
+            tool.validate(data, 'a' * 40)
+        self.assertIs(data, tool.validate(data, 'a' * 40, require_current=False))
+        self.assertIn('Historical', tool.render(data, require_current=False))
+
     def test_generated_readme_normalization_preserves_manual_text_and_rejects_bad_markers(self):
         source = 'manual before\n' + ''.join(
             f'<!-- {marker}:start -->generated<!-- {marker}:end -->\n' for marker in tool.PUBLICATION_MARKERS) + 'manual after\n'
@@ -57,7 +88,7 @@ class ContributorValidationTests(unittest.TestCase):
                 tool.without_publication_blocks(text)
 
     def test_runner_executes_fixed_targets_then_fresh_redline_workers_and_reports_both(self):
-        from test_redline_report import fixture as redline_fixture, capture as redline_capture
+        from test_redline_report import capture as redline_capture
         scratch = tool.ROOT / 'target/contributor-tests'
         scratch.mkdir(parents=True, exist_ok=True)
         for terminal_code in (42, 0):
@@ -78,9 +109,22 @@ class ContributorValidationTests(unittest.TestCase):
                         lines += ['SUSTAINED_STAGE ' + ' '.join(f'{key}={value}' for key, value in stage.items()) for stage in run['stages']]
                         lines.append(f'CONTRIBUTOR_END mode={mode} qualified=false')
                         log.write_text('\n'.join(lines))
+                        recordings = log.parent / 'recordings'
+                        recordings.mkdir()
+                        for stage in (1, 2, 3):
+                            (recordings / f'{stage:04d}.jfr').touch()
                     elif 'io.setu.benchmark.chaos.ProgressiveCapacityChaosWorker' in command:
-                        log.write_text(redline_capture(redline_fixture(command[-2])))
+                        run = next(run for run in data['redline_runs'] if run['mode'] == command[-2])
+                        run['cpu_budget_cores'] = run['runtime']['cpus'] = '12'
+                        budget = tool.redline_resources.local_budget(12, 8 * 1024**3)
+                        run['runtime']['max_heap_mb'] = str(budget['heap_mib'])
+                        run['buffers'] = {key: budget[key] for key in
+                                          ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
+                        run['admission'] = dict(policy='unbounded', file_write_queue_bytes='0', file_write_queue_requests='0')
+                        log.write_text(redline_capture(run))
                         return terminal_code
+                    elif 'io.setu.benchmark.chaos.BenchmarkHostResources' in command:
+                        log.write_text(f'REDLINE_HOST processors=12 memory_available_bytes={8 * 1024**3}')
                     elif 'io.setu.benchmark.chaos.CapacityJfr' in command:
                         mode = 'IN_MEMORY' if 'IN_MEMORY' in str(log) else 'FILE'
                         run = next(run for run in data['runs'] if run['mode'] == mode)
@@ -93,7 +137,7 @@ class ContributorValidationTests(unittest.TestCase):
                     self.assertEqual(['jfr', 'print', '--json', '--events'], command[:4])
                     mode = 'IN_MEMORY' if 'IN_MEMORY' in command[-1] else 'FILE'
                     kwargs['stdout'].write(json.dumps(dict(recording=dict(events=[dict(type=tool.capture.STAGE_EVENT,
-                        values=dict(mode=mode, stage=stage)) for stage in (1, 2, 3)]))))
+                        values=dict(mode=mode, stage=int(Path(command[-1]).stem)))]))))
 
                 def git(*args, **kwargs):
                     return subprocess.CompletedProcess(args, 0, stdout='b' * 40 if args[0] == 'rev-parse' else 'Developer')
@@ -125,7 +169,12 @@ class ContributorValidationTests(unittest.TestCase):
                     self.assertEqual((0, 42), accepted)
                     self.assertIn('-Dsetu.benchmark.max.concurrency=0', command)
                     self.assertIn('-Dsetu.benchmark.min.stages=8', command)
-                    self.assertIn('-Xmx512m', command)
+                    self.assertIn('-Xmx4454m', command)
+                    self.assertIn('-XX:ActiveProcessorCount=12', command)
+                    self.assertIn('-Dsetu.benchmark.batch.records=4096', command)
+                    self.assertIn('-Dsetu.benchmark.stage.millis=10000', command)
+                    self.assertIn('-Dsetu.benchmark.unbounded.admission=true', command)
+                    self.assertIn('-Dsetu.benchmark.memory.log.bytes=0', command)
                 manifest = json.loads((result.parent / 'run.json').read_text())
                 self.assertEqual(len(commands), len(manifest['commands']))
 
@@ -146,6 +195,18 @@ class ContributorValidationTests(unittest.TestCase):
         data['runs'][0]['jfr'][0].update(produced='10', consumed='10')
         self.assertFalse(tool.validate(data, 'a' * 40)['qualified'])
 
+    def test_previous_bounded_budget_can_be_rendered_but_cannot_qualify_a_new_push(self):
+        data = fixture()
+        budget = tool.redline_resources.local_budget(8, 8 * 1024**3, unbounded=False)
+        data['redline_budget'] = budget
+        for run in data['redline_runs']:
+            run.pop('admission')
+            run['buffers'] = {key: budget[key] for key in
+                              ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
+        with self.assertRaises(ValueError):
+            tool.validate(data, 'a' * 40)
+        self.assertIn('Admission budgets:', tool.render(data, require_current=False))
+
     def test_report_separates_write_target_misses_from_consumers_keeping_up(self):
         data = fixture()
         run = next(run for run in data['runs'] if run['mode'] == 'FILE')
@@ -156,6 +217,29 @@ class ContributorValidationTests(unittest.TestCase):
         self.assertIn('Window checks', text)
         self.assertIn('Missed', text)
         self.assertIn('not qualified sustained capacity', text)
+
+    def test_summary_and_badges_use_full_target_median_and_preserve_diagnostic_status(self):
+        data = fixture()
+        # A large lower-load sample must not become the full-target throughput badge.
+        data['runs'][0]['stages'][0]['produce_per_s'] = '9000000'
+        data['runs'][0]['stages'][-1]['produce_per_s'] = '300000'
+        data['runs'][2]['stages'][-1]['produce_per_s'] = '500000'
+        data['runs'][0]['stages'][0].update(cpu_avg='.9', heap_peak_bytes=str(384 * 1024**2))
+        totals = tool.contributor_stats.summaries(data)
+        self.assertEqual(400000, totals['IN_MEMORY']['rate'])
+        self.assertEqual(.9, totals['IN_MEMORY']['cpu'])
+        self.assertEqual(384, totals['IN_MEMORY']['heap_mib'])
+        entries = tool.contributor_stats.entries(data)
+        self.assertEqual(8, len(entries))
+        self.assertIn('400.00K/s actual, 80%, unqualified', entries[0][2])
+        self.assertEqual('measurement unavailable', entries[3][2])
+        for run in data['runs']:
+            for row in run['jfr']:
+                row.update(allocation_mb='20480', gc_pause_ms='2.5')
+        self.assertIn('2.00 GiB/s alloc, 2.5 ms GC', tool.contributor_stats.entries(data)[3][2])
+        data['runs'][0]['jfr'][0]['allocation_mb'] = 'nan'
+        with self.assertRaisesRegex(ValueError, 'badge metric'):
+            tool.contributor_stats.entries(data)
 
     def test_stale_partial_error_and_nonfinite_evidence_is_rejected(self):
         mutations = [lambda d: d.update(source_revision='c' * 40),
@@ -175,6 +259,9 @@ class ContributorValidationTests(unittest.TestCase):
                      lambda d: d['redline_runs'][0]['stop'].update(reason='CONFIGURED_LIMIT'),
                      lambda d: d['redline_runs'][0]['stages'][0].update(cpu_avg='inf'),
                      lambda d: d['redline_runs'][0].update(cpu_budget_cores='4'),
+                     lambda d: d.pop('redline_budget'),
+                     lambda d: d['redline_budget'].update(heap_mib=512),
+                     lambda d: d['redline_runs'][0]['buffers'].update(request_buffer_bytes=1),
                      lambda d: d['runs'][0]['config'].update(durability='unsafe')]
         for mutate in mutations:
             data = fixture()
@@ -200,6 +287,15 @@ class ContributorValidationTests(unittest.TestCase):
             self.assertNotIn('<script>', text)
             self.assertNotIn('[unsafe]', text)
             self.assertEqual(data, json.loads(destination.read_text()))
+            self.assertIn('Contributor PC summary', text)
+            self.assertIn('Median actual writes/s', text)
+            self.assertEqual(8, len(list(folder.glob('contributor-*.svg'))))
+            self.assertIn('contributor-memory-throughput.svg', text)
+            svg = ET.fromstring((folder / 'contributor-memory-throughput.svg').read_text())
+            self.assertIn('unqualified', svg.attrib['aria-label'])
+            badge = json.loads((folder / 'contributor-memory-throughput.json').read_text())
+            self.assertEqual(data['source_revision'], badge['sourceRevision'])
+            self.assertFalse(badge['qualified'])
             url = 'https://github.com/owner/repo/actions/runs/123'
             tool.publish(source, readme, destination, url)
             self.assertIn(f'[Report, logs and downloadable results]({url})', readme.read_text())

@@ -9,6 +9,8 @@ import io.setu.server.dispatcher.BrokerRequestHandler;
 import io.setu.server.tcp.TcpServer;
 import io.setu.server.tcp.TcpServerOptions;
 import io.setu.storage.log.StorageMode;
+import io.setu.storage.log.FileWriteQueueOptions;
+import io.setu.core.broker.ConsumerMetadataLimits;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -30,14 +32,18 @@ import java.util.concurrent.locks.LockSupport;
 /** Child-JVM load generator for an intentionally aggressive, progressively doubled capacity test. */
 final class ProgressiveCapacityChaosWorker {
     private static final int RECORD_BYTES = BenchmarkSettings.recordBytes();
+    private static final boolean UNBOUNDED = Boolean.getBoolean("setu.benchmark.unbounded.admission");
     private static final int MAX_FRAME_BYTES = 15 * 1024 * 1024;
-    private static final long STAGE_MILLIS = configuredInt("setu.benchmark.stage.millis", 2_000, 250, 60_000);
+    private static final long STAGE_MILLIS = configuredInt("setu.benchmark.stage.millis", 10_000, 250, 60_000);
     private static final int WARMUP_MILLIS = configuredInt("setu.benchmark.warmup.millis", 2_000, 0, 60_000);
     private static final int CPU_HOLD_MILLIS = configuredInt("setu.benchmark.cpu.hold.millis", 10_000, 0, 60_000);
     private static final int MAX_CONCURRENCY = configuredInt("setu.benchmark.max.concurrency", 0, 0, 32_768);
-    private static final int BATCH_RECORDS = configuredInt("setu.benchmark.batch.records", 256, 1, 10_000);
+    private static final int BATCH_RECORDS = configuredInt("setu.benchmark.batch.records", 4096, 1, 10_000);
+    private static final long REQUEST_BUFFER_BYTES = configuredBuffer("setu.benchmark.request.buffer.bytes");
+    private static final long RESPONSE_BUFFER_BYTES = configuredBuffer("setu.benchmark.response.buffer.bytes");
+    private static final int FETCH_BYTES = configuredInt("setu.benchmark.fetch.bytes", 4 * 1024 * 1024, RECORD_BYTES, 4 * 1024 * 1024);
     private static final int MIN_STAGES = configuredInt("setu.benchmark.min.stages", 8, 1, 16);
-    private static final int MEMORY_LOG_BYTES = configuredInt("setu.benchmark.memory.log.bytes", 256 * 1024 * 1024, 0, Integer.MAX_VALUE);
+    private static final int MEMORY_LOG_BYTES = configuredInt("setu.benchmark.memory.log.bytes", UNBOUNDED ? 0 : 256 * 1024 * 1024, 0, Integer.MAX_VALUE);
     private static final long SAMPLE_MILLIS = 250;
     private static final double CPU_SATURATION = 0.92;
     private static final int SATURATED_SAMPLES_TO_STOP = 4;
@@ -53,116 +59,151 @@ final class ProgressiveCapacityChaosWorker {
         if (args.length != 2) throw new IllegalArgumentException("Expected <storage-mode> <data-directory>");
         StorageMode mode = StorageMode.valueOf(args[0]);
         stopReporter = new CapacityStopReporter(mode.name());
+        boolean stageChild = System.getProperty("setu.benchmark.stage.id") != null;
         if (MAX_CONCURRENCY != 0 && Integer.bitCount(MAX_CONCURRENCY) != 1)
             throw new IllegalArgumentException("setu.benchmark.max.concurrency must be zero or a power of two");
         if ((long) BATCH_RECORDS * (RECORD_BYTES + Integer.BYTES) + 1024 > MAX_FRAME_BYTES)
             throw new IllegalArgumentException("Payload size and batch count exceed the 15 MiB frame limit");
-        System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d cpu_hold_ms=%d max_concurrency=%d min_stages=%d security_quotas=disabled memory_log_budget=%d cpu_stop=false jfr=%s gc=ZGC string_dedup=true cpu_metric=process_time_per_budget_cpu cpu_budget_cores=%.3f%n",
-                mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, WARMUP_MILLIS, CPU_HOLD_MILLIS, MAX_CONCURRENCY,
-                MIN_STAGES, MEMORY_LOG_BYTES, System.getProperty("setu.benchmark.jfr", "true"), BenchmarkSettings.cpuCores());
+        if (UNBOUNDED && (MEMORY_LOG_BYTES != 0 || REQUEST_BUFFER_BYTES != Long.MAX_VALUE || RESPONSE_BUFFER_BYTES != Long.MAX_VALUE))
+            throw new IllegalArgumentException("Unbounded admission requires a zero memory-log limit and Long.MAX_VALUE transport credits");
         Path dataRoot = Path.of(args[1]);
-        System.out.printf(Locale.ROOT, "CAPACITY_RUNTIME java=%s os=%s cpus=%d max_heap_mb=%d log_level=%s log_directory=%s tcp_nodelay=true%n",
-                System.getProperty("java.version"), System.getProperty("os.name").replace(' ', '_'),
-                Runtime.getRuntime().availableProcessors(), Runtime.getRuntime().maxMemory() / (1024 * 1024),
-                System.getProperty("setu.log.level", "INFO"), System.getProperty("SETU_LOG_DIR", "logs"));
+        if (!stageChild) {
+            System.out.printf("CAPACITY_ADMISSION mode=%s policy=%s file_write_queue_bytes=%d file_write_queue_requests=%d%n",
+                    mode, UNBOUNDED ? "unbounded" : "bounded", UNBOUNDED ? 0 : FileWriteQueueOptions.defaults().maxBytes(),
+                    UNBOUNDED ? 0 : FileWriteQueueOptions.defaults().maxRequests());
+            System.out.printf(Locale.ROOT, "CAPACITY_CONFIG mode=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d cpu_hold_ms=%d max_concurrency=%d min_stages=%d security_quotas=disabled memory_log_budget=%d cpu_stop=false jfr=%s gc=ZGC string_dedup=true cpu_metric=process_time_per_budget_cpu cpu_budget_cores=%.3f jvm_scope=stage%n",
+                    mode, RECORD_BYTES, BATCH_RECORDS, STAGE_MILLIS, WARMUP_MILLIS, CPU_HOLD_MILLIS, MAX_CONCURRENCY,
+                    MIN_STAGES, MEMORY_LOG_BYTES, System.getProperty("setu.benchmark.jfr", "true"), BenchmarkSettings.cpuCores());
+            System.out.printf("CAPACITY_BUFFERS mode=%s request_buffer_bytes=%d response_buffer_bytes=%d fetch_bytes=%d memory_log_bytes=%d%n",
+                    mode, REQUEST_BUFFER_BYTES, RESPONSE_BUFFER_BYTES, FETCH_BYTES, MEMORY_LOG_BYTES);
+            System.out.printf(Locale.ROOT, "CAPACITY_RUNTIME java=%s os=%s cpus=%d max_heap_mb=%d log_level=%s log_directory=%s tcp_nodelay=true%n",
+                    System.getProperty("java.version"), System.getProperty("os.name").replace(' ', '_'),
+                    Runtime.getRuntime().availableProcessors(), Runtime.getRuntime().maxMemory() / (1024 * 1024),
+                    System.getProperty("setu.log.level", "INFO"), System.getProperty("SETU_LOG_DIR", "logs"));
+        }
         AtomicBoolean outOfMemory = new AtomicBoolean();
         Thread.setDefaultUncaughtExceptionHandler((thread, failure) -> {
             if (failure instanceof OutOfMemoryError) stopReporter.heapExhausted();
             else {
+                stopReporter.awaitHeapExhaustionIfReported();
                 System.err.println("WORKER_THREAD_FAILURE thread=" + thread.getName());
                 failure.printStackTrace(System.err);
             }
         });
         try {
+            if (!stageChild) {
+                runIsolatedStages(mode, dataRoot);
+                return;
+            }
+            int stage = Integer.parseInt(System.getProperty("setu.benchmark.stage.id"));
+            stopReporter.prepareStage(stage, 1 << (stage - 1));
             if (Boolean.parseBoolean(System.getProperty("setu.benchmark.jfr", "true"))) {
-                Path capture = Files.createDirectories(Path.of(System.getProperty("SETU_LOG_DIR", "logs"))).resolve("capacity.jfr");
+                Path capture = Path.of(System.getProperty("setu.benchmark.stage.recording"));
                 CapacityJfr.start(capture);
             }
-            run(mode, dataRoot, outOfMemory);
+            runSingleStage(mode, dataRoot, outOfMemory, stage, 1 << (stage - 1));
             CapacityJfr.finish();
         } catch (OutOfMemoryError exhausted) {
             stopReporter.heapExhausted();
         } catch (Throwable failure) {
+            stopReporter.awaitHeapExhaustionIfReported();
             failure.printStackTrace(System.err);
-            stop(mode, "WORKER_FAILURE", 0, 0, failure.toString());
+            int stage = Integer.getInteger("setu.benchmark.stage.id", 0);
+            stop(mode, "WORKER_FAILURE", stage, stage == 0 ? 0 : 1 << (stage - 1), failure.toString());
             CapacityJfr.emergencyDump();
             Runtime.getRuntime().halt(43);
         }
     }
 
-    private static void run(StorageMode mode, Path dataRoot, AtomicBoolean outOfMemory) throws Exception {
+    private static void runIsolatedStages(StorageMode mode, Path dataRoot) throws Exception {
         Files.createDirectories(dataRoot);
         var fileStore = Files.getFileStore(dataRoot);
         System.out.printf("CAPACITY_STORAGE mode=%s directory=%s filesystem=%s usable_mb=%d%n", mode,
                 dataRoot.toAbsolutePath(), fileStore.type(), fileStore.getUsableSpace() / (1024 * 1024));
+        int exitCode = 0;
+        for (int stage = 1, concurrency = 1; ; stage++, concurrency *= 2) {
+            System.out.printf("CAPACITY_PREPARE mode=%s stage=%d producers=%d consumers=%d%n",
+                    mode, stage, concurrency, concurrency);
+            Path stageData = dataRoot.resolve("stage-" + stage);
+            BenchmarkStageProcess.Result result = BenchmarkStageProcess.run(
+                    ProgressiveCapacityChaosWorker.class, stage, mode.name(), stageData.toString());
+            if (result.exitCode() != 0 && result.exitCode() != 42)
+                throw new IOException("Capacity stage exited unexpectedly: " + result.exitCode());
+            if (result.contains("CAPACITY_STOP ")) {
+                var stop = result.only("CAPACITY_STOP ");
+                if (!mode.name().equals(stop.get("mode")) || Integer.parseInt(stop.get("stage")) != stage
+                        || (result.exitCode() == 42) != "JVM_OOM".equals(stop.get("reason")))
+                    throw new IOException("Capacity terminal marker does not match its stage/exit");
+                exitCode = result.exitCode();
+                break;
+            }
+            if (result.exitCode() != 0 || !result.contains("CAPACITY_STAGE_DONE "))
+                throw new IOException("Capacity stage did not complete");
+            if (MAX_CONCURRENCY > 0 && concurrency >= MAX_CONCURRENCY) {
+                stop(mode, "CONFIGURED_LIMIT", stage, concurrency, "configured concurrency ceiling reached");
+                break;
+            }
+            if (concurrency > Integer.MAX_VALUE / 2) {
+                stop(mode, "CONCURRENCY_COUNTER_LIMIT", stage, concurrency, "producer/consumer counter cannot double");
+                break;
+            }
+        }
+        if (exitCode != 0) System.exit(exitCode);
+    }
+
+    private static void runSingleStage(StorageMode mode, Path dataRoot, AtomicBoolean outOfMemory,
+                                       int stage, int concurrency) throws Exception {
+        Files.createDirectories(dataRoot);
         OperatingSystemMXBean os = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
         Path brokerData = mode == StorageMode.FILE ? dataRoot.resolve("broker-data") : null;
         DefaultBroker broker = new DefaultBroker(mode, brokerData, RECORD_BYTES, 64L * 1024 * 1024,
-                60 * 60 * 1000L, 2 * 60 * 60 * 1000L, MEMORY_LOG_BYTES);
+                60 * 60 * 1000L, 2 * 60 * 60 * 1000L, MEMORY_LOG_BYTES, 0, 0,
+                UNBOUNDED ? new ConsumerMetadataLimits(Integer.MAX_VALUE, Integer.MAX_VALUE) : ConsumerMetadataLimits.defaults(),
+                UNBOUNDED ? FileWriteQueueOptions.unlimited() : FileWriteQueueOptions.defaults());
         TcpServer server = new TcpServer(new java.net.InetSocketAddress("127.0.0.1", 0),
                 new FramedConnectionHandler(new BrokerRequestHandler(broker)),
-                new TcpServerOptions(65_536, 65_536, 0));
+                new TcpServerOptions(UNBOUNDED ? Integer.MAX_VALUE : 65_536, 65_536, 0,
+                        REQUEST_BUFFER_BYTES, RESPONSE_BUFFER_BYTES,
+                        UNBOUNDED ? Integer.MAX_VALUE : 30_000, UNBOUNDED ? Integer.MAX_VALUE : 10_000,
+                        UNBOUNDED ? Integer.MAX_VALUE : 30_000));
         List<SetuClient> clients = new ArrayList<>();
-        int stage = 0;
-        int concurrency = 1;
         try {
             server.start();
             List<SetuClient> producers = new ArrayList<>();
             List<SetuClient> consumers = new ArrayList<>();
-            if (WARMUP_MILLIS > 0) {
-                StageResult warmup = runStage(mode, 0, 1, server, producers, consumers, clients, os,
-                        outOfMemory, WARMUP_MILLIS, false, broker);
-                System.out.printf("CAPACITY_WARMUP mode=%s duration_ms=%d produced=%d consumed=%d stop=%s%n",
-                        mode, warmup.elapsedNanos / 1_000_000, warmup.produced, warmup.consumed, warmup.reason);
-                if (warmup.reason != null) {
-                    stop(mode, warmup.reason, 0, 1, warmup.detail);
-                    return;
-                }
-                requireSuccess(consumers.getFirst().leaveGroup("capacity-group-0", "member-0"), "leave warmup group");
+            stopReporter.prepareStage(stage, concurrency);
+            StageResult result;
+            try {
+                result = runStage(mode, stage, concurrency, server, producers, consumers, clients, os, outOfMemory,
+                        STAGE_MILLIS, MAX_CONCURRENCY == 0 && stage >= MIN_STAGES, broker);
+            } catch (OutOfMemoryError exhausted) {
+                stopReporter.heapExhausted();
+                return;
+            } catch (IOException | RuntimeException resourceFailure) {
+                stopReporter.awaitHeapExhaustionIfReported();
+                resourceFailure.printStackTrace(System.err);
+                stop(mode, "RESOURCE_LIMIT", stage, concurrency,
+                        resourceFailure.getClass().getSimpleName() + ": " + resourceFailure.getMessage());
+                return;
             }
-            while (true) {
-                stage++;
-                stopReporter.prepareStage(stage, concurrency);
-                System.out.printf("CAPACITY_PREPARE mode=%s stage=%d producers=%d consumers=%d%n", mode, stage, concurrency, concurrency);
-                StageResult result;
-                try {
-                    result = runStage(mode, stage, concurrency, server, producers, consumers, clients, os, outOfMemory,
-                            STAGE_MILLIS, MAX_CONCURRENCY == 0 && stage >= MIN_STAGES, broker);
-                } catch (OutOfMemoryError exhausted) {
-                    stopReporter.heapExhausted();
-                    return;
-                } catch (IOException | RuntimeException resourceFailure) {
-                    resourceFailure.printStackTrace(System.err);
-                    stop(mode, "RESOURCE_LIMIT", stage, concurrency,
-                            resourceFailure.getClass().getSimpleName() + ": " + resourceFailure.getMessage());
-                    return;
-                }
 
-                printStage(mode, result, result.cpuHoldStarted ? "CAPACITY_STAGE_TOTAL" : "CAPACITY_STAGE");
-                CapacityJfr.checkpoint();
-                if (outOfMemory.get() || "JVM_OOM".equals(result.reason)) {
-                    stopReporter.heapExhausted();
-                }
-                if (result.reason != null) {
-                    stop(mode, result.reason, stage, concurrency, result.detail);
-                    return;
-                }
-                for (int member = 0; member < concurrency; member++)
-                    requireSuccess(consumers.get(member).leaveGroup("capacity-group-" + stage, "member-" + member), "leave completed stage");
-                System.out.printf("CAPACITY_RELEASE mode=%s stage=%d retained_log_bytes=%d%n", mode, stage, broker.retainedInMemoryBytes());
-                if (MAX_CONCURRENCY > 0 && concurrency >= MAX_CONCURRENCY) {
-                    stop(mode, "CONFIGURED_LIMIT", stage, concurrency, "configured concurrency ceiling reached");
-                    return;
-                }
-                if (concurrency > Integer.MAX_VALUE / 2) {
-                    stop(mode, "CONCURRENCY_COUNTER_LIMIT", stage, concurrency, "producer/consumer counter cannot double");
-                    return;
-                }
-                concurrency *= 2;
+            stopReporter.awaitHeapExhaustionIfReported();
+            printStage(mode, result, result.cpuHoldStarted ? "CAPACITY_STAGE_TOTAL" : "CAPACITY_STAGE");
+            if (outOfMemory.get() || "JVM_OOM".equals(result.reason)) {
+                stopReporter.heapExhausted();
             }
+            if (result.reason != null) {
+                stop(mode, result.reason, stage, concurrency, result.detail);
+                return;
+            }
+            for (int member = 0; member < concurrency; member++)
+                requireSuccess(consumers.get(member).leaveGroup("capacity-group-" + stage, "member-" + member), "leave completed stage");
+            System.out.printf("CAPACITY_RELEASE mode=%s stage=%d retained_log_bytes=%d%n", mode, stage, broker.retainedInMemoryBytes());
+            System.out.printf("CAPACITY_STAGE_DONE mode=%s stage=%d%n", mode, stage);
         } catch (OutOfMemoryError exhausted) {
             stopReporter.heapExhausted();
         } finally {
+            stopReporter.awaitHeapExhaustionIfReported();
             for (SetuClient client : clients) closeQuietly(client);
             server.close();
             broker.close();
@@ -198,6 +239,8 @@ final class ProgressiveCapacityChaosWorker {
                 CPU_HOLD_MILLIS * 1_000_000L);
         long holdProduced = 0;
         long holdConsumed = 0;
+        long producedBefore = 0;
+        long consumedBefore = 0;
         double holdCpuBaseline = 0;
         int holdSamplesBaseline = 0;
         double lastCpu = -1;
@@ -217,10 +260,6 @@ final class ProgressiveCapacityChaosWorker {
             for (int i = 0; i < concurrency; i++)
                 requireSuccess(consumers.get(i).joinGroup(group, topic, "member-" + i), "join consumer");
 
-            started = System.nanoTime();
-            jfrStage.begin();
-            ProcessCpuSampler cpuSampler = new ProcessCpuSampler(BenchmarkSettings.cpuCores(),
-                    started, os.getProcessCpuTime());
             for (int i = 0; i < concurrency; i++) {
                 SetuClient producer = producers.get(i);
                 workers.execute(() -> produceUntilStopped(producer, topic, running, outOfMemory,
@@ -233,12 +272,35 @@ final class ProgressiveCapacityChaosWorker {
                         outOfMemory, workerFailure, consumed, latency));
             }
 
+            long warmupStart = System.nanoTime();
+            long warmupDeadline = warmupStart + WARMUP_MILLIS * 1_000_000L;
+            while (System.nanoTime() < warmupDeadline && workerFailure.get() == null) {
+                Thread.sleep(Math.min(50, Math.max(1, (warmupDeadline - System.nanoTime()) / 1_000_000)));
+                stopReporter.awaitHeapExhaustionIfReported();
+                long reserve = Long.getLong("setu.benchmark.disk.reserve.bytes", 0);
+                if (mode == StorageMode.FILE && reserve > 0
+                        && Files.getFileStore(Path.of(System.getProperty("java.io.tmpdir"))).getUsableSpace() <= reserve)
+                    throw new IOException("Configured free disk reserve reached during warmup");
+            }
+            if (workerFailure.get() != null) throw new IOException("Capacity warmup failed", workerFailure.get());
+            producedBefore = produced.sum();
+            consumedBefore = consumed.sum();
+            System.out.printf("CAPACITY_WARMUP mode=%s stage=%d producers=%d consumers=%d duration_ms=%d produced=%d consumed=%d stop=null jvm_pid=%d jvm_start_millis=%d%n",
+                    mode, stage, concurrency, concurrency, (System.nanoTime() - warmupStart) / 1_000_000,
+                    producedBefore, consumedBefore, ProcessHandle.current().pid(), ManagementFactory.getRuntimeMXBean().getStartTime());
+            started = System.nanoTime();
+            jfrStage.begin();
+            latency.measuring = true;
+            ProcessCpuSampler cpuSampler = new ProcessCpuSampler(BenchmarkSettings.cpuCores(),
+                    started, os.getProcessCpuTime());
+
             double cpuTotal = 0;
             int cpuSamples = 0;
             long deadline = started + durationMillis * 1_000_000L;
             long nextDiagnostic = started + 1_000_000_000L;
             while (System.nanoTime() < deadline && running.get()) {
                 Thread.sleep(SAMPLE_MILLIS);
+                stopReporter.awaitHeapExhaustionIfReported();
                 if (outOfMemory.get()) { reason = "JVM_OOM"; break; }
                 Throwable failure = workerFailure.get();
                 if (failure != null) {
@@ -257,8 +319,8 @@ final class ProgressiveCapacityChaosWorker {
                 boolean holdCompleted = observeCpu && cpuHold.sample(System.nanoTime(), cpu);
                 if (!wasHolding && cpuHold.isHolding()) {
                     deadline = Math.max(deadline, cpuHold.deadlineNanos());
-                    holdProduced = produced.sum();
-                    holdConsumed = consumed.sum();
+                    holdProduced = produced.sum() - producedBefore;
+                    holdConsumed = consumed.sum() - consumedBefore;
                     holdCpuBaseline = cpuTotal;
                     holdSamplesBaseline = cpuSamples;
                     // Publish the completed ramp prefix before the hold can exhaust the JVM or disk.
@@ -289,14 +351,15 @@ final class ProgressiveCapacityChaosWorker {
                     }
                     System.out.printf(Locale.ROOT,
                             "CAPACITY_SAMPLE mode=%s stage=%d elapsed_ms=%d produced=%d consumed=%d cpu=%.3f heap_mb=%.1f%n",
-                            mode, stage, (System.nanoTime() - started) / 1_000_000, produced.sum(), consumed.sum(),
+                            mode, stage, (System.nanoTime() - started) / 1_000_000,
+                            produced.sum() - producedBefore, consumed.sum() - consumedBefore,
                             cpu, heapUsed / (1024.0 * 1024));
                 }
             }
             elapsedNanos = Math.max(1, System.nanoTime() - started);
             jfrStage.end();
-            measuredProduced = produced.sum();
-            measuredConsumed = consumed.sum();
+            measuredProduced = produced.sum() - producedBefore;
+            measuredConsumed = consumed.sum() - consumedBefore;
             if (reason == null && cpuHold.isHolding() && cpuHold.sample(System.nanoTime(), lastCpu)) {
                 reason = "CPU_SATURATION";
                 detail = "CPU saturation observed; completed " + CPU_HOLD_MILLIS + " ms at fixed concurrency";
@@ -311,8 +374,8 @@ final class ProgressiveCapacityChaosWorker {
                 long holdElapsedNanos = Math.max(1, System.nanoTime() - cpuHold.startedNanos());
                 double seconds = holdElapsedNanos / 1_000_000_000.0;
                 int samples = cpuSamples - holdSamplesBaseline;
-                long heldProduced = produced.sum() - holdProduced;
-                long heldConsumed = consumed.sum() - holdConsumed;
+                long heldProduced = produced.sum() - producedBefore - holdProduced;
+                long heldConsumed = consumed.sum() - consumedBefore - holdConsumed;
                 System.out.printf(Locale.ROOT,
                         "CAPACITY_CPU_HOLD_END mode=%s stage=%d duration_s=%.2f duration_ms=%d produced=%d produce_per_s=%.0f " +
                                 "consumed=%d consume_per_s=%.0f cpu_avg=%.3f completed=%s stop=%s%n",
@@ -324,6 +387,8 @@ final class ProgressiveCapacityChaosWorker {
         } catch (OutOfMemoryError exhausted) {
             stopReporter.heapExhausted();
         } finally {
+            stopReporter.awaitHeapExhaustionIfReported();
+            latency.measuring = false;
             running.set(false);
             if (outOfMemory.get()) {
                 workers.shutdownNow();
@@ -370,14 +435,14 @@ final class ProgressiveCapacityChaosWorker {
                 }
                 long start = System.nanoTime();
                 var response = client.produceBatch(topic, 0, PRODUCE_BATCH);
-                // The 32 MiB writer budget can reject 128 simultaneous 256 KiB batches.
+                // The production writer budget can reject simultaneous batches.
                 // Retry this transient rejection without increasing production limits; count it
                 // and include the retry delay in successful-request latency.
                 while (mode == StorageMode.FILE && response.errorCode() == ErrorCode.QUOTA_EXCEEDED
                         && "Partition write queue is full; retry with backoff".equals(response.errorMessage())) {
                     backpressure.increment();
                     if (!running.get()) return;
-                    if (System.nanoTime() - start >= 5_000_000_000L)
+                    if (!UNBOUNDED && System.nanoTime() - start >= 5_000_000_000L)
                         throw new IOException("Partition write queue did not recover within five seconds");
                     LockSupport.parkNanos(1_000_000);
                     if (!running.get()) return;
@@ -411,7 +476,7 @@ final class ProgressiveCapacityChaosWorker {
         try {
             while (running.get()) {
                 long start = System.nanoTime();
-                var response = client.fetch(group, member, topic, 0, offset, 256 * 1024);
+                var response = client.fetch(group, member, topic, 0, offset, FETCH_BYTES);
                 if (response.errorCode() != ErrorCode.NONE)
                     throw new IOException("fetch rejected: " + response.errorCode() + " " + response.errorMessage());
                 if (response.records().isEmpty()) {
@@ -438,7 +503,7 @@ final class ProgressiveCapacityChaosWorker {
     }
 
     private static SetuClient connect(int port) throws IOException {
-        return SetuClient.connectPlain("127.0.0.1", port, 5_000, 30_000, MAX_FRAME_BYTES);
+        return SetuClient.connectPlain("127.0.0.1", port, UNBOUNDED ? 0 : 5_000, UNBOUNDED ? 0 : 30_000, MAX_FRAME_BYTES);
     }
 
     private static void requireSuccess(io.setu.core.protocol.BrokerResponse response, String operation)
@@ -456,13 +521,15 @@ final class ProgressiveCapacityChaosWorker {
         System.out.printf(Locale.ROOT,
                 "%s mode=%s stage=%d producers=%d consumers=%d duration_s=%.2f " +
                         "produced=%d produce_per_s=%.0f consumed=%d consume_per_s=%.0f " +
-                        "cpu_avg=%.3f cpu_peak=%.3f heap_mb=%.1f p99_ms=%.3f record_bytes=%d produce_mib_per_s=%.3f consume_mib_per_s=%.3f stop=%s%n",
+                        "cpu_avg=%.3f cpu_peak=%.3f heap_mb=%.1f p99_ms=%.3f record_bytes=%d produce_mib_per_s=%.3f consume_mib_per_s=%.3f jvm_pid=%d jvm_start_millis=%d stop=%s%n",
                 marker, mode, result.stage, result.concurrency, result.concurrency, seconds,
                 result.produced, result.produced / seconds, result.consumed, result.consumed / seconds,
                 result.cpuAverage, result.cpuMaximum, result.heapUsed / (1024.0 * 1024),
                 result.p99Nanos / 1_000_000.0, RECORD_BYTES,
                 result.produced * (double) RECORD_BYTES / seconds / (1024 * 1024),
-                result.consumed * (double) RECORD_BYTES / seconds / (1024 * 1024), result.reason == null ? "ramp" : result.reason);
+                result.consumed * (double) RECORD_BYTES / seconds / (1024 * 1024), ProcessHandle.current().pid(),
+                ManagementFactory.getRuntimeMXBean().getStartTime(),
+                result.reason == null ? "ramp" : result.reason);
         System.out.flush();
         long gcMillis = ManagementFactory.getGarbageCollectorMXBeans().stream()
                 .mapToLong(bean -> Math.max(0, bean.getCollectionTime())).sum();
@@ -471,6 +538,7 @@ final class ProgressiveCapacityChaosWorker {
     }
 
     private static void stop(StorageMode mode, String reason, int stage, int concurrency, String detail) {
+        stopReporter.awaitHeapExhaustionIfReported();
         System.out.printf(Locale.ROOT, "CAPACITY_STOP mode=%s reason=%s stage=%d producers=%d consumers=%d detail=%s%n",
                 mode, reason, stage, concurrency, concurrency, detail.replace('\n', ' '));
         System.out.flush();
@@ -495,6 +563,14 @@ final class ProgressiveCapacityChaosWorker {
         }
     }
 
+    private static long configuredBuffer(String property) {
+        long fallback = UNBOUNDED ? Long.MAX_VALUE : Math.max(32L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 8);
+        long value = Long.parseLong(System.getProperty(property, Long.toString(fallback)));
+        if (value < 32L * 1024 * 1024)
+            throw new IllegalArgumentException(property + " must allow at least 32 MiB");
+        return value;
+    }
+
     private static int configuredInt(String property, int fallback, int minimum, int maximum) {
         int value = Integer.parseInt(System.getProperty(property, Integer.toString(fallback)));
         if (value < minimum || value > maximum)
@@ -503,6 +579,7 @@ final class ProgressiveCapacityChaosWorker {
     }
 
     private static final class LatencyHistogram {
+        private volatile boolean measuring;
         private final LongAdder[] buckets = new LongAdder[64];
         private final LongAdder count = new LongAdder();
 
@@ -511,6 +588,7 @@ final class ProgressiveCapacityChaosWorker {
         }
 
         private void record(long nanos) {
+            if (!measuring) return;
             int bucket = Math.min(63, 63 - Long.numberOfLeadingZeros(Math.max(1, nanos)));
             buckets[bucket].increment();
             count.increment();

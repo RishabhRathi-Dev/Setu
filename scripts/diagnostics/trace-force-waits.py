@@ -26,7 +26,7 @@ def worker_pids():
         except OSError:
             continue
         command = read(entry / 'cmdline')
-        if command and ('io.setu.benchmark.chaos.NodeTargetThroughputWorker\x00FILE\x00' in command
+        if command and ('io.setu.benchmark.chaos.SustainedStageWorker\x00FILE\x00' in command
                         or 'io.setu.storage.log.StorageForceProbe\x00' in command):
             yield entry
 

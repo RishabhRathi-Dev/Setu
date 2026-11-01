@@ -166,6 +166,32 @@ class ResourceBudgetTests(unittest.TestCase):
             self.assertEqual(64*resources.MIB, snapshot['budget']['memory_log_bytes'])
             self.assertEqual('systemd-cgroup-v2', snapshot['enforcement'])
 
+    def test_target_repeat_runs_only_selected_shard_and_retains_unqualified_aggregate_status(self):
+        from test_benchmark_node_targets import fixture, capture
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        commands = []
+        def workload(command, **kwargs):
+            commands.append(command)
+            kwargs['stdout'].write(capture([fixture(repeat=2)]))
+            return type('Result', (), {'returncode': 0})()
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(resources, 'detect_host', return_value=self.host(cores=5)), \
+             patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
+             patch.object(resources.subprocess, 'run', side_effect=workload), patch('builtins.print'), \
+             patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'target', '--measurement', 'full', '--storage-mode', 'IN_MEMORY',
+                                      '--payload-sizes', '1024', '--target-repeat', '2', '--strict',
+                                      '--data-directory', directory, '--output', directory]):
+            resources.main()
+            self.assertEqual(1, len(commands))
+            self.assertIn('-Dsetu.benchmark.target.repeat=2', commands[0])
+            saved = json.loads(next(Path(directory).rglob('comparison.json')).read_text())
+            self.assertEqual([2], saved['resources']['target_repeats'])
+            self.assertEqual(1, saved['resources']['repeats'])
+            self.assertEqual([2], [run['repeat'] for run in saved['runs']])
+            with self.assertRaises(ValueError):
+                resources.node_target_report.summaries(saved['runs'], ('IN_MEMORY',))
+
     def test_node_target_launcher_runs_java_repetitions_once_and_saves_failed_health(self):
         from test_benchmark_node_targets import fixture, capture
         old_handler = signal.getsignal(signal.SIGTERM)
@@ -189,6 +215,33 @@ class ResourceBudgetTests(unittest.TestCase):
             documents = list(Path(directory).rglob('comparison.json'))
             self.assertEqual(1, len(documents))
             self.assertEqual(3, len(json.loads(documents[0].read_text())['runs']))
+
+    def test_failed_shard_keeps_timeout_primary_despite_surefire_replayed_markers(self):
+        from test_benchmark_node_targets import fixture, capture
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        incomplete = capture([fixture('FILE', repeat=2)]).split('NODE_TARGET_END')[0]
+        replay = incomplete.split('\n', 1)[1]
+        text = incomplete + '\n' + replay + '\nCaused by: java.net.SocketTimeoutException: Read timed out\n'
+        def workload(command, **kwargs):
+            kwargs['stdout'].write(text)
+            return type('Result', (), {'returncode': 1})()
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(resources, 'detect_host', return_value=self.host(cores=5)), \
+             patch.object(resources, 'limited_command', side_effect=lambda command, *_: command), \
+             patch.object(resources.subprocess, 'run', side_effect=workload), patch('builtins.print'), \
+             patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'target', '--measurement', 'full', '--storage-mode', 'FILE',
+                                      '--payload-sizes', '1024', '--target-repeat', '2', '--report-only',
+                                      '--data-directory', directory, '--output', directory]):
+            with self.assertRaisesRegex(RuntimeError, 'execution failed.*1.*SocketTimeoutException: Read timed out'):
+                resources.main()
+            saved = json.loads(next(Path(directory).rglob('failure.json')).read_text())
+            self.assertEqual(1, saved['execution_exit_code'])
+            self.assertEqual([2], saved['resources']['target_repeats'])
+            self.assertIn('expected independent repetitions [2], found [2, 2]', saved['validation_error'])
+            self.assertNotIn('three distinct', saved['validation_error'])
+            self.assertFalse(list(Path(directory).rglob('comparison.json')))
+            self.assertTrue(Path(saved['capture']).read_text().endswith(text))
 
     def test_target_and_baseline_warn_by_default_but_fail_execution_and_explicit_strict_gates(self):
         from test_benchmark_node_targets import fixture, capture
@@ -218,7 +271,7 @@ class ResourceBudgetTests(unittest.TestCase):
                             resources.main()
                         else:
                             expected = {'strict': 'not qualified', 'worker-exit': 'execution failed.*137',
-                                        'partial': 'incomplete or invalid.*137', 'request-error': 'request errors',
+                                        'partial': 'execution failed.*137', 'request-error': 'request errors',
                                         'no-consumption': 'no completed records'}[case]
                             with self.assertRaisesRegex(RuntimeError, expected): resources.main()
                     printed = '\n'.join(str(call.args[0]) for call in output.call_args_list)
@@ -290,7 +343,11 @@ class ResourceBudgetTests(unittest.TestCase):
                     if command[0] == 'git':
                         return type('Result', (), {'stdout': 'a' * 40})()
                     calls.append(command)
-                    kwargs['stdout'].write(capture(fixture('FILE', cpu=10)))
+                    run = fixture('FILE', cpu=12)
+                    run['admission'] = dict(policy='unbounded', file_write_queue_bytes='0', file_write_queue_requests='0')
+                    run['buffers'] = dict(request_buffer_bytes=2**63 - 1, response_buffer_bytes=2**63 - 1,
+                                          fetch_bytes=4 * resources.MIB, memory_log_bytes=0)
+                    kwargs['stdout'].write(capture(run))
                     return type('Result', (), {'returncode': code})()
 
                 argv = ['run-benchmarks', '--kind', 'capacity', '--storage-mode', 'FILE', '--payload-sizes', '1024',
@@ -307,12 +364,33 @@ class ResourceBudgetTests(unittest.TestCase):
                 self.assertIn('-Dtest=ProgressiveCapacityChaosTests#progressivelyRampsFileProducersAndConsumersUntilTheRuntimeLimit,BenchmarkEnvironmentTests', calls[0])
                 self.assertIn('-Dsetu.benchmark.max.concurrency=0', calls[0])
                 self.assertIn('-Dsetu.benchmark.min.completed.stages=1', calls[0])
+                self.assertIn('-Dsetu.benchmark.batch.records=4096', calls[0])
+                self.assertIn('-Dsetu.benchmark.fetch.bytes=4194304', calls[0])
+                self.assertIn('-Dsetu.benchmark.stage.millis=10000', calls[0])
+                self.assertIn('-Dsetu.benchmark.unbounded.admission=true', calls[0])
+                self.assertIn('-Dsetu.benchmark.memory.log.bytes=0', calls[0])
                 saved = json.loads(next(Path(directory).rglob('redline.json')).read_text())
                 self.assertEqual(['FILE'], [run['mode'] for run in saved['runs']])
                 self.assertEqual(code, saved['execution_exit_code'])
-                self.assertEqual(2000, saved['resources']['stage_millis'])
+                self.assertEqual(10000, saved['resources']['stage_millis'])
+                self.assertEqual(12, saved['resources']['budget']['cpu_cores'])
+                self.assertEqual(16 * resources.GIB, saved['resources']['budget']['memory_bytes'])
+                self.assertEqual(.8, saved['resources']['disk_fraction'])
+                self.assertEqual('unbounded', saved['resources']['admission_policy'])
                 self.assertEqual('a' * 40, saved['resources']['source_revision'])
                 self.assertEqual(bool(code), bool(saved.get('error')))
+
+    def test_capacity_can_explicitly_select_legacy_bounded_admission(self):
+        old_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old_handler)
+        with patch.object(resources, 'detect_host', return_value=self.host()), patch('builtins.print') as output, \
+                patch.object(sys, 'argv', ['run-benchmarks', '--kind', 'capacity', '--payload-sizes', '1024',
+                                          '--data-directory', str(Path(__file__).parent), '--bounded-admission', '--dry-run']):
+            resources.main()
+        snapshot = json.loads(output.call_args.args[0].split(' ', 1)[1])
+        self.assertEqual('bounded', snapshot['admission_policy'])
+        self.assertGreater(snapshot['budget']['memory_log_bytes'], 0)
+        self.assertLess(snapshot['budget']['request_buffer_bytes'], 2**63 - 1)
 
     def test_sustained_misses_warn_but_execution_invalid_capture_and_request_errors_fail(self):
         from test_benchmark_sustained import run_fixture, capture

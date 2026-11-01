@@ -31,7 +31,7 @@ final class SustainedThroughputWorker {
     private static final int MEMORY_BUDGET = BenchmarkSettings.integer("setu.benchmark.memory.log.bytes", 256 * 1024 * 1024, 1, Integer.MAX_VALUE);
     private static final boolean FULL = "full".equals(System.getProperty("setu.benchmark.measurement", "smoke"));
     private static final OperatingSystemMXBean OS = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
-    private static int stageSequence;
+    private static int stageSequence = Integer.getInteger("setu.benchmark.stage.id", 1) - 1;
 
     public static void main(String[] args) throws Exception {
         BenchmarkRuntime.verifyZgc(SustainedThroughputWorker.class);
@@ -43,24 +43,22 @@ final class SustainedThroughputWorker {
         if ((long) BATCH * (BYTES + 4) + 1024 > 15 * 1024 * 1024) throw new IllegalArgumentException("batch exceeds frame limit");
         int ceiling = SustainedCriteria.concurrencyLimit(BenchmarkSettings.cpuCores(),
                 BenchmarkSettings.integer("setu.benchmark.max.concurrency", 32768, 1, 32768));
-        System.out.printf(Locale.ROOT, "SUSTAINED_CONFIG mode=%s profile=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d max_concurrency=%d cpu_cores=%.3f ram_bytes=%d filesystem=%s durability=%s histogram=HdrHistogram_3_digits unique_delivery=true jfr=%s%n",
+        System.out.printf(Locale.ROOT, "SUSTAINED_CONFIG mode=%s profile=%s record_bytes=%d batch_records=%d stage_ms=%d warmup_ms=%d max_concurrency=%d cpu_cores=%.3f ram_bytes=%d filesystem=%s durability=%s histogram=HdrHistogram_3_digits unique_delivery=true jfr=%s jvm_scope=stage%n",
                 mode, FULL ? "full" : "smoke", BYTES, BATCH, MILLIS, WARMUP, ceiling, BenchmarkSettings.cpuCores(),
                 OS.getTotalMemorySize(), Files.getFileStore(root).type(), mode == StorageMode.FILE ? "force_each_group_commit_before_ack" : "volatile", Boolean.getBoolean("setu.benchmark.jfr"));
-        if (Boolean.getBoolean("setu.benchmark.jfr"))
-            CapacityJfr.start(Path.of(System.getProperty("SETU_LOG_DIR", "logs"), "sustained.jfr"));
-        try {
+        int stage = 0;
         Result knee = null;
         for (int concurrency = 1; concurrency <= ceiling; concurrency *= 2) {
-            Result result = run(mode, root, concurrency, 0, 0);
+            Result result = BenchmarkStageProcess.sustained(++stage, mode.name(), root, concurrency, 0, 0);
             if (!result.healthy) break;
             if (knee == null || result.rate > knee.rate) knee = result;
         }
         boolean latencyQualified = knee != null;
         if (knee != null) for (double fraction : new double[]{.5, .8, 1})
-            latencyQualified &= run(mode, root, knee.concurrency, knee.rate * fraction, fraction).healthy;
+            latencyQualified &= BenchmarkStageProcess.sustained(++stage, mode.name(), root,
+                    knee.concurrency, knee.rate * fraction, fraction).healthy;
         System.out.printf(Locale.ROOT, "SUSTAINED_END mode=%s knee_per_s=%.3f concurrency=%d qualified=%s%n",
                 mode, knee == null ? 0 : knee.rate, knee == null ? 0 : knee.concurrency, FULL && latencyQualified);
-        } finally { CapacityJfr.finish(); }
     }
 
     static Result run(StorageMode mode, Path root, int concurrency, double offered, double fraction) throws Exception {
@@ -112,13 +110,14 @@ final class SustainedThroughputWorker {
             boolean healthy = SustainedCriteria.healthy(mode, produced, consumed, errors, missed, p99, cpu,
                     heapPeak, slope, stable, offered, produced / seconds, fraction) && load.failure.get() == null
                     && stopped >= window.end;
-            System.out.printf(Locale.ROOT, "SUSTAINED_STAGE mode=%s kind=%s concurrency=%d load_fraction=%.1f offered_per_s=%.3f duration_s=%.3f produced=%d consumed=%d produce_per_s=%.3f consume_per_s=%.3f produce_mib_per_s=%.3f consume_mib_per_s=%.3f records_per_core=%.3f consume_ratio=%.6f backlog_start=%d backlog_end=%d backlog_peak=%d errors=%d missed_records=%d p50_ms=%.6f p99_ms=%.6f p999_ms=%.6f produce_p99_ms=%.6f fetch_p99_ms=%.6f ack_p99_ms=%.6f scheduled_p99_ms=%.6f cpu_avg=%.6f heap_peak_bytes=%d heap_slope_mib_s=%.6f heap_samples=%d heap_sampling=jitter_40_70_ms warmup_stable=%s healthy=%s qualified=%s%n",
+            System.out.printf(Locale.ROOT, "SUSTAINED_STAGE mode=%s kind=%s concurrency=%d load_fraction=%.1f offered_per_s=%.3f duration_s=%.3f produced=%d consumed=%d produce_per_s=%.3f consume_per_s=%.3f produce_mib_per_s=%.3f consume_mib_per_s=%.3f records_per_core=%.3f consume_ratio=%.6f backlog_start=%d backlog_end=%d backlog_peak=%d errors=%d missed_records=%d p50_ms=%.6f p99_ms=%.6f p999_ms=%.6f produce_p99_ms=%.6f fetch_p99_ms=%.6f ack_p99_ms=%.6f scheduled_p99_ms=%.6f cpu_avg=%.6f heap_peak_bytes=%d heap_slope_mib_s=%.6f heap_samples=%d heap_sampling=jitter_40_70_ms warmup_stable=%s healthy=%s qualified=%s stage=%d jvm_pid=%d jvm_start_millis=%d%n",
                     mode, offered == 0 ? "ramp" : "latency", concurrency, fraction, offered, seconds, produced, consumed,
                     produced / seconds, consumed / seconds, produced * (double) BYTES / seconds / (1024 * 1024),
                     consumed * (double) BYTES / seconds / (1024 * 1024), produced / seconds / BenchmarkSettings.cpuCores(),
                     produced == 0 ? 0 : (double) consumed / produced, backlogStart, backlogEnd, peakBacklog,
                     errors, missed, p50, p99, p999, window.p(window.produce, 99), window.p(window.fetch, 99),
-                    window.p(window.ack, 99), window.p(window.scheduled, 99), cpu, heapPeak, slope, heaps.size(), stable, healthy, FULL && healthy);
+                    window.p(window.ack, 99), window.p(window.scheduled, 99), cpu, heapPeak, slope, heaps.size(), stable, healthy,
+                    FULL && healthy, event.stage, ProcessHandle.current().pid(), ManagementFactory.getRuntimeMXBean().getStartTime());
             if (load.failure.get() != null) throw new IOException("sustained workload failed", load.failure.get());
             return new Result(concurrency, produced / seconds, healthy);
         } finally {
@@ -199,7 +198,8 @@ final class SustainedThroughputWorker {
                     if (stable) break;
                 }
             }
-            System.out.printf("SUSTAINED_WARMUP mode=%s duration_ms=%d stable=%s%n", mode, (System.nanoTime() - start) / 1000000, stable);
+            System.out.printf("SUSTAINED_WARMUP mode=%s duration_ms=%d stable=%s jvm_pid=%d jvm_start_millis=%d%n",
+                    mode, (System.nanoTime() - start) / 1000000, stable, ProcessHandle.current().pid(), ManagementFactory.getRuntimeMXBean().getStartTime());
             return stable;
         }
         long backlog() { return Math.max(0, totalProduced.sum() - totalConsumed.sum()); }

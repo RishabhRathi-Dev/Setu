@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 /**
- * Bounded MPSC partition writer. Admission and publication use one CAS, so neither
+ * Configurable MPSC partition writer. Admission and publication use one CAS, so neither
  * shutdown nor a failed flush can miss an admitted request. The single writer
  * reverses each detached producer stack to preserve FIFO publication order.
  * Queue operations are lock-free; durability waits and file I/O remain blocking.
@@ -32,7 +32,7 @@ public final class GroupCommitMessageLog implements MessageLog {
     private final Thread writer;
 
     public GroupCommitMessageLog(MessageLog delegate, long maximumBytes, int maximumRequests, long lingerNanos) {
-        if (maximumBytes <= 0 || maximumRequests <= 0 || lingerNanos < 0)
+        if (maximumBytes < 0 || maximumRequests < 0 || lingerNanos < 0)
             throw new IllegalArgumentException("invalid group commit limits");
         this.delegate = java.util.Objects.requireNonNull(delegate);
         this.maximumBytes = maximumBytes;
@@ -40,7 +40,8 @@ public final class GroupCommitMessageLog implements MessageLog {
         this.lingerNanos = lingerNanos;
         // A batch already large enough to amortize a force need not wait for
         // another synchronous producer. Keep lingering to coalesce small writes.
-        this.targetGroupBytes = Math.max(1, Math.min(TARGET_GROUP_BYTES, maximumBytes / 2));
+        this.targetGroupBytes = maximumBytes == 0 ? TARGET_GROUP_BYTES
+                : Math.max(1, Math.min(TARGET_GROUP_BYTES, maximumBytes / 2));
         writer = Thread.ofVirtual().name("setu-partition-writer").unstarted(this::writeLoop);
         writer.start();
     }
@@ -80,7 +81,9 @@ public final class GroupCommitMessageLog implements MessageLog {
             GroupCommitState before = state.get();
             if (before.closing()) throw new IOException("Partition writer is closed");
             if (before.failed() != null) throw new IOException("Partition writer failed", before.failed());
-            if (before.requests() >= maximumRequests || bytes > maximumBytes - before.bytes())
+            if (before.requests() == Integer.MAX_VALUE || bytes > Long.MAX_VALUE - before.bytes()
+                    || (maximumRequests > 0 && before.requests() >= maximumRequests)
+                    || (maximumBytes > 0 && bytes > maximumBytes - before.bytes()))
                 throw new LogCapacityExceededException("Partition write queue is full; retry with backoff");
             GroupCommitState after = new GroupCommitState(new GroupCommitEntry(pending, before.head()), before.bytes() + bytes,
                     before.requests() + 1, false, null);
@@ -103,7 +106,7 @@ public final class GroupCommitMessageLog implements MessageLog {
             long started = System.nanoTime();
             long remaining;
             while (!(ready = state.get()).closing() && ready.bytes() < targetGroupBytes
-                    && ready.requests() < maximumRequests
+                    && (maximumRequests == 0 || ready.requests() < maximumRequests)
                     && (remaining = lingerNanos - (System.nanoTime() - started)) > 0) {
                 LockSupport.parkNanos(this, remaining);
                 if (Thread.interrupted()) { failAll(new IOException("Partition writer interrupted"), null); return; }

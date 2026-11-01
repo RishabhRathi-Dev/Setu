@@ -112,7 +112,8 @@ class TracePropagationIntegrationTests {
         }
     }
 
-    @Test void asyncQueuedKeyRoutingRetainsEachSubmittingContextAfterCallerScopesClose() throws Exception {
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void asyncQueuedRoutingAndBatchesRetainSubmittingContextAfterCallerScopesClose(boolean batch) throws Exception {
         var exporter = InMemorySpanExporter.create();
         try (var provider = SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)).build();
              var broker = new DefaultBroker(1024)) {
@@ -131,8 +132,14 @@ class TracePropagationIntegrationTests {
                     var second = tracer.spanBuilder("second").startSpan();
                     CompletableFuture<BrokerResponse> a, b;
                     try {
-                        try (var scope = first.makeCurrent()) { a = client.produce("orders", "first-key", new byte[]{1}); }
-                        try (var scope = second.makeCurrent()) { b = client.produce("orders", "second-key", new byte[]{2}); }
+                        try (var scope = first.makeCurrent()) {
+                            a = batch ? client.produceBatch("orders", 0, List.of(new byte[]{1}))
+                                    : client.produce("orders", "first-key", new byte[]{1});
+                        }
+                        try (var scope = second.makeCurrent()) {
+                            b = batch ? client.produceBatch("orders", 1, List.of(new byte[]{2}))
+                                    : client.produce("orders", "second-key", new byte[]{2});
+                        }
                         releaseConnections.countDown();
                         assertEquals(ErrorCode.NONE, a.get(5, TimeUnit.SECONDS).errorCode());
                         assertEquals(ErrorCode.NONE, b.get(5, TimeUnit.SECONDS).errorCode());
@@ -142,8 +149,8 @@ class TracePropagationIntegrationTests {
                     for (var caller : List.of(first, second)) {
                         var children = spans.stream().filter(s -> s.getKind() == SpanKind.CLIENT
                                 && s.getParentSpanId().equals(caller.getSpanContext().getSpanId())).toList();
-                        assertEquals(2, children.size()); // Metadata plus the routed produce, both under the original caller.
-                        assertEquals(2, spans.stream().filter(s -> s.getKind() == SpanKind.SERVER
+                        assertEquals(batch ? 1 : 2, children.size()); // Keyed writes also perform metadata lookup.
+                        assertEquals(batch ? 1 : 2, spans.stream().filter(s -> s.getKind() == SpanKind.SERVER
                                 && s.getTraceId().equals(caller.getSpanContext().getTraceId())).count());
                     }
                 }

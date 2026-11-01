@@ -12,6 +12,46 @@ import static org.junit.jupiter.api.Assertions.*;
 class GroupCommitMessageLogTests {
     @TempDir Path directory;
 
+    @Test void disabledAdmissionLimitsRemainIndependentAndAcceptedWritesDrainOnClose() throws Exception {
+        for (var options : List.of(new FileWriteQueueOptions(0, 1),
+                new FileWriteQueueOptions(64, 0), FileWriteQueueOptions.unlimited())) {
+            var delegate = new CallbackLog(new InMemoryMessageLog(16), false);
+            var log = new GroupCommitMessageLog(delegate, options.maxBytes(), options.maxRequests(), 0);
+            try {
+                var first = log.appendValuesAsync(List.of(MessageValue.copyOf(new byte[4])));
+                assertTrue(delegate.entered.await(3, TimeUnit.SECONDS));
+                assertFalse(first.isDone(), "disabling admission must not acknowledge before the delegate flush");
+                CompletableFuture<Long> second = null;
+                if (options.maxBytes() == 0 && options.maxRequests() == 0) {
+                    second = log.appendValuesAsync(List.of(MessageValue.copyOf(new byte[4])));
+                    assertEquals(2, log.outstandingRequests());
+                    assertEquals(72, log.outstandingBytes());
+                } else {
+                    assertThrows(LogCapacityExceededException.class,
+                            () -> log.appendValuesAsync(List.of(MessageValue.copyOf(new byte[4]))));
+                    assertEquals(1, log.outstandingRequests());
+                }
+                delegate.release.countDown();
+                assertEquals(0, first.get(3, TimeUnit.SECONDS));
+                if (second == null) second = log.appendValuesAsync(List.of(MessageValue.copyOf(new byte[4])));
+                closeWithinTimeout(log);
+                assertEquals(1, second.get(3, TimeUnit.SECONDS));
+                assertEquals(0, log.outstandingBytes());
+                assertEquals(0, log.outstandingRequests());
+                assertEquals(2, log.nextOffset());
+            } finally { delegate.release.countDown(); closeWithinTimeout(log); }
+        }
+    }
+
+    @Test void unlimitedQueueStillCoalescesSmallWritesAndLargeBatchesBypassLinger() throws Exception {
+        try (var log = new GroupCommitMessageLog(new InMemoryMessageLog(1024), 0, 0,
+                TimeUnit.SECONDS.toNanos(30)); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var large = workers.submit(() -> log.appendBatch(java.util.Collections.nCopies(256, new byte[1024])));
+            assertEquals(0, large.get(3, TimeUnit.SECONDS));
+            assertEquals(256, log.nextOffset());
+        }
+    }
+
     @Test void successfulCompletionCanCloseWhileAnotherAcceptedWriteStillNeedsFlushing() throws Exception {
         var delegate = new CallbackLog(new ChronicleMessageLog(directory, 16, 64L << 20), false);
         var log = new GroupCommitMessageLog(delegate, 1024, 16, 0);

@@ -26,16 +26,14 @@ final class NodeTargetThroughputWorker {
         int concurrency = mode == StorageMode.IN_MEMORY ? 1 : 2;
         if (concurrency > SustainedCriteria.concurrencyLimit(BenchmarkSettings.cpuCores(), 32768))
             throw new IllegalArgumentException("CPU budget is too small for the target concurrency");
-        System.out.printf(Locale.ROOT, "NODE_TARGET_CONFIG mode=%s profile=full record_bytes=1024 batch_records=256 stage_ms=30000 warmup_ms=10000 histogram=HdrHistogram_3_digits unique_delivery=true target_profile=%s target_per_s=%.0f concurrency=%d cpu_cores=%.3f heap_mib=%d filesystem=%s durability=%s%n",
+        System.out.printf(Locale.ROOT, "NODE_TARGET_CONFIG mode=%s profile=full record_bytes=1024 batch_records=256 stage_ms=30000 warmup_ms=10000 histogram=HdrHistogram_3_digits unique_delivery=true target_profile=%s target_per_s=%.0f concurrency=%d cpu_cores=%.3f heap_mib=%d filesystem=%s durability=%s jvm_scope=stage%n",
                 mode, profile, target, concurrency, BenchmarkSettings.cpuCores(), Runtime.getRuntime().maxMemory() / (1024 * 1024),
                 Files.getFileStore(root).type(), mode == StorageMode.FILE ? "force_each_group_commit_before_ack" : "volatile");
-        if (Boolean.getBoolean("setu.benchmark.jfr"))
-            CapacityJfr.start(Path.of(System.getProperty("SETU_LOG_DIR", "logs"), "node-target.jfr"));
         boolean healthy = true;
-        try {
-            for (double fraction : new double[]{.5, .8, 1})
-                healthy &= SustainedThroughputWorker.run(mode, root, concurrency, target * fraction, fraction).healthy();
-        } finally { CapacityJfr.finish(); }
+        int stage = 0;
+        for (double fraction : new double[]{.5, .8, 1})
+            healthy &= BenchmarkStageProcess.sustained(++stage, mode.name(), root,
+                    concurrency, target * fraction, fraction).healthy();
         System.out.printf("NODE_TARGET_END mode=%s qualified=%s%n", mode, healthy);
     }
 }

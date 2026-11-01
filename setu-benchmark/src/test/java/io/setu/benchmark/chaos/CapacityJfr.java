@@ -24,7 +24,7 @@ final class CapacityJfr {
     private static Path destination;
 
     public static void main(String[] args) throws java.io.IOException {
-        if (args.length != 1) throw new IllegalArgumentException("Usage: CapacityJfr <recording.jfr>");
+        if (args.length != 1) throw new IllegalArgumentException("Usage: CapacityJfr <recording.jfr|recordings-directory>");
         report(Path.of(args[0]));
     }
 
@@ -123,6 +123,24 @@ final class CapacityJfr {
     }
 
     static java.util.Set<Integer> report(Path path) throws java.io.IOException {
+        if (java.nio.file.Files.isDirectory(path)) {
+            // Cross-JVM event IDs and tick origins differ; aggregate summaries, never JFR chunks.
+            java.util.Set<Integer> result = new java.util.HashSet<>();
+            try (var paths = java.nio.file.Files.list(path)) {
+                for (Path recordingPath : paths.filter(file -> file.toString().endsWith(".jfr")).sorted().toList()) {
+                    // A valid terminal OOM checkpoint may contain warmup but no completed measurement.
+                    var stages = reportFile(recordingPath, true);
+                    for (int stage : stages)
+                        if (!result.add(stage)) throw new java.io.IOException("Duplicate JFR stage " + stage);
+                }
+            }
+            if (result.isEmpty()) throw new java.io.IOException("JFR capture contains no completed measured stage: " + path);
+            return result;
+        }
+        return reportFile(path, false);
+    }
+
+    private static java.util.Set<Integer> reportFile(Path path, boolean allowEmpty) throws java.io.IOException {
         List<Summary> stages = new ArrayList<>();
         try (RecordingFile file = new RecordingFile(path)) {
             while (file.hasMoreEvents()) {
@@ -192,7 +210,7 @@ final class CapacityJfr {
                         waits.p99Millis(), waits.maxNanos / 1e6);
             }
         }
-        if (stages.isEmpty()) throw new java.io.IOException("JFR capture contains no completed measured stage: " + path);
+        if (stages.isEmpty() && !allowEmpty) throw new java.io.IOException("JFR capture contains no completed measured stage: " + path);
         return stages.stream().map(stage -> stage.stage).collect(java.util.stream.Collectors.toSet());
     }
 

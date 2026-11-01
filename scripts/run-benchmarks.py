@@ -18,6 +18,7 @@ import uuid
 import sustained_report
 import node_target_report
 import redline_report
+import redline_resources
 
 MIB = 1024 ** 2
 GIB = 1024 ** 3
@@ -224,18 +225,21 @@ def main():
     parser.add_argument('--measurement', choices=('smoke', 'full'), default='smoke')
     parser.add_argument('--storage-mode', choices=('both', 'IN_MEMORY', 'FILE'), default='both')
     parser.add_argument('--profile', choices=('host', 'github-private', 'github-public'))
-    parser.add_argument('--fraction', type=fraction, default=.8)
+    parser.add_argument('--fraction', type=fraction, help='default: 1 for capacity CPU/memory, 0.8 otherwise')
     parser.add_argument('--cpu-fraction', type=fraction)
     parser.add_argument('--memory-fraction', type=fraction)
     parser.add_argument('--disk-fraction', type=fraction)
     parser.add_argument('--payload-sizes', default='256,512,1024,4096')
     parser.add_argument('--repeats', type=int)
+    parser.add_argument('--target-repeat', type=int, choices=(1, 2, 3),
+                        help='baseline/target only: run one repetition on an independent CI runner')
     parser.add_argument('--max-concurrency', type=int)
     parser.add_argument('--stage-millis', type=int)
     parser.add_argument('--warmup-millis', type=int)
     parser.add_argument('--heap-mib', type=int)
     parser.add_argument('--direct-mib', type=int)
     parser.add_argument('--memory-log-mib', type=int)
+    parser.add_argument('--bounded-admission', action='store_true', help='capacity only: retain heap-scaled admission caps')
     parser.add_argument('--data-directory', type=Path, default=Path(tempfile.gettempdir()))
     parser.add_argument('--output', type=Path, default=ROOT / 'logs/benchmarks/resources')
     parser.add_argument('--log', type=Path, help='explicit single-profile capture (capacity/steady/large-batch)')
@@ -246,14 +250,25 @@ def main():
     policy.add_argument('--strict', action='store_true',
                         help='fail baseline/target/sustained/steady measurements on unmet performance expectations')
     args = parser.parse_args()
+    if args.bounded_admission and args.kind != 'capacity':
+        parser.error('--bounded-admission applies only to capacity')
+    if args.kind == 'capacity' and not args.bounded_admission and args.memory_log_mib is not None:
+        parser.error('unbounded capacity disables log admission; use --bounded-admission with --memory-log-mib')
+    default_fraction = args.fraction is None
+    args.fraction = args.fraction if args.fraction is not None else (1 if args.kind == 'capacity' else .8)
+    if args.kind == 'capacity' and default_fraction and args.disk_fraction is None:
+        args.disk_fraction = .8
     if args.kind == 'capacity' and (args.repeats not in (None, 1)
-                                   or args.stage_millis not in (None, 2000) or args.warmup_millis not in (None, 2000)
+                                   or args.stage_millis not in (None, 10000) or args.warmup_millis not in (None, 2000)
                                    or args.max_concurrency is not None):
-        parser.error('capacity uses one ramp per mode, 2s warmup/windows and no concurrency ceiling')
+        parser.error('capacity uses one ramp per mode, 2s warmup, 10s windows and no concurrency ceiling')
     if (args.report_only or args.strict) and args.kind not in ('target', 'baseline', 'sustained', 'steady'):
         parser.error('--report-only/--strict apply to baseline, target, sustained and steady measurements')
     args.report_only = not args.strict
     target_kind = args.kind in ('target', 'baseline')
+    if args.target_repeat is not None and not target_kind:
+        parser.error('--target-repeat applies only to baseline/target')
+    expected_repeats = (args.target_repeat,) if args.target_repeat is not None else (1, 2, 3)
     target_profile = 'ci-baseline' if args.kind == 'baseline' else 'reference'
     args.profile = args.profile or ('github-private' if args.kind == 'baseline' else 'host')
     if args.kind == 'baseline':
@@ -262,7 +277,7 @@ def main():
             parser.error('CI baseline requires the github-private profile, 0.8 CPU fraction and its fixed 5 GiB memory limit')
     full = args.kind in ('sustained', 'target', 'baseline') and args.measurement == 'full'
     args.repeats = args.repeats if args.repeats is not None else (3 if full or args.kind == 'sweep' else 1)
-    args.stage_millis = args.stage_millis if args.stage_millis is not None else (2000 if args.kind == 'capacity' else 30000 if full else 3000)
+    args.stage_millis = args.stage_millis if args.stage_millis is not None else (10000 if args.kind == 'capacity' else 30000 if full else 3000)
     args.warmup_millis = args.warmup_millis if args.warmup_millis is not None else (10000 if full else 2000)
     args.max_concurrency = args.max_concurrency if args.max_concurrency is not None else (32768 if args.kind == 'sustained' else 8)
     if full and (args.repeats != 3 or args.stage_millis < 30000 or args.warmup_millis < 10000):
@@ -286,7 +301,7 @@ def main():
         parser.error('repeats must be 1..10, stage millis 250..60000, warmup millis 0..60000')
     if not 1 <= args.max_concurrency <= 32768 or args.max_concurrency & (args.max_concurrency - 1):
         parser.error('comparison concurrency must be a power of two in 1..32768')
-    batch = 4096 if args.kind == 'large-batch' else 256
+    batch = 4096 if args.kind in ('capacity', 'large-batch') else 256
     if any(batch * (size + 4) + 1024 > 15 * MIB for size in payloads):
         parser.error('payload and batch size exceed the 15 MiB frame limit')
     if args.log and args.kind in ('sweep', 'sustained'):
@@ -301,6 +316,8 @@ def main():
                   memory_limit_mib=5120 if args.kind == 'baseline' else None)
     if args.kind == 'baseline' and (budget.cpu_cores != 2 or budget.memory_bytes != 5 * GIB):
         raise ValueError('CI baseline requires at least 2 available CPUs and 5 GiB available memory for its fixed 2 CPU/5 GiB envelope')
+    if args.kind == 'capacity' and not args.bounded_admission:
+        budget = replace(budget, memory_log_bytes=0)
     if args.kind == 'baseline' and (budget.heap_mib != (256 if args.storage_mode == 'IN_MEMORY' else 128)
                                    or budget.direct_mib != 128 or budget.memory_log_bytes != 64 * MIB):
         parser.error('CI baseline requires the default mode heap, 128 MiB direct memory and 64 MiB retained log')
@@ -325,11 +342,15 @@ def main():
     if args.kind in ('baseline', 'target', 'sustained', 'steady'):
         snapshot['expectation_policy'] = 'report-only' if args.report_only else 'strict'
     if target_kind:
+        snapshot['target_repeats'] = list(expected_repeats)
+        snapshot['repeats'] = len(expected_repeats)
         snapshot.update(target_profile=target_profile, target_policy='report-only' if args.report_only else 'strict',
                         source_revision=os.environ.get('GITHUB_SHA'), run_url=(
             os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + os.environ['GITHUB_REPOSITORY']
             + '/actions/runs/' + os.environ['GITHUB_RUN_ID']) if 'GITHUB_RUN_ID' in os.environ else None)
     if args.kind == 'capacity':
+        snapshot['admission_policy'] = 'bounded' if args.bounded_admission else 'unbounded'
+        snapshot['budget'].update(redline_resources.transport(budget.heap_mib, payloads[0], not args.bounded_admission))
         snapshot['max_concurrency'] = 0
         snapshot['source_revision'] = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT,
                                                     capture_output=True, text=True, check=True).stdout.strip()
@@ -376,6 +397,8 @@ def main():
                 command += ['-Dsetu.benchmark.node.targets=true', '-Dsetu.benchmark.jfr=true',
                             '-Dsetu.benchmark.node.targets.enforce=false',
                             '-Dsetu.benchmark.target.profile=' + target_profile]
+                if args.target_repeat is not None:
+                    command += [f'-Dsetu.benchmark.target.repeat={args.target_repeat}']
             elif args.kind == 'sustained':
                 command += [f'-Dsetu.benchmark.measurement={args.measurement}',
                             f'-Dsetu.benchmark.max.concurrency={args.max_concurrency}',
@@ -384,9 +407,12 @@ def main():
             elif args.kind == 'steady':
                 command += ['-Dsetu.benchmark.steady.enforce=' + str(args.strict).lower()]
             elif args.kind == 'capacity':
+                command += [f'-Dsetu.benchmark.{key.replace("_", ".")}={value}'
+                            for key, value in redline_resources.transport(budget.heap_mib, payload, not args.bounded_admission).items()]
+                command += ['-Dsetu.benchmark.unbounded.admission=' + str(not args.bounded_admission).lower()]
                 command += ['-Dsetu.benchmark.max.concurrency=0', '-Dsetu.benchmark.min.stages=8',
                             '-Dsetu.benchmark.min.completed.stages=1',
-                            '-Dsetu.benchmark.stage.millis=2000', '-Dsetu.benchmark.warmup.millis=2000',
+                            '-Dsetu.benchmark.stage.millis=10000', '-Dsetu.benchmark.warmup.millis=2000',
                             '-Dsetu.benchmark.cpu.hold.millis=10000', '-Dsetu.benchmark.jfr=true']
             elif args.kind not in ('steady', 'chaos'):
                 ceiling = 2 if args.kind == 'large-batch' else args.max_concurrency
@@ -412,15 +438,21 @@ def main():
             if target_kind:
                 captured = capture.read_text(encoding='utf-8')
                 try:
-                    runs = node_target_report.parse_capture(captured, modes, target_profile=target_profile)
+                    runs = node_target_report.parse_capture(captured, modes, target_profile=target_profile,
+                                                            expected_repeats=expected_repeats)
                 except (ValueError, KeyError) as failure:
                     print('\n'.join(captured.splitlines()[-60:]), flush=True)
+                    if result.returncode:
+                        message = save_execution_failure(output, capture, snapshot, result.returncode, str(failure))
+                        raise RuntimeError(message) from failure
                     raise RuntimeError(f'node-target measurement incomplete or invalid (exit {result.returncode}): '
                                        f'{failure}; capture: {capture}') from failure
                 rows += runs
-                print(node_target_report.save(output, rows, snapshot, modes, target_profile), flush=True)
+                print(node_target_report.save(output, rows, snapshot, modes, target_profile, expected_repeats), flush=True)
             if result.returncode:
                 print('\n'.join(capture.read_text(encoding='utf-8').splitlines()[-60:]), flush=True)
+                if target_kind:
+                    raise RuntimeError(save_execution_failure(output, capture, snapshot, result.returncode))
                 raise RuntimeError(f'benchmark execution failed (exit {result.returncode}); capture: {capture}')
             if args.kind == 'steady':
                 for line in capture.read_text(encoding='utf-8').splitlines():
@@ -433,8 +465,10 @@ def main():
                 if any(float(stage['errors']) != 0 or float(stage['produced']) <= 0 or float(stage['consumed']) <= 0
                        for run in runs for stage in run['stages']):
                     raise RuntimeError(f'node-target workload failed: request errors or no completed records; capture: {capture}')
-                failed = [mode for mode, summary in node_target_report.summaries(runs, modes, target_profile).items()
-                          if not summary['qualified']]
+                failed = [mode for mode in modes if any(
+                    not node_target_report.healthy(run, stage, warmup)
+                    for run in runs if run['config']['mode'] == mode
+                    for stage, warmup in zip(run['stages'], run['warmups']))]
                 if failed:
                     label = 'CI baseline' if args.kind == 'baseline' else 'Node target'
                     message = label + ' not qualified: ' + ', '.join(failed) + '; see measured limits above.'
@@ -459,6 +493,20 @@ def main():
         failed = sustained_report.gate_failures(rows, modes)
         if failed:
             expectation_miss('Sustained expectations unmet: ' + '; '.join(failed), output, args.report_only)
+
+
+def save_execution_failure(output, capture, snapshot, exit_code, validation_error=None):
+    """Keep a failed worker's cause primary, even when its incomplete capture cannot qualify."""
+    causes = [line.strip().removeprefix('Caused by: ') for line in capture.read_text(encoding='utf-8').splitlines()
+              if line.strip().startswith('Caused by: ')]
+    message = f'benchmark execution failed (exit {exit_code})'
+    if causes:
+        message += ': ' + causes[-1]
+    document = dict(resources=snapshot, execution_exit_code=exit_code, error=message, capture=str(capture))
+    if validation_error is not None:
+        document['validation_error'] = validation_error
+    (output / 'failure.json').write_text(json.dumps(document, indent=2) + '\n', encoding='utf-8')
+    return message + '; capture: ' + str(capture)
 
 
 def expectation_miss(message, output, report_only):
