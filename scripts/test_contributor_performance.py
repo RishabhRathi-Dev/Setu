@@ -57,6 +57,28 @@ def fixture():
 
 
 class ContributorValidationTests(unittest.TestCase):
+    def test_redline_heap_uses_zgc_alignment_without_accepting_other_budget_mismatches(self):
+        for observed, accepted in ((4456, True), (4454, False), (4455, False), (4458, False)):
+            with self.subTest(observed=observed):
+                data = fixture()
+                budget = tool.redline_resources.local_budget(8, 8193 * 1024**2)
+                self.assertEqual(4455, budget['heap_mib'])
+                data['redline_budget'] = budget
+                for run in data['redline_runs']:
+                    run['runtime']['max_heap_mb'] = str(observed)
+                    run['buffers'] = {key: budget[key] for key in
+                                      ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}
+                if accepted:
+                    self.assertIs(data, tool.validate(data, 'a' * 40))
+                    self.assertEqual(4455, data['redline_budget']['heap_mib'])
+                    self.assertEqual('4456', data['redline_runs'][0]['runtime']['max_heap_mb'])
+                    data['redline_runs'][0]['cpu_budget_cores'] = '4'
+                    with self.assertRaisesRegex(ValueError, 'worker budget differs'):
+                        tool.validate(data, 'a' * 40)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'worker budget differs'):
+                        tool.validate(data, 'a' * 40)
+
     def test_previous_mode_scoped_captures_remain_renderable_but_require_remeasurement_for_pushes(self):
         data = fixture()
         data.pop('jvm_scope')

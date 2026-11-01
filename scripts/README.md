@@ -79,6 +79,8 @@ Git hooks can be bypassed locally; repository administrators must require the `c
 
 These tools update tracked assets under `benchmark-badges/`. CI stages those assets together with the root README. Keep the generated marker pairs intact; use the supplied tests before changing publication behavior.
 
+Redline reports retain both the requested `heap_mib` launch budget and the JVM's observed `max_heap_mb`. JDK 26 ZGC rounds the maximum heap up to a 2 MiB boundary, so an 8,319 MiB request reports 8,320 MiB. CI publication and contributor validation require that aligned value; other heap or CPU budget mismatches still fail. This does not change the process-tree memory limit or benchmark qualification criteria.
+
 ## Storage diagnostics
 
 | Tool | Purpose |

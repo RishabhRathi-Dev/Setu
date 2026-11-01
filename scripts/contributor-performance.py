@@ -167,7 +167,7 @@ def validate(document, revision, require_current=True):
             raise ValueError('Contributor redline requires fresh unbounded-admission evidence')
         if (float(run['cpu_budget_cores']) != redline_budget['active_processors']
                 or int(run['runtime']['cpus']) != redline_budget['active_processors']
-                or int(run['runtime']['max_heap_mb']) != redline_budget['heap_mib']):
+                or int(run['runtime']['max_heap_mb']) != redline_resources.zgc_max_heap_mib(redline_budget['heap_mib'])):
             raise ValueError('Contributor redline worker budget differs from host settings')
         if not legacy_budget and run.get('buffers') != {key: redline_budget[key] for key in
                                   ('request_buffer_bytes', 'response_buffer_bytes', 'fetch_bytes', 'memory_log_bytes')}:
