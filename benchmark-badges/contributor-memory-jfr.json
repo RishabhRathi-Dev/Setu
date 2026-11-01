@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "label": "memory JFR (contributor PC)",
-  "message": "1.68 GiB/s alloc, 1.0 ms GC",
+  "message": "1.10 GiB/s alloc, 3.7 ms GC",
   "color": "blue",
   "sourceScope": "contributor PC diagnostic",
-  "sourceRevision": "e525bc6440e96abc3eed445712939aaf2481352d",
-  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/41180557125",
+  "sourceRevision": "0a56bef252ea1ecf9fa32a141ae60ada24211f22",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/41332297773",
   "qualified": false
 }
