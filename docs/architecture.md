@@ -35,7 +35,7 @@ Metadata persistence is split into `BrokerJournal` (generation I/O and locking),
 
 ## Request path
 
-The blocking transport runs a virtual thread for each connection. The selector transport multiplexes plaintext sockets and dispatches requests to virtual threads, allowing one active request per connection. The client synchronizes exchanges on each instance, with no pipelining.
+The blocking transport runs a virtual thread for each connection. The selector transport multiplexes plaintext sockets and dispatches requests to virtual threads, allowing one active request per connection. `SetuClient` synchronizes exchanges on each instance, with no pipelining. Independent instances run concurrently; `AsyncSetuClient` manages a bounded pool of these connections and a bounded request queue. Concurrent submissions do not imply ordered execution across connections, even for the same routing key. See [client selection](../setu-client/README.md#choosing-a-client).
 
 ```mermaid
 flowchart TD

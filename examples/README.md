@@ -18,6 +18,7 @@ backend properties or native library installation are needed.
 | --- | --- | --- |
 | [Recovery demo project](recovery-demo/README.md) | Lost transaction reply, retry, checkpoint and forced-process recovery; optional contention diagnostic | No |
 | [SetuQuickstart.java](SetuQuickstart.java) | Batch produce, member fetch, acknowledgement and leaving a group | Yes |
+| [SetuAsyncProducer.java](SetuAsyncProducer.java) | Bounded concurrent writes through four pooled connections, per-partition application order and verified readback | Yes |
 | [SetuBatchAndPartitions.java](SetuBatchAndPartitions.java) | Two explicit partitions, independent offsets, paginated fetch and per-partition acknowledgement | Yes |
 | [SetuLongPolling.java](SetuLongPolling.java) | Separate producer/consumer connections, arrival during a waiting fetch and an empty timeout response | Yes |
 | [SetuEmbeddedBroker.java](SetuEmbeddedBroker.java) | Direct broker calls, joining before produce and memory reclamation after acknowledgement | No |
@@ -37,6 +38,7 @@ On Linux/macOS, use `bash ./scripts/start-broker.sh --config config/server.prope
 
 ```powershell
 java '@config/jvm.options' -cp 'setu-server/target/lib/*' examples/SetuQuickstart.java
+java '@config/jvm.options' -cp 'setu-server/target/lib/*' examples/SetuAsyncProducer.java
 java '@config/jvm.options' -cp 'setu-server/target/lib/*' examples/SetuBatchAndPartitions.java
 java '@config/jvm.options' -cp 'setu-server/target/lib/*' examples/SetuLongPolling.java
 ```
@@ -47,7 +49,9 @@ Each accepts optional `host port` arguments, for example:
 java '@config/jvm.options' -cp 'setu-server/target/lib/*' examples/SetuLongPolling.java 127.0.0.1 9092
 ```
 
-The client examples work with both `FILE` and `IN_MEMORY` brokers. They join before producing so memory data remains available until acknowledgement. Quickstart reuses its topic; the other two create uniquely named topics on every run. File-mode topics remain on disk after the examples finish.
+The client examples work with both `FILE` and `IN_MEMORY` brokers. They join before producing so memory data remains available until acknowledgement. Quickstart reuses its topic; the other client examples create uniquely named topics on every run. File-mode topics remain on disk after the examples finish.
+
+The async example uses four producer connections plus a separate synchronous setup/reader connection. Each of 32 waves submits one write to each of four partitions before waiting for all results. This bounds outstanding writes to four and preserves application order within each partition. It checks broker errors and assigned offsets, verifies all 128 payloads, acknowledges each page and leaves the group. Ordinary writes are not retried; a failed wave can include successful writes. These small functional examples make no throughput claim. See [client selection and sizing](../setu-client/README.md#choosing-a-client) and the [client comparison diagnostic](../setu-benchmark/README.md#client-concurrency-comparison).
 
 The batch example prints offsets `0`, `1`, `2` for each partition. Its 14-byte fetch budget returns two seven-byte records, then one record. An acknowledgement contains the next offset, not the last processed offset. Partition order is independent; Setu does not choose partitions for the application.
 

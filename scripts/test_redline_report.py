@@ -224,6 +224,31 @@ class RedlineReportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'budget differs'):
                 report.publish(root, 'a' * 40, 'https://github.com/owner/repo/actions/runs/1', root / 'README.md', root / 'out.json')
 
+    def test_publication_matches_zgc_aligned_heap_and_preserves_requested_and_observed_values(self):
+        for requested, observed, accepted in ((8319, 8320, True), (8140, 8140, True),
+                                               (8319, 8318, False), (8319, 8319, False),
+                                               (8319, 8322, False), (8140, 8142, False)):
+            with self.subTest(requested=requested, observed=observed), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                run, allocation = fixture(), resources()
+                allocation['budget']['heap_mib'] = requested
+                run['runtime']['max_heap_mb'] = str(observed)
+                document = report.save_capture(capture(run), root / 'inputs', allocation, ('IN_MEMORY',), 0)
+                readme, destination = root / 'README.md', root / 'out.json'
+                original = '<!-- benchmark-redline:start -->old<!-- benchmark-redline:end -->\n'
+                readme.write_text(original)
+                args = (root / 'inputs', 'a' * 40, 'https://github.com/owner/repo/actions/runs/1', readme, destination)
+                if accepted:
+                    report.publish(*args)
+                    self.assertEqual([document], json.loads(destination.read_text())['reports'])
+                    self.assertIn(f'{requested} MiB worker heap', readme.read_text())
+                    self.assertIn(f'{observed} MiB maximum heap', readme.read_text())
+                else:
+                    with self.assertRaisesRegex(ValueError, 'budget differs'):
+                        report.publish(*args)
+                    self.assertEqual(original, readme.read_text())
+                    self.assertFalse(destination.exists())
+
 
 if __name__ == '__main__':
     unittest.main()

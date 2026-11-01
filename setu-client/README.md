@@ -2,6 +2,19 @@
 
 This module provides `SetuClient` for synchronous exchanges and `AsyncSetuClient` for bounded asynchronous requests over pooled connections. Both use the Setu protocol with mandatory trace-context fields over plaintext and TLS/mTLS, share codecs with [setu-core](../setu-core/README.md#protocol), and use [setu-security](../setu-security/README.md) for TLS configuration.
 
+## Choosing a client
+
+| Application pattern | Client choice | Concurrency and ordering |
+| --- | --- | --- |
+| Sequential requests or a small script | One `SetuClient` | One exchange at a time on its connection |
+| Independent synchronous workers | One `SetuClient` per worker | Connections run concurrently; the application owns their lifetime |
+| Concurrent submissions through a shared API | `AsyncSetuClient` | A bounded pool runs independent exchanges; a bounded queue holds waiting requests |
+| Producers alongside long-poll consumers | Separate connections or pools for each role | Waiting fetches cannot occupy every producer connection |
+
+Sharing one synchronous instance across threads is supported, but those calls wait for the same connection. It does not serialize other client instances or all broker requests. Async pooling also uses one exchange per connection; it does not pipeline requests on a single socket. More connections can increase concurrency, but storage, broker admission and workload ordering still limit useful parallelism.
+
+For a runnable concurrent workflow, start with [SetuAsyncProducer.java](../examples/SetuAsyncProducer.java) and the [async usage guide](#bounded-async-client). The [client comparison diagnostic](../setu-benchmark/README.md#client-concurrency-comparison) compares shared synchronous, per-worker synchronous and async usage without assuming a performance winner.
+
 ## Add to a Maven application
 
 With JDK 26, install the client and its reactor dependencies into your local Maven repository:
@@ -89,7 +102,7 @@ The connection factory arguments are host, port, connect timeout, read timeout a
 
 Every request receives a correlation ID; responses must match both command and correlation. Broker denials return `BrokerResponse.errorCode()` rather than automatically throwing. Socket, framing, decoding and response-matching failures throw exceptions, close the socket, and permanently invalidate the connection. Subsequent calls fail locally; create a new client explicitly. Normal broker error responses keep the connection reusable. The client does not retry or reconnect; a failed produce can still have an uncertain outcome.
 
-Calls on one instance are serialized. Another thread can call `close()` to close the socket and cancel a blocked read or write, including when the read timeout is zero. Codec buffers are cleared under the request lock after socket cancellation. `produceBatch` requires a nonempty batch within the [protocol limits](../setu-core/README.md#protocol); offsets follow list order. Durable acknowledgements follow the broker's [force boundary](../setu-storage/README.md#durability-and-recovery).
+Calls on one `SetuClient` instance are serialized. Another thread can call `close()` to close the socket and cancel a blocked read or write, including when the read timeout is zero. Codec buffers are cleared under the request lock after socket cancellation. `produceBatch` requires a nonempty batch within the [protocol limits](../setu-core/README.md#protocol); offsets follow list order. Durable acknowledgements follow the broker's [force boundary](../setu-storage/README.md#durability-and-recovery).
 
 Batch encoding copies caller bytes into the final wire frame. Fetched records share immutable slices of their response frame; `value()` returns a defensive copy. Keeping one slice can keep the complete frame alive. Copy values when retaining only a small subset for a long time.
 
@@ -143,19 +156,42 @@ File memberships survive restart until leave or expiry. Call `fetchOffset(group,
 `AsyncSetuClient` returns `CompletableFuture<BrokerResponse>` and uses a fixed number of independent connections. Its constructor takes a `ConnectionFactory`, connection count (1–1,024), bounded queued request count, and read retry count (0–10). The factory can call either `SetuClient.connectPlain` or `connectTls`; TLS hostname verification is preserved. Connections open lazily, reconnect after I/O failure, and close with the async client. Queue saturation completes the returned future exceptionally with `RejectedExecutionException`.
 
 ```java
+// The topic must already exist with at least four partitions.
 try (var client = new io.setu.client.AsyncSetuClient(
         () -> SetuClient.connectPlain("127.0.0.1", 9092, 5000, 35000, 16 * 1024 * 1024),
-        4, 128, 1)) {
-    var response = client.produce("orders", "customer-42", new byte[]{1}).join();
-    if (response.errorCode() != ErrorCode.NONE) throw new IllegalStateException(response.errorMessage());
-    var batch = client.produceBatch("orders", 0, List.of(new byte[]{2}, new byte[]{3})).join();
-    if (batch.errorCode() != ErrorCode.NONE) throw new IllegalStateException(batch.errorMessage());
+        4, 4, 0)) {
+    var writes = new java.util.ArrayList<java.util.concurrent.CompletableFuture<BrokerResponse>>();
+    for (int partition = 0; partition < 4; partition++) {
+        writes.add(client.produce("orders", partition, new byte[]{1}));
+    }
+    // Submit the whole bounded wave before waiting; inspect broker errors as well.
+    java.util.concurrent.CompletableFuture.allOf(
+            writes.toArray(java.util.concurrent.CompletableFuture<?>[]::new)).join();
+    for (var write : writes) {
+        var response = write.join();
+        if (response.errorCode() != ErrorCode.NONE)
+            throw new IllegalStateException(response.errorCode() + ": " + response.errorMessage());
+    }
 }
 ```
 
+The [complete example](../examples/SetuAsyncProducer.java) creates a fresh topic, joins before producing for memory retention, repeats bounded waves, verifies the records and acknowledges them. Wait for outstanding results before closing: `close()` cancels client work rather than waiting for all submitted operations to succeed. A failed wave can contain successful writes; do not retry the entire wave of ordinary writes.
+
+### Sizing and backpressure
+
+Start with a small connection count matched to independent work, then measure throughput and request latency. Four connections in the example are illustrative, not a recommended capacity for every deployment. Long polls and slow requests occupy pool workers. Keep consumer polling and latency-sensitive production in separate pools when they must make independent progress.
+
+The constructor's queue capacity counts **waiting requests**, separately from up to `connectionCount` active requests. It is not a byte budget: large payloads, caller-held futures and callback state also consume memory. Bound application submissions as in the example instead of building an unbounded list of futures. Queue saturation fails the future with `RejectedExecutionException`; apply backpressure before submitting more work. Increasing the queue mainly permits more waiting, not more active socket exchanges.
+
+Explicit `produce` and `produceBatch` reserve submission capacity before copying caller payloads; a full pool rejects them without copying their payloads. Admission counts preparing/running requests plus queued requests, bounded by connection count plus queue capacity. A caller constructing a `BrokerRequest` owns that construction cost before `request` can admit it.
+
+### Ordering and retries
+
 The keyed overload queries and caches immutable topic partition counts, routing via `floorMod(key.hashCode(), count)`. The explicit partition overload preserves application routing. `produceBatch(topic, partition, values)` appends an ordinary batch and returns its first assigned offset. It snapshots the list and caller bytes before returning, then uses the same reusable batch encoder as `SetuClient` on the assigned connection. It uses default durable acknowledgements and never retries an uncertain write. Configured acknowledgements and other commands remain available through `request(BrokerRequest)`.
 
-Concurrent writes across connections have no submission-order guarantee; await one result before submitting the next when order matters. Public byte-array APIs copy payloads before scheduling. Explicit `produce` and `produceBatch` reserve submission capacity before taking that copy; a full pool rejects them without copying their payloads. Admission counts preparing/running requests plus queued requests, bounded by connection count plus queue capacity. This is a request-count bound, not a payload-byte budget. A caller constructing a `BrokerRequest` owns that construction cost before `request` can admit it.
+Concurrent writes across connections have no submission-order guarantee; await one result before submitting the next when order matters. Public byte-array APIs copy payloads before scheduling.
+
+Keyed routing chooses a partition, not a dedicated ordered connection. Keep one unresolved operation per application ordering scope; for idempotent/transactional writes, that scope is `(producer ID, topic, partition)`. The example uses one unresolved write per partition. Check the broker result before submitting its successor, and resolve an uncertain identified write using the original identity, epoch, sequence and contents before advancing the sequence.
 
 `METADATA`, `FETCH`, `FETCH_OFFSET`, `GROUP_ASSIGNMENT`, `PRODUCE_IDEMPOTENT` and `TRANSACT` retry I/O failures within the configured count. Identified write retries preserve producer epoch, sequence and contents. Structured broker errors and ordinary/accepted writes are never retried. Cancellation skips a task that has not started; cancelling a future does not undo an active broker operation. `close()` closes sockets and completes running/queued request futures exceptionally. Read timeouts must still exceed long-poll waits.
 

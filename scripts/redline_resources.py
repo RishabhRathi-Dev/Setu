@@ -3,6 +3,11 @@ MIB = 1024 ** 2
 UNLIMITED_BYTES = 2**63 - 1
 
 
+def zgc_max_heap_mib(requested_mib):
+    """JDK 26 ZGC aligns -Xmx upward to its 2 MiB heap granule."""
+    return (requested_mib + 1) // 2 * 2
+
+
 def transport(heap_mib, record_bytes=1024, unbounded=True):
     # Credits bound simultaneous allocations; they do not allocate these buffers eagerly.
     return dict(request_buffer_bytes=UNLIMITED_BYTES if unbounded else max(32 * MIB, heap_mib * MIB // 8),

@@ -9,6 +9,25 @@ The [comparison harness](../scripts/diagnostics/io-comparison/README.md) support
 Setu, and `--parity` to include jasyncfio. Experimental dependencies stay outside
 production packaging. Qualification criteria and published badges are unchanged.
 
+## Client concurrency comparison
+
+[ClientConcurrencyProbe.java](../scripts/diagnostics/ClientConcurrencyProbe.java) compares three client arrangements through a real loopback TCP broker: several writers sharing one synchronous connection, one synchronous connection per writer, and an async pool with one connection per writer. It is an opt-in, fixed-work diagnostic; no existing benchmark gates or published badges change.
+
+Build the current server first, then run from the repository root with JDK 26. These commands work in PowerShell and Bash:
+
+```text
+java '@config/jvm.options' -Xms128m -Xmx512m -XX:MaxDirectMemorySize=128m -Dsetu.log.level=ERROR -cp setu-server/target/setu-server-1.0.0-SNAPSHOT.jar scripts/diagnostics/ClientConcurrencyProbe.java IN_MEMORY 4 200 3
+java '@config/jvm.options' -Xms128m -Xmx512m -XX:MaxDirectMemorySize=128m -Dsetu.log.level=ERROR -cp setu-server/target/setu-server-1.0.0-SNAPSHOT.jar scripts/diagnostics/ClientConcurrencyProbe.java FILE 4 200 3
+```
+
+Arguments are storage mode, writer count, measured batches per writer and repetitions. Defaults are `IN_MEMORY 4 200 3`. Each batch contains 32 records of 1 KiB; each writer has its own partition and at most one unresolved batch. Async retries are disabled, with queue capacity equal to writer count. All variants use `request(BrokerRequest)` so they exercise the same encoding path; this does not compare the synchronous `produceBatch` specialized encoder with the generic async request API.
+
+Each variant gets a fresh broker and topic, 25 warmup batches per writer, then the measured fixed work. Connections opened during warmup are reused. Variant order rotates between repetitions. All broker responses, dense offsets and complete payload readback are checked. Members join before producing and acknowledge after each phase; reading and acknowledgement are outside the timed interval. Shared-client p99 includes waiting for its connection; async p99 includes submission and pool waiting. Request timings also include batch construction/copying. There are no retries or ignored request failures; a failed check or 60-second phase deadline terminates the run without a successful completion marker.
+
+The probe prints per-variant records/s, request p99, elapsed duration, connection counts and `qualified=false`. It records JDK, OS, architecture, JVM processor count, heap limit, filesystem and a unique data directory under ignored `logs/client-concurrency/`. Add `-Dsetu.probe.revision=<git-revision>` before `-cp` and retain stdout alongside the exact command and `git diff` when comparing changes. FILE data is left intact for inspection. The probe caps each phase at 64 MiB of payload; default work is 25 MiB per measured phase. It needs no existing broker and opens only loopback sockets.
+
+These runs share a JVM, have fixed-count warmup, no OS resource quota and no concurrent consumer workload or scheduled offered load. They do not establish sustained capacity, identify physical media, isolate JIT/GC effects or explain the FILE reference-target gap. Repeated runs can reveal whether connection sharing constrains this workload; use the resource-enforced profiles for capacity claims. Existing target workloads already use independent synchronous producer/consumer connections.
+
 ## Local JFR capture
 
 Use [run-jfr.py](../scripts/run-jfr.py) to build and run the existing TCP workload with JFR on Windows, Linux or macOS. Requires Python 3.10+ and JDK 26 (`JAVA_HOME`, `--java-home` or `java` on `PATH`). The PowerShell entry point forwards the same options:

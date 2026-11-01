@@ -2,6 +2,19 @@
 
 Setu's FILE broker supports opt-in managed partition assignment, producer deduplication, and atomic consume-and-produce requests. These features are single-node guarantees. They do not provide replication, failover, cross-broker transactions, or atomic commits with external systems. For PostgreSQL database effects, use the separate [outbox/inbox integration](postgres-outbox.md).
 
+## Transaction scope
+
+| Operation | Supported atomically by FILE? |
+| --- | --- |
+| Append a batch to one output partition and advance one fetched input partition's offset | Yes |
+| Use different topics for that input and output | Yes |
+| Write output to two or more partitions, including partitions in different topics | No |
+| Advance two or more input partition offsets in one transaction | No |
+| Commit a broker transaction together with an external database or API effect | No |
+| Commit across brokers or retain availability through replicated nodes | No |
+
+For example, consuming `orders/0`, publishing to `enriched/2` and advancing the fetched `orders/0` offset is supported. Publishing that same transaction's output to both `enriched/2` and `audit/0` is not. Splitting the outputs into separate transactions does not make them atomic together. The PostgreSQL outbox/inbox adapter has its own database transaction boundary and does not extend Setu's output-partition scope.
+
 ## Managed consumer groups
 
 `joinManagedGroup(group, topic, member)` returns a `GroupAssignment` containing a generation and a map of assigned partition IDs to next committed offsets. Members are sorted by ID; partition `partitionId` belongs to member `partitionId % memberCount`. Join, leave and expiry automatically recalculate assignments and advance the generation. Waiting fetches wake on rebalance. Multiple topics use independent assignments, but a `(group, member)` identity can still register for only one topic.

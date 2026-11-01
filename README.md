@@ -8,7 +8,7 @@
 
 [Quick start](#quick-start) · [Documentation](docs/README.md) · [Examples](examples/README.md) · [Contributing](CONTRIBUTING.md) · [Get help](SUPPORT.md)
 
-Setu stores ordered records in topic partitions and exposes explicit produce, fetch, and consumer-progress operations. The default `FILE` engine uses OpenHFT Chronicle Queue; `IN_MEMORY` provides bounded, volatile storage. The implementation includes blocking and selector TCP transports, synchronous and bounded async Java clients, managed groups, identified producer retries, single-partition transactions, and an embedded mTLS security pipeline.
+Setu stores ordered records in topic partitions and exposes explicit produce, fetch, and consumer-progress operations. The default `FILE` engine uses OpenHFT Chronicle Queue; `IN_MEMORY` provides bounded, volatile storage. The implementation includes blocking and selector TCP transports, synchronous and bounded async Java clients, managed groups, identified producer retries, atomic consume-and-produce across one input and one output partition, and an embedded mTLS security pipeline.
 
 Setu is under active development. It runs as one broker process, with no replication or failover. File brokers recover active consumer memberships and acknowledged progress; security policies remain process-local. See [implementation boundaries](#implementation-boundaries) before choosing a deployment model.
 
@@ -27,6 +27,7 @@ The [recovery demo](examples/recovery-demo/README.md) exercises transaction retr
 ## Contents
 
 - [Quick start](#quick-start)
+- [When to use Setu](#when-to-use-setu)
 - [Architecture](#architecture)
 - [Messaging and storage](#messaging-and-storage)
 - [Security](#security)
@@ -92,11 +93,31 @@ The example creates a topic, joins a consumer group, appends a batch, fetches it
 
 To use Setu in an application, [install the client modules locally and add the Maven dependency](setu-client/README.md#add-to-a-maven-application). The client guide also documents error handling, TLS, timeouts, and ownership.
 
+### 3. Choose client concurrency
+
+`SetuClient` handles one exchange at a time **per instance/connection**. Use it for sequential workflows, or give independent workers their own instances. For concurrent submissions through one shared client API, use `AsyncSetuClient` with a bounded connection pool and queue. A long-poll fetch occupies one connection until it returns; give polling consumers separate connections or a separate pool from producers.
+
+Run the [async producer example](examples/SetuAsyncProducer.java) against the same broker:
+
+```powershell
+java '@config/jvm.options' -cp 'setu-server/target/lib/*' examples/SetuAsyncProducer.java
+```
+
+It submits four partition writes before waiting, bounds outstanding work, checks every broker response, and verifies all 128 records. It keeps one unresolved write per partition to preserve application order. Pooling alone does not preserve submission order across connections, and ordinary writes are never automatically retried. See [choosing a client](setu-client/README.md#choosing-a-client) for sizing, backpressure and retry rules.
+
+## When to use Setu
+
+Setu fits embedded or single-node messaging where applications can accept broker downtime and manage recovery from local durable storage. Select `FILE` for forced durable acknowledgements, or `IN_MEMORY` for bounded volatile data. Measure the intended workload on the deployment host before choosing capacity limits.
+
+FILE transactions can atomically publish a batch to one output partition and advance one fetched input partition's offset, **including when input and output belong to different topics**. Atomic output to multiple partitions or multiple topics is not supported. Broker transactions do not include external database/API effects; see [transaction boundaries](docs/transactions.md#transaction-scope).
+
+Deployments requiring continued service after node loss, replicated durability or automatic broker failover need capabilities Setu does not implement. Monitoring and process restart help operations but do not add replication. The [implementation boundaries](#implementation-boundaries) describe the remaining limits.
+
 ## Architecture
 
 ```mermaid
 flowchart LR
-    app[Java application] --> client[SetuClient]
+    app[Java application] --> client["SetuClient or AsyncSetuClient"]
     client --> transport["TCP transport<br/>Blocking or selector"]
     transport --> framing["Frame admission<br/>and protocol"]
     framing --> dispatch[Request dispatch]
@@ -194,9 +215,9 @@ Generated builds, IDE metadata, runtime data, credentials, logs, and recordings 
 
 - One broker process; no replication, failover, or distributed coordination.
 - File brokers recover memberships and acknowledged progress. Memory brokers lose them on restart. Leave and expiry remove progress in both modes.
-- FILE brokers offer opt-in managed assignment/rebalancing, producer deduplication and single-input/single-output-partition transactions. Producer sequencing and external effects still require application coordination; see [transaction guarantees and limits](docs/transactions.md).
+- FILE brokers offer opt-in managed assignment/rebalancing, producer deduplication and single-input/single-output-partition transactions, including across different input/output topics. Multi-output-partition transactions are unsupported. Producer sequencing and external effects still require application coordination; see [transaction guarantees and limits](docs/transactions.md).
 - New durable documents carry CRC32C checksums; older documents remain readable without checksum protection. Per-request `DURABLE` (default) and weaker `ACCEPTED` acknowledgement modes are available.
-- `SetuClient` serializes calls. `AsyncSetuClient` adds bounded pooling, keyed routing, reconnects and retries for reads and identified transactional/idempotent writes. Ordinary writes retain uncertain retry outcomes.
+- `SetuClient` serializes calls per instance/connection; independent instances can run concurrently. `AsyncSetuClient` adds bounded pooling, keyed routing, reconnects and retries for reads and identified transactional/idempotent writes. Ordinary writes retain uncertain retry outcomes. See [client selection and ordering](setu-client/README.md#choosing-a-client).
 - Metadata checkpoints compact historical transaction payloads while preserving fencing and progress. They pause broker requests; producer/group deletion and incremental snapshots remain unsupported. See [checkpoint recovery and compatibility](docs/journal-checkpoints.md).
 - ACL grants and quotas are process-local; persistent policy administration and automatic certificate rotation are not implemented.
 
@@ -209,6 +230,8 @@ Reference targets are **500,000 records/s in memory** and **250,000 records/s du
 The [benchmark guide](setu-benchmark/README.md) documents reproducible profiles, strict/report-only policies, host budgets, and JFR interpretation. Results from a different storage engine do not qualify Chronicle Queue.
 
 The generated blocks below retain their source revision, host information, and qualification status. Read them against that revision rather than as measurements of the current checkout; CI refreshes them after new runs.
+
+A result's target percentage describes that workload and runner, not a universal limit for HDD, SSD or NVMe storage. Check the **matching storage mode's** host/filesystem in the [machine-readable snapshot](benchmark-badges/node-target-results.json); the FILE and IN_MEMORY jobs can run on different hosts. Virtual device names and rotational flags do not independently establish the underlying physical media. A previous qualified run does not qualify a later revision or another deployment, and cross-host changes alone cannot establish a software regression. Headline p99 includes scheduled-completion backlog; use the separate produce/fetch/acknowledgement and force metrics to investigate the cause.
 
 ### CI benchmarks
 

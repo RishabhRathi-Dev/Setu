@@ -5,6 +5,8 @@ import math
 from pathlib import Path
 import re
 
+import redline_resources
+
 MODES = ('IN_MEMORY', 'FILE')
 PROFILE = dict(record_bytes=1024, batch_records=4096, stage_ms=10000, warmup_ms=2000,
                cpu_hold_ms=10000, max_concurrency=0, min_stages=8)
@@ -346,7 +348,7 @@ def publish(input_path, revision, workflow_url, readme, destination, allow_incom
         for run in document['runs']:
             validate_run(run)
             if (float(run['cpu_budget_cores']) != float(resources['budget']['cpu_cores'])
-                    or int(run['runtime']['max_heap_mb']) != int(resources['budget']['heap_mib'])):
+                    or int(run['runtime']['max_heap_mb']) != redline_resources.zgc_max_heap_mib(int(resources['budget']['heap_mib']))):
                 raise ValueError('CI redline worker budget differs from allocation')
             if run['mode'] in seen:
                 raise ValueError('Duplicate CI redline mode')
