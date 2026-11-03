@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "label": "memory JFR",
-  "message": "1.48 GiB/s alloc, 74.7 ms GC (CI)",
+  "message": "1.66 GiB/s alloc, 60.1 ms GC (CI)",
   "color": "orange",
   "sourceScope": "CI",
-  "sourceRevision": "828f3a81d5626a58e8c113e1217bcc52c04e19bf",
-  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/41703662238"
+  "sourceRevision": "04528a39dc24b96ddee9bcd0f2f67b5316fbc566",
+  "sourceUrl": "https://github.com/RishabhRathi-Dev/Setu/actions/runs/41708872334"
 }
