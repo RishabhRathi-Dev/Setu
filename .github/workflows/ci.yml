@@ -26,16 +26,41 @@ permissions:
   contents: read
 
 jobs:
-  contributor-performance:
+  detect-contributor-performance:
     if: ${{ !inputs.trace_file_waits }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      available: ${{ steps.detect.outputs.available }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 2
-      - name: Require the contributor PC attachment for the measured source
+      - name: Detect contributor PC evidence for the pushed source
+        id: detect
+        env:
+          CONTRIBUTOR_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          CONTRIBUTOR_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 scripts/contributor-performance.py detect
+          --repository "$CONTRIBUTOR_REPOSITORY"
+          --revision "$CONTRIBUTOR_REVISION"
+
+  contributor-performance:
+    needs: detect-contributor-performance
+    if: needs.detect-contributor-performance.outputs.available == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      available: ${{ steps.collect.outputs.available }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - name: Validate and collect the detected contributor PC evidence
+        id: collect
         env:
           CONTRIBUTOR_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           CONTRIBUTOR_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -45,6 +70,7 @@ jobs:
           --revision "$CONTRIBUTOR_REVISION"
           --output reports/contributor-pc.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.collect.outputs.available == 'true'
         with:
           name: contributor-pc-${{ github.run_attempt }}
           path: reports/contributor-pc.json
@@ -588,13 +614,13 @@ jobs:
           --workflow-url "$WORKFLOW_URL" --revision "$SOURCE_REVISION" --allow-incomplete
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        if: ${{ !cancelled() && steps.ci-badges.outcome == 'success' && needs.contributor-performance.result == 'success' }}
+        if: ${{ !cancelled() && steps.ci-badges.outcome == 'success' && needs.contributor-performance.result == 'success' && needs.contributor-performance.outputs.available == 'true' }}
         with:
           name: contributor-pc-${{ github.run_attempt }}
           path: contributor-report
 
       - name: Publish the contributor PC diagnostic alongside CI measurements
-        if: ${{ !cancelled() && steps.ci-badges.outcome == 'success' && needs.contributor-performance.result == 'success' }}
+        if: ${{ !cancelled() && steps.ci-badges.outcome == 'success' && needs.contributor-performance.result == 'success' && needs.contributor-performance.outputs.available == 'true' }}
         env:
           WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: >-

@@ -1,5 +1,8 @@
 #!/bin/sh
 set -eu
+if [ "$(git config --bool --get setu.performanceEnabled || true)" != "true" ]; then
+    exit 0
+fi
 root=$(git rev-parse --show-toplevel)
 runner=$(git config --get setu.performancePython || true)
 if [ -n "$runner" ]; then
