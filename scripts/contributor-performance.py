@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run mandatory contributor diagnostics and attach compact evidence without rewriting source commits."""
+"""Run optional contributor diagnostics and attach compact evidence without rewriting source commits."""
 import argparse
 from datetime import datetime, timezone
 import importlib.util
@@ -348,7 +348,8 @@ def pre_push(remote, updates, java_home=None):
     attach(remote, revision, result)
 
 
-def collect(repository, revision, output):
+def find_attachment(repository, revision):
+    """Find evidence for this source without downloading or trusting its contents."""
     if not re.fullmatch(r'[\w.-]+/[\w.-]+', repository) or not re.fullmatch(r'[0-9a-f]{40}', revision):
         raise ValueError('Invalid repository or revision')
     # A merge can incorporate newer generated reports without changing measured sources.
@@ -359,23 +360,37 @@ def collect(repository, revision, output):
         if measured_tree != tree and not publication_only_difference(candidate, revision):
             continue
         ref = NOTE_PREFIX + candidate
-        fetched = git('fetch', '--no-tags', 'https://github.com/' + repository + '.git', ref, check=False)
-        if fetched.returncode:
+        remote = 'https://github.com/' + repository + '.git'
+        found = git('ls-remote', '--exit-code', '--refs', remote, ref, check=False)
+        if found.returncode == 2:
             continue
-        git('update-ref', ref, git('rev-parse', 'FETCH_HEAD').stdout.strip())
-        note = git('notes', '--ref=' + ref, 'show', candidate).stdout
-        if len(note.encode('utf-8')) > MAX_REPORT_BYTES:
-            raise ValueError('Contributor attachment exceeds size limit')
-        document = validate(json.loads(note), candidate)
-        if document['source_tree'] != measured_tree:
-            raise ValueError('Contributor attachment does not match the source tree')
-        document.pop('collection', None)
-        if measured_tree != tree:
-            document['collection'] = dict(revision=revision, source_tree=tree, comparison='generated-publication-only')
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(document, indent=2, allow_nan=False) + '\n', encoding='utf-8')
-        return document
-    raise ValueError('Missing contributor evidence for this source. Install the pre-push hook and push from the measured branch; changes outside generated benchmark publication need a local measured push.')
+        found.check_returncode()
+        return candidate, measured_tree, tree
+    return None
+
+
+def collect(repository, revision, output, allow_missing=False):
+    attachment = find_attachment(repository, revision)
+    if attachment is None:
+        if allow_missing:
+            return None
+        raise ValueError('Missing contributor evidence for this source. Opt in with the pre-push hook and push from the measured branch, or use collect --optional to skip absent evidence.')
+    candidate, measured_tree, tree = attachment
+    ref = NOTE_PREFIX + candidate
+    git('fetch', '--no-tags', 'https://github.com/' + repository + '.git', ref)
+    git('update-ref', ref, git('rev-parse', 'FETCH_HEAD').stdout.strip())
+    note = git('notes', '--ref=' + ref, 'show', candidate).stdout
+    if len(note.encode('utf-8')) > MAX_REPORT_BYTES:
+        raise ValueError('Contributor attachment exceeds size limit')
+    document = validate(json.loads(note), candidate)
+    if document['source_tree'] != measured_tree:
+        raise ValueError('Contributor attachment does not match the source tree')
+    document.pop('collection', None)
+    if measured_tree != tree:
+        document['collection'] = dict(revision=revision, source_tree=tree, comparison='generated-publication-only')
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(document, indent=2, allow_nan=False) + '\n', encoding='utf-8')
+    return document
 
 
 def safe_text(value):
@@ -464,10 +479,13 @@ def main():
     hook.add_argument('--java-home', type=Path)
     install = sub.add_parser('install')
     install.add_argument('--java-home', type=Path)
+    detect_parser = sub.add_parser('detect', help='Detect a matching attachment before scheduling contributor CI')
     collect_parser = sub.add_parser('collect')
-    collect_parser.add_argument('--repository', required=True)
-    collect_parser.add_argument('--revision', required=True)
+    for command in (detect_parser, collect_parser):
+        command.add_argument('--repository', required=True)
+        command.add_argument('--revision', required=True)
     collect_parser.add_argument('--output', type=Path, required=True)
+    collect_parser.add_argument('--optional', action='store_true', help='Skip missing attachments; supplied evidence must still validate')
     publish_parser = sub.add_parser('publish')
     publish_parser.add_argument('--input', type=Path, required=True)
     publish_parser.add_argument('--readme', type=Path, default=ROOT / 'README.md')
@@ -484,14 +502,24 @@ def main():
         git('config', '--local', 'setu.performancePython', sys.executable)
         if home:
             git('config', '--local', 'setu.performanceJavaHome', str(home))
-        print('Installed mandatory contributor pre-push check for this checkout. Use JDK 26 via JAVA_HOME or install --java-home.')
+        git('config', '--local', 'setu.performanceEnabled', 'true')
+        print('Enabled optional contributor pre-push check for this checkout. Use JDK 26 via JAVA_HOME or install --java-home. Disable with git config --local setu.performanceEnabled false.')
     elif args.action == 'run':
         run_diagnostic(args.java_home)
     elif args.action == 'pre-push':
         pre_push(args.url, sys.stdin.read(), args.java_home)
-    elif args.action == 'collect':
-        document = collect(args.repository, args.revision, args.output)
-        summary = render(document)
+    elif args.action in ('detect', 'collect'):
+        if args.action == 'detect':
+            available = find_attachment(args.repository, args.revision) is not None
+            summary = ('Contributor PC attachment detected; contributor-performance will validate it.\n' if available
+                       else 'No matching contributor PC attachment; contributor-performance will be skipped.\n')
+        else:
+            document = collect(args.repository, args.revision, args.output, allow_missing=args.optional)
+            available = document is not None
+            summary = render(document) if available else 'No contributor PC attachment supplied; skipping optional benchmark evidence.\n'
+        if os.environ.get('GITHUB_OUTPUT'):
+            with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
+                output.write('available=' + str(available).lower() + '\n')
         print(summary)
         if os.environ.get('GITHUB_STEP_SUMMARY'):
             with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as output:

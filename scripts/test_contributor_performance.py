@@ -1,5 +1,7 @@
 import importlib.util
+import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -383,6 +385,81 @@ class ContributorValidationTests(unittest.TestCase):
                                        {'always': lambda: True, 'format': lambda template, value: template.format(value)})
                         self.assertEqual(functional == 'success' and targets != 'cancelled', allowed)
 
+    def test_optional_collection_reports_availability_and_preserves_validation_failures(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            attachment, outputs, summary = (root / name for name in ('attachment.json', 'outputs', 'summary.md'))
+            args = ['contributor-performance.py', 'collect', '--repository', 'owner/repo',
+                    '--revision', 'a' * 40, '--output', str(attachment), '--optional']
+            for document in (None, fixture()):
+                with self.subTest(available=document is not None), \
+                        patch.object(sys, 'argv', args), \
+                        patch.dict(os.environ, GITHUB_OUTPUT=str(outputs), GITHUB_STEP_SUMMARY=str(summary)), \
+                        patch.object(tool, 'collect', return_value=document) as collect, \
+                        patch('sys.stdout', new_callable=io.StringIO):
+                    tool.main()
+                    collect.assert_called_once_with('owner/repo', 'a' * 40, attachment, allow_missing=True)
+                    self.assertEqual('available=' + str(document is not None).lower(), outputs.read_text().splitlines()[-1])
+                    self.assertIn('skipping optional benchmark evidence' if document is None else 'diagnostic', summary.read_text())
+            with patch.object(sys, 'argv', args), patch.object(tool, 'collect', side_effect=ValueError('invalid evidence')), \
+                    self.assertRaisesRegex(ValueError, 'invalid evidence'):
+                tool.main()
+
+    def test_optional_collection_does_not_hide_remote_errors(self):
+        revision = 'a' * 40
+
+        def failed_remote(*args, **kwargs):
+            if args[0] == 'ls-remote':
+                return subprocess.CompletedProcess(args, 128, stdout='', stderr='remote unavailable')
+            return subprocess.CompletedProcess(args, 0, stdout=revision)
+
+        with patch.object(tool, 'git', side_effect=failed_remote), self.assertRaises(subprocess.CalledProcessError):
+            tool.collect('owner/repo', revision, Path('unused.json'), allow_missing=True)
+
+    def test_detection_reports_presence_without_collecting_or_running_benchmarks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            outputs, summary = (Path(folder) / name for name in ('outputs', 'summary.md'))
+            args = ['contributor-performance.py', 'detect', '--repository', 'owner/repo', '--revision', 'a' * 40]
+            for attachment in (None, ('a' * 40, 'b' * 40, 'b' * 40)):
+                with self.subTest(present=attachment is not None), patch.object(sys, 'argv', args), \
+                        patch.dict(os.environ, GITHUB_OUTPUT=str(outputs), GITHUB_STEP_SUMMARY=str(summary)), \
+                        patch.object(tool, 'find_attachment', return_value=attachment) as find, \
+                        patch.object(tool, 'collect') as collect, patch.object(tool, 'run_diagnostic') as run, \
+                        patch('sys.stdout', new_callable=io.StringIO):
+                    tool.main()
+                    find.assert_called_once_with('owner/repo', 'a' * 40)
+                    collect.assert_not_called()
+                    run.assert_not_called()
+                    self.assertEqual('available=' + str(attachment is not None).lower(), outputs.read_text().splitlines()[-1])
+
+    def test_workflow_schedules_contributor_stage_only_when_detection_finds_evidence(self):
+        workflow = (tool.ROOT / '.github/workflows/ci.yml').read_text()
+        detection = workflow.split('  detect-contributor-performance:\n', 1)[1].split('  contributor-performance:', 1)[0]
+        self.assertIn('available: ${{ steps.detect.outputs.available }}', detection)
+        collection = workflow.split('  contributor-performance:\n', 1)[1].split('  postgres-outbox:', 1)[0]
+        self.assertIn('needs: detect-contributor-performance', collection)
+        self.assertNotIn('--optional', collection)
+        condition = collection.split('    if: ', 1)[1].splitlines()[0]
+        for available in ('true', 'false', ''):
+            with self.subTest(available=available):
+                expression = condition.replace('needs.detect-contributor-performance.outputs.available', repr(available))
+                self.assertEqual(available == 'true', eval(expression, {'__builtins__': {}}))
+        self.assertIn('available: ${{ steps.collect.outputs.available }}', collection)
+        publication = workflow.split('  publish-benchmark-badges:\n', 1)[1]
+        conditions = [line.split('${{', 1)[1].split('}}', 1)[0] for line in publication.splitlines()
+                      if 'if:' in line and 'needs.contributor-performance.outputs.available' in line]
+        self.assertEqual(2, len(conditions))
+        for condition in conditions:
+            for available in ('true', 'false', ''):
+                for result in ('success', 'failure', 'skipped'):
+                    with self.subTest(condition=condition, available=available, result=result):
+                        expression = condition.replace('needs.contributor-performance.outputs.available', repr(available))
+                        expression = expression.replace('needs.contributor-performance.result', repr(result))
+                        expression = expression.replace('steps.ci-badges.outcome', repr('success'))
+                        expression = expression.replace('!cancelled()', 'True').replace('&&', ' and ')
+                        self.assertEqual(available == 'true' and result == 'success',
+                                         eval(expression.strip(), {'__builtins__': {}}))
+
     def test_tag_and_deletion_do_not_launch_workloads(self):
         with patch.object(tool, 'run_diagnostic') as run:
             tool.pre_push('origin', f'(delete) {"0" * 40} refs/heads/main {"b" * 40}\n')
@@ -391,6 +468,33 @@ class ContributorValidationTests(unittest.TestCase):
 
 
 class ContributorGitAttachmentTests(unittest.TestCase):
+    def test_hook_requires_opt_in_and_install_enables_it_until_disabled(self):
+        scratch = tool.ROOT / 'target/contributor-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        hook = (tool.ROOT / '.githooks/pre-push').read_bytes()
+        with tempfile.TemporaryDirectory(dir=scratch) as folder:
+            root = Path(folder)
+            subprocess.run(['git', 'init', str(root)], check=True, capture_output=True)
+            (root / '.githooks').mkdir()
+            (root / '.githooks/pre-push').write_bytes(hook)
+            (root / '.githooks/pre-push').chmod(0o755)
+            (root / 'scripts').mkdir()
+            # Fail visibly if the hook invokes diagnostics; no benchmark worker runs in this test.
+            (root / 'scripts/contributor-performance.py').write_text('import sys\nsys.exit(23)\n')
+            with patch.object(tool, 'ROOT', root):
+                tool.git('config', '--local', 'core.hooksPath', '.githooks')
+                tool.git('config', '--local', 'setu.performancePython', str(root / 'missing-python'))
+                command = ('hook', 'run', 'pre-push', '--', 'origin', 'unused')
+                # Old installations have no opt-in flag, and must skip even without a usable Python.
+                self.assertEqual(0, tool.git(*command, check=False).returncode)
+                with patch.object(sys, 'argv', ['contributor-performance.py', 'install']), \
+                        patch('sys.stdout', new_callable=io.StringIO):
+                    tool.main()
+                self.assertEqual('true', tool.git('config', '--bool', '--get', 'setu.performanceEnabled').stdout.strip())
+                self.assertEqual(23, tool.git(*command, check=False).returncode)
+                tool.git('config', '--local', 'setu.performanceEnabled', 'false')
+                self.assertEqual(0, tool.git(*command, check=False).returncode)
+
     def test_merge_reuses_parent_evidence_only_for_generated_publication_changes(self):
         scratch = tool.ROOT / 'target/contributor-tests'
         scratch.mkdir(parents=True, exist_ok=True)
@@ -438,6 +542,8 @@ class ContributorGitAttachmentTests(unittest.TestCase):
                     return real_git(*args, **kwargs)
 
                 with patch.object(tool, 'git', side_effect=local_fetch):
+                    self.assertEqual((measured, data['source_tree'], tool.git('rev-parse', 'HEAD^{tree}').stdout.strip()),
+                                     tool.find_attachment('owner/repo', merged))
                     result = tool.collect('owner/repo', merged, root / 'merged.json')
                 self.assertEqual(measured, result['source_revision'])
                 self.assertEqual(data['source_tree'], result['source_tree'])
@@ -511,6 +617,7 @@ class ContributorGitAttachmentTests(unittest.TestCase):
                     return real_git(*args, **kwargs)
 
                 with patch.object(tool, 'git', side_effect=local_fetch):
+                    self.assertEqual((revision, data['source_tree'], data['source_tree']), tool.find_attachment('owner/repo', revision))
                     collected = tool.collect('owner/repo', revision, root / 'collected.json')
                 self.assertEqual(data, collected)
                 tool.git('commit', '--allow-empty', '-m', 'Identical tree merge simulation')
@@ -523,10 +630,23 @@ class ContributorGitAttachmentTests(unittest.TestCase):
                 changed = tool.clean_revision()
                 with patch.object(tool, 'git', side_effect=local_fetch), self.assertRaisesRegex(ValueError, 'Missing contributor'):
                     tool.collect('owner/repo', changed, root / 'changed.json')
+                with patch.object(tool, 'git', side_effect=local_fetch):
+                    self.assertIsNone(tool.find_attachment('owner/repo', changed))
+                    self.assertIsNone(tool.collect('owner/repo', changed, root / 'optional.json', allow_missing=True))
+                self.assertFalse((root / 'optional.json').exists())
+                summary.write_text(json.dumps(dict(data, source_tree='c' * 40)))
+                tool.attach(str(remote), revision, summary)
+                with patch.object(tool, 'git', side_effect=local_fetch):
+                    self.assertIsNotNone(tool.find_attachment('owner/repo', revision))
+                with patch.object(tool, 'git', side_effect=local_fetch), self.assertRaisesRegex(ValueError, 'source tree'):
+                    tool.collect('owner/repo', revision, root / 'invalid.json', allow_missing=True)
                 with patch.object(tool, 'git', side_effect=local_fetch), self.assertRaisesRegex(ValueError, 'Missing contributor'):
                     tool.git('notes', '--ref=' + ref, 'remove', revision)
                     tool.git('push', '--no-verify', str(remote), ':' + ref)
                     tool.collect('owner/repo', revision, root / 'missing.json')
+                with patch.object(tool, 'git', side_effect=local_fetch):
+                    self.assertIsNone(tool.find_attachment('owner/repo', revision))
+                    self.assertIsNone(tool.collect('owner/repo', revision, root / 'missing.json', allow_missing=True))
 
 
 if __name__ == '__main__':

@@ -235,7 +235,7 @@ A result's target percentage describes that workload and runner, not a universal
 
 ### CI benchmarks
 
-The badges and expandable report below come from resource-enforced CI runs. Contributor PC diagnostics follow in their own section. CI publication continues when the contributor attachment check fails; that check still reports its failure separately.
+The badges and expandable report below come from resource-enforced CI runs. Optional contributor PC diagnostics follow in their own section. CI publication continues when contributor evidence is absent or fails validation; invalid evidence still reports its failure separately.
 
 <!-- benchmark-metrics-badges:start -->
 [![in-memory: 500.00K/s target, 446.06K/s CI, 89% unqualified](benchmark-badges/in-memory-sustained.svg)](https://github.com/RishabhRathi-Dev/Setu/actions/runs/41703662238)
@@ -394,7 +394,7 @@ Waits are elapsed time inside jdk.FileForce, clipped to each measured stage. Con
 
 ### CI redline limits
 
-Each CI run also doubles producer/consumer concurrency until a runtime limit under an enforced CPU/memory budget. These short exhaustion diagnostics show peak rates, sampled CPU/heap, latency and the terminal limit; consumption includes broadcast fanout. They do not qualify sustained capacity. The pre-push check runs the same ramp locally and includes its results in the contributor report below.
+Each CI run also doubles producer/consumer concurrency until a runtime limit under an enforced CPU/memory budget. These short exhaustion diagnostics show peak rates, sampled CPU/heap, latency and the terminal limit; consumption includes broadcast fanout. They do not qualify sustained capacity. When enabled, the optional pre-push check runs the same ramp locally and includes its results in the contributor report below.
 
 Compare completed deliveries with the full delivery demand (unique writes × consumers). The report shows this as delivery coverage; a high fanout rate alone does not show that consumers kept up. Fixed-target reports count unique deliveries and show write-target attainment separately. See [how to read the reports](setu-benchmark/README.md#reading-the-reports).
 
@@ -515,6 +515,8 @@ Admission policy: **unbounded**. Retained-log and FILE write-queue admission are
 <!-- benchmark-redline:end -->
 
 ### Contributor PC benchmarks
+
+Local contributor benchmarks are optional for pushes and pull requests. Use the [opt-in pre-push check](scripts/README.md#optional-contributor-pc-check) to attach local performance evidence. A lightweight CI job detects attachments matching the pushed source and enables the contributor validation stage only when evidence exists. That stage validates supplied attachments and retains them as pipeline artifacts; default-branch publication refreshes the contributor report. Without an attachment, CI skips the contributor stage and preserves the last report below. The normal CI tests and benchmarks run independently.
 
 <!-- benchmark-contributor-pc:start -->
 Latest contributor PC run (diagnostic, unqualified)
@@ -656,8 +658,6 @@ FILE: JDK 26.0.1; Windows_11; filesystem NTFS; CPU percentages use 12 cores as 1
 Free-disk reserve: 156.38 GiB (sampled).
 Admission policy: **unbounded**. Retained-log and FILE write-queue admission are disabled; request/response credits use Long.MAX_VALUE. JVM/OS bounds, protocol constraints, the disk reserve and outer watchdog still apply. Fetch payload: 4 MiB.
 <!-- benchmark-contributor-pc:end -->
-
-The [mandatory contributor pre-push check](scripts/README.md#contributor-pc-check-before-every-push) attaches local performance evidence. CI validates the attachment and retains it with the pipeline artifacts; default-branch publication refreshes the block above independently of the CI measurements.
 
 ## Help and contributions
 
