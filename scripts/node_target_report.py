@@ -2,7 +2,6 @@
 import json
 import math
 import statistics
-from pathlib import Path
 import sustained_report as sustained
 
 TARGETS = sustained.TARGETS

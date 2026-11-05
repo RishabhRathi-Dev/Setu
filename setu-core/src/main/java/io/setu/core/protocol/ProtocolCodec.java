@@ -18,9 +18,9 @@ import java.util.Map;
 /** Binary Setu protocol codec. Every request carries trace-context fields. */
 public final class ProtocolCodec {
     public static final int MAGIC = 0x53455455; // SETU
-    static final int HEADER_BYTES = 11;
+    private static final int HEADER_BYTES = 11;
     private static final int COMMAND_OFFSET = 5;
-    static final int CORRELATION_OFFSET = 7;
+    private static final int CORRELATION_OFFSET = 7;
     private static final int REQUEST = 0;
     private static final int RESPONSE = 1;
     private static final int MAX_STRING_BYTES = 4_096;
@@ -186,17 +186,16 @@ public final class ProtocolCodec {
     }
 
     public static BrokerRequest decodeRequest(byte[] payload) throws ProtocolException {
-        return decodeRequest(ByteBuffer.wrap(payload), extractCorrelationId(payload), null);
+        return decodeRequest(ByteBuffer.wrap(payload), null);
     }
 
     /** Immutable transport-owned frames can be retained by storage without copying payloads. */
     public static BrokerRequest decodeRequest(MessageFrame frame) throws ProtocolException {
-        ByteBuffer cursor = frame.cursor();
-        int correlation = cursor.remaining() >= HEADER_BYTES ? cursor.getInt(CORRELATION_OFFSET) : -1;
-        return decodeRequest(cursor, correlation, frame);
+        return decodeRequest(frame.cursor(), frame);
     }
 
-    private static BrokerRequest decodeRequest(ByteBuffer in, int correlation, MessageFrame frame) throws ProtocolException {
+    private static BrokerRequest decodeRequest(ByteBuffer in, MessageFrame frame) throws ProtocolException {
+        int correlation = 0;
         try {
             ProtocolHeader header = readHeader(in, REQUEST);
             correlation = header.correlationId();
@@ -462,17 +461,16 @@ public final class ProtocolCodec {
     }
 
     public static BrokerResponse decodeResponse(byte[] payload) throws ProtocolException {
-        return decodeResponse(ByteBuffer.wrap(payload), extractCorrelationId(payload), null);
+        return decodeResponse(ByteBuffer.wrap(payload), null);
     }
 
     /** Decodes immutable slices; retaining a record also retains its response frame. */
     public static BrokerResponse decodeResponse(MessageFrame frame) throws ProtocolException {
-        ByteBuffer cursor = frame.cursor();
-        int correlation = cursor.remaining() >= HEADER_BYTES ? cursor.getInt(CORRELATION_OFFSET) : -1;
-        return decodeResponse(cursor, correlation, frame);
+        return decodeResponse(frame.cursor(), frame);
     }
 
-    static BrokerResponse decodeResponse(ByteBuffer in, int correlation, MessageFrame frame) throws ProtocolException {
+    static BrokerResponse decodeResponse(ByteBuffer in, MessageFrame frame) throws ProtocolException {
+        int correlation = 0;
         try {
             // One cursor for the whole frame avoids per-record wrappers and synchronized stream reads.
             ProtocolHeader header = readHeader(in, RESPONSE);
@@ -539,16 +537,19 @@ public final class ProtocolCodec {
     }
 
     public static byte[] errorResponse(byte[] request, ErrorCode code, String message) {
-        ProtocolHeaderParts header = extractHeader(request);
+        return errorResponse(request == null ? null : ByteBuffer.wrap(request), code, message);
+    }
+
+    public static byte[] errorResponse(MessageFrame request, ErrorCode code, String message) {
+        return errorResponse(request.cursor(), code, message);
+    }
+
+    private static byte[] errorResponse(ByteBuffer request, ErrorCode code, String message) {
+        ProtocolHeader header = extractHeader(request);
         String safeMessage = message == null ? "" : message;
         while (safeMessage.getBytes(StandardCharsets.UTF_8).length > MAX_STRING_BYTES)
             safeMessage = safeMessage.substring(0, safeMessage.length() - 1);
         return encodeUnchecked(BrokerResponse.error(header.correlationId(), header.command(), code, safeMessage));
-    }
-
-    public static byte[] errorResponse(MessageFrame request, ErrorCode code, String message) {
-        // Error paths are cold; retain the existing malformed-header handling exactly.
-        return errorResponse(request.copy(), code, message);
     }
 
     private static byte[] encodeUnchecked(BrokerResponse response) {
@@ -639,24 +640,14 @@ public final class ProtocolCodec {
         return count;
     }
 
-    private static int extractCorrelationId(byte[] payload) {
-        ProtocolHeaderParts header = extractHeader(payload);
-        return header.correlationId();
-    }
-
-    private static ProtocolHeaderParts extractHeader(byte[] payload) {
-        if (payload == null || payload.length < HEADER_BYTES) return new ProtocolHeaderParts(Command.METADATA, 0);
-        ProtocolByteReader reader = new ProtocolByteReader(payload);
-        int magic = reader.intAt(0);
-        int commandId = reader.unsignedShortAt(COMMAND_OFFSET);
-        int correlation = reader.intAt(CORRELATION_OFFSET);
+    private static ProtocolHeader extractHeader(ByteBuffer payload) {
+        if (payload == null || payload.remaining() < HEADER_BYTES) return new ProtocolHeader(Command.METADATA, 0);
         Command command = Command.METADATA;
-        if (magic == MAGIC) {
-            try { command = Command.fromId(commandId); }
+        if (payload.getInt(0) == MAGIC) {
+            try { command = Command.fromId(Short.toUnsignedInt(payload.getShort(COMMAND_OFFSET))); }
             catch (ProtocolException ignored) { }
         }
-        if (correlation < 0) correlation = 0;
-        return new ProtocolHeaderParts(command, correlation);
+        return new ProtocolHeader(command, Math.max(0, payload.getInt(CORRELATION_OFFSET)));
     }
 
     private static ProtocolException bad(String message, int correlation) {

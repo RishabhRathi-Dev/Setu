@@ -152,7 +152,7 @@ class ProtocolCodecTests {
             var failure = org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
                     () -> ProtocolCodec.decodeResponse(truncated), "prefix length " + length);
             assertEquals(ErrorCode.BAD_REQUEST, failure.errorCode());
-            if (length >= 11) assertEquals(23, failure.correlationId());
+            assertEquals(length < 11 ? 0 : 23, failure.correlationId());
             var ownedFailure = org.junit.jupiter.api.Assertions.assertThrows(ProtocolException.class,
                     () -> ProtocolCodec.decodeResponse(owned(truncated)), "owned prefix length " + length);
             assertEquals(failure.errorCode(), ownedFailure.errorCode());

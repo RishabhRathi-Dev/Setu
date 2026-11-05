@@ -260,7 +260,7 @@ final class BrokerAotTraining {
 
     private static TlsConfiguration tls(Path keys, Path trust) {
         return new TlsConfiguration(true, "TLS", keys.toString(), PASSWORD, trust.toString(), PASSWORD,
-                null, true, List.of("TLSv1.3"), List.of());
+                true, List.of("TLSv1.3"), List.of());
     }
 
     private static void generateCertificate(Path store, String alias, String principal, String eku) throws Exception {

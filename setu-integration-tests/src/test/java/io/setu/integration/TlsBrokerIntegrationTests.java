@@ -168,7 +168,7 @@ class TlsBrokerIntegrationTests {
 
     private TlsConfiguration tls(Path keyStore, Path trustStore) {
         return new TlsConfiguration(true, "TLS", keyStore.toString(), PASSWORD,
-                trustStore.toString(), PASSWORD, null, true, List.of("TLSv1.3"), List.of());
+                trustStore.toString(), PASSWORD, true, List.of("TLSv1.3"), List.of());
     }
 
     private static void generateCertificate(Path store, String alias, String subject, String san) throws Exception {

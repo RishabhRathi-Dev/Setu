@@ -9,7 +9,6 @@ public record TlsConfiguration(
         String keyStorePassword,
         String trustStorePath,
         String trustStorePassword,
-        String keyAlias,
         boolean clientAuthenticationRequired,
         List<String> enabledProtocols,
         List<String> enabledCipherSuites
