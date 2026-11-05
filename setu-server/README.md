@@ -110,6 +110,8 @@ After authorization, quotas charge one message per protocol request and the requ
 
 Both transports preserve immutable frame ownership through built-in dispatch. Embedded plaintext pipelines should pass `BrokerRequestHandler` directly or use `RequestProcessor.plaintext(handler)`. Functional byte-array handlers remain supported through defensive compatibility copies. Shared framing and protocol details are in [protocol](../setu-core/README.md#protocol).
 
+When the built-in authorization resolver and broker handler are paired, secure requests are decoded once, then the same validated request is authorized and dispatched. Custom resolvers and handlers retain their existing frame/byte-array entry points. Request object credit remains under the transport's reservation.
+
 ## Admission and failure behavior
 
 Request credit is reserved before allocating a frame body and includes decoded payload/item allowances. Response credit is reserved before fetch materialization and encoding, and held through transmission. A quota failure returns `QUOTA_EXCEEDED` when a trustworthy request ID and error-response credit exist; otherwise the connection closes. These budgets account for specific allocations, not the entire JVM heap. Custom request processors must reserve response allocations through `ResponseBuffers.reserve(bytes)`.

@@ -28,6 +28,7 @@ public final class ProtocolCodec {
     // Leave room under the 15 MiB frame limit for request metadata and per-record lengths.
     private static final int MAX_BATCH_BYTES = 14 * 1024 * 1024;
     private static final int MAX_RESPONSE_ITEMS = 10_000;
+    private static final AcknowledgementMode[] ACKNOWLEDGEMENT_MODES = AcknowledgementMode.values();
 
     private ProtocolCodec() { }
 
@@ -61,7 +62,7 @@ public final class ProtocolCodec {
 
     public static byte[] encodeRequest(BrokerRequest request) throws IOException {
         validateRequest(request);
-        int capacity = 32;
+        int capacity = HEADER_BYTES;
         if (request.command() == Command.PRODUCE) capacity = HEADER_BYTES + 12 + request.topic().length() + request.valueLength();
         if (request.command() == Command.PRODUCE_BATCH || request.command() == Command.PRODUCE_IDEMPOTENT
                 || request.command() == Command.TRANSACT || request.command() == Command.PRODUCE_CONFIGURED) {
@@ -77,6 +78,25 @@ public final class ProtocolCodec {
                         + commit.memberId().getBytes(StandardCharsets.UTF_8).length
                         + commit.topic().length();
             }
+        }
+        switch (request.command()) {
+            case FETCH -> {
+                capacity += 20 + request.topic().length();
+                if (request.groupId() != null || request.waitMillis() > 0 || request.options().generation() >= 0)
+                    capacity += 8 + utf8Length(request.groupId()) + utf8Length(request.memberId());
+                if (request.waitMillis() > 0 || request.options().generation() >= 0) capacity += 4;
+                if (request.options().generation() >= 0) capacity += 8;
+            }
+            case COMMIT_OFFSET, FETCH_OFFSET -> {
+                capacity += 20 + utf8Length(request.groupId()) + request.topic().length();
+                if (request.memberId() != null) capacity += 4 + utf8Length(request.memberId());
+                if (request.options().generation() >= 0) capacity += 8;
+            }
+            case JOIN_GROUP, JOIN_MANAGED_GROUP, GROUP_ASSIGNMENT ->
+                    capacity += 12 + utf8Length(request.groupId()) + request.topic().length() + utf8Length(request.memberId());
+            case LEAVE_GROUP, HEARTBEAT -> capacity += 8 + utf8Length(request.groupId()) + utf8Length(request.memberId());
+            case CREATE_TOPIC -> capacity += 8 + request.topic().length();
+            default -> { }
         }
         capacity += 8 + request.traceContext().traceparent().length() + request.traceContext().tracestate().length();
         ProtocolEncodingBuffer bytes = new ProtocolEncodingBuffer(capacity);
@@ -149,6 +169,20 @@ public final class ProtocolCodec {
             case METADATA -> { }
         }
         return bytes.finish();
+    }
+
+    private static int utf8Length(String value) throws IOException {
+        if (value == null) return 0;
+        int bytes = value.length();
+        if (bytes > MAX_STRING_BYTES) throw new IOException("String field exceeds " + MAX_STRING_BYTES + " bytes");
+        for (int i = 0; i < value.length(); i++) {
+            if (value.charAt(i) >= 128) {
+                bytes = value.getBytes(StandardCharsets.UTF_8).length;
+                if (bytes > MAX_STRING_BYTES) throw new IOException("String field exceeds " + MAX_STRING_BYTES + " bytes");
+                break;
+            }
+        }
+        return bytes;
     }
 
     public static BrokerRequest decodeRequest(byte[] payload) throws ProtocolException {
@@ -244,8 +278,8 @@ public final class ProtocolCodec {
         AcknowledgementMode mode = AcknowledgementMode.DURABLE;
         if (command == Command.PRODUCE_CONFIGURED) {
             int id = Byte.toUnsignedInt(in.get());
-            if (id >= AcknowledgementMode.values().length) throw bad("Unknown acknowledgement mode", correlation);
-            mode = AcknowledgementMode.values()[id];
+            if (id >= ACKNOWLEDGEMENT_MODES.length) throw bad("Unknown acknowledgement mode", correlation);
+            mode = ACKNOWLEDGEMENT_MODES[id];
         }
         if (command == Command.PRODUCE_IDEMPOTENT || command == Command.TRANSACT)
             producer = new ProducerIdentity(readString(in), in.getLong(), in.getLong());

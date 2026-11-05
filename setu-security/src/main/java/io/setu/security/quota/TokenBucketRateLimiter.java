@@ -7,8 +7,6 @@ public final class TokenBucketRateLimiter implements RateLimiter {
 
     private final Map<String, ClientBuckets> buckets = new ConcurrentHashMap<>();
 
-    private final Map<String, QuotaPolicy> policies = new ConcurrentHashMap<>();
-
     public void registerPolicy(String principal, QuotaPolicy policy) {
 
         if (principal == null || principal.isBlank()) {
@@ -18,8 +16,6 @@ public final class TokenBucketRateLimiter implements RateLimiter {
         if (policy == null) {
             throw new IllegalArgumentException("Quota policy must not be null");
         }
-
-        policies.put(principal, policy);
 
         buckets.put(
                 principal,
@@ -38,21 +34,7 @@ public final class TokenBucketRateLimiter implements RateLimiter {
             throw new IllegalArgumentException("Message and byte counts must not be negative");
         }
 
-        QuotaPolicy policy = policies.get(principal);
-
-        if (policy == null) {
-            return false;
-        }
-
-        ClientBuckets clientBuckets =
-                buckets.computeIfAbsent(
-                        principal,
-                        ignored -> ClientBuckets.from(policy)
-                );
-
-        return clientBuckets.tryAcquire(
-                messageCount,
-                byteCount
-        );
+        ClientBuckets clientBuckets = buckets.get(principal);
+        return clientBuckets != null && clientBuckets.tryAcquire(messageCount, byteCount);
     }
 }

@@ -597,8 +597,11 @@ public final class DefaultBroker implements Broker {
     }
 
     private static List<ProtocolRecord> readRecords(MessageLog log, long offset, int maxBytes) throws IOException {
-        return log.read(offset, maxBytes, io.setu.core.protocol.ResponseBuffers::reserve).stream()
-                .map(record -> new ProtocolRecord(record.offset(), record.payload())).toList();
+        var stored = log.read(offset, maxBytes, io.setu.core.protocol.ResponseBuffers::reserve);
+        if (stored.isEmpty()) return List.of();
+        var records = new ArrayList<ProtocolRecord>(stored.size());
+        for (var record : stored) records.add(new ProtocolRecord(record.offset(), record.payload()));
+        return records;
     }
 
     private BrokerResponse metadata(BrokerRequest request) {
@@ -902,12 +905,13 @@ public final class DefaultBroker implements Broker {
                 var records = journal.read(offset, 15 * 1024 * 1024);
                 if (records.isEmpty()) throw new IOException("Consumer metadata journal has a gap");
                 for (var record : records) {
-                    if (journal.hasCheckpoint() && record.offset() == 0 && java.util.Arrays.equals(record.value(), new byte[]{0})) {
+                    byte[] value = record.value();
+                    if (journal.hasCheckpoint() && record.offset() == 0 && java.util.Arrays.equals(value, new byte[]{0})) {
                         offset = 1;
                         continue;
                     }
-                    journal.recovered(record.value());
-                    var encoded = java.nio.ByteBuffer.wrap(record.value());
+                    journal.recovered(value);
+                    var encoded = java.nio.ByteBuffer.wrap(value);
                     if (encoded.remaining() >= 12 && encoded.getInt(0) == TRANSACTION_ENTRY) {
                         encoded.getInt();
                         long firstOffset = encoded.getLong();
@@ -923,7 +927,7 @@ public final class DefaultBroker implements Broker {
                         offset = record.offset() + 1;
                         continue;
                     }
-                    BrokerRequest request = ProtocolCodec.decodeRequest(record.value());
+                    BrokerRequest request = ProtocolCodec.decodeRequest(value);
                     switch (request.command()) {
                         case JOIN_GROUP, JOIN_MANAGED_GROUP -> joinGroup(request);
                         case LEAVE_GROUP -> leaveGroup(request);

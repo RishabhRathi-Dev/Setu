@@ -54,9 +54,16 @@ public final class SecuredRequestProcessor implements RequestProcessor {
         }
 
         RequestAuthorizationMetadata metadata;
+        io.setu.core.protocol.BrokerRequest decoded = null;
         try {
-            metadata = Objects.requireNonNull(frame == null ? metadataResolver.resolve(request)
-                    : metadataResolver.resolve(frame), "authorization metadata");
+            if (metadataResolver instanceof ProtocolRequestAuthorizationMetadataResolver protocol
+                    && requestHandler instanceof io.setu.server.dispatcher.BrokerRequestHandler) {
+                decoded = frame == null ? ProtocolCodec.decodeRequest(request) : ProtocolCodec.decodeRequest(frame);
+                metadata = protocol.resolve(decoded);
+            } else {
+                metadata = Objects.requireNonNull(frame == null ? metadataResolver.resolve(request)
+                        : metadataResolver.resolve(frame), "authorization metadata");
+            }
         } catch (io.setu.core.protocol.BufferBudgetExceededException failure) {
             return error(request, frame, ErrorCode.QUOTA_EXCEEDED, failure.getMessage());
         } catch (ProtocolException failure) {
@@ -68,14 +75,16 @@ public final class SecuredRequestProcessor implements RequestProcessor {
         }
 
         try {
-            for (var requirement : metadata.requirements()) {
+            for (int i = -1; i < metadata.additionalRequirements().size(); i++) {
+                String resource = i < 0 ? metadata.resource() : metadata.additionalRequirements().get(i).resource();
+                var permission = i < 0 ? metadata.permission() : metadata.additionalRequirements().get(i).permission();
                 AuthorizationContext context = new AuthorizationContext(
-                        identity.principal(), requirement.resource(), requirement.permission());
+                        identity.principal(), resource, permission);
                 var authorization = authorizer.authorize(identity, context);
                 if (authorization == null || !authorization.allowed()) {
                     String reason = authorization == null ? "authorizer returned no decision" : authorization.reason();
                     LOG.warn("Authorization denied principal={} resource={} permission={} reason={}",
-                            LogText.escape(identity.principal()), LogText.escape(requirement.resource()), requirement.permission(), LogText.escape(reason));
+                            LogText.escape(identity.principal()), LogText.escape(resource), permission, LogText.escape(reason));
                     return error(request, frame, ErrorCode.AUTHORIZATION_DENIED, reason);
                 }
             }
@@ -88,6 +97,10 @@ public final class SecuredRequestProcessor implements RequestProcessor {
             }
             if (LOG.isDebugEnabled()) LOG.debug("Security accepted principal={} resource={} permission={} frame_bytes={}",
                     LogText.escape(identity.principal()), LogText.escape(metadata.resource()), metadata.permission(), length);
+            if (decoded != null) {
+                var handler = (io.setu.server.dispatcher.BrokerRequestHandler) requestHandler;
+                return frame == null ? handler.handleDecoded(request, decoded) : handler.handleDecoded(frame, decoded);
+            }
             return frame == null ? requestHandler.handle(request) : requestHandler.handle(frame);
         } catch (io.setu.core.protocol.BufferBudgetExceededException failure) {
             return error(request, frame, ErrorCode.QUOTA_EXCEEDED, failure.getMessage());

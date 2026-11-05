@@ -51,23 +51,14 @@ public final class GroupCommitMessageLog implements MessageLog {
         return appendValues(values.stream().map(MessageValue::copyOf).toList());
     }
     public long appendValues(List<MessageValue> values) throws IOException {
-        return await(enqueue(values), "Partition append failed");
+        return enqueue(values, false).await();
     }
 
     public CompletableFuture<Long> appendValuesAsync(List<MessageValue> values) throws IOException {
-        var result = new CompletableFuture<Long>();
-        enqueue(values).whenComplete((offset, failure) ->
-                Thread.ofVirtual().name("setu-write-completion").start(() -> {
-                    // Completing a public future can run arbitrary caller callbacks.
-                    // Keep both success and failure callbacks off the partition writer:
-                    // they may synchronously append again or close and join that writer.
-                    if (failure == null) result.complete(offset);
-                    else result.completeExceptionally(failure);
-                }));
-        return result;
+        return enqueue(values, true).result();
     }
 
-    private CompletableFuture<Long> enqueue(List<MessageValue> values) throws IOException {
+    private PendingAppend enqueue(List<MessageValue> values, boolean asynchronous) throws IOException {
         if (values.isEmpty()) throw new IllegalArgumentException("empty batch");
         List<MessageValue> owned = List.copyOf(values);
         long bytes = 0;
@@ -76,7 +67,7 @@ public final class GroupCommitMessageLog implements MessageLog {
             bytes = Math.addExact(bytes, 32L + (value.sharesFrameWith(previous) ? 0 : value.retainedArrayLength()));
             previous = value;
         }
-        PendingAppend pending = new PendingAppend(owned, bytes, new CompletableFuture<>());
+        PendingAppend pending = new PendingAppend(owned, bytes, asynchronous);
         while (true) {
             GroupCommitState before = state.get();
             if (before.closing()) throw new IOException("Partition writer is closed");
@@ -91,7 +82,7 @@ public final class GroupCommitMessageLog implements MessageLog {
         }
         LockSupport.unpark(writer);
         // Interruption cannot cancel an accepted write or hide its durability result.
-        return pending.result();
+        return pending;
     }
 
     private void writeLoop() {
@@ -129,7 +120,7 @@ public final class GroupCommitMessageLog implements MessageLog {
                 finally { flushNanos.add(System.nanoTime() - flushStarted); flushCount.increment(); }
                 release(group); // returned callers can immediately reuse the released capacity
                 for (PendingAppend pending : group) {
-                    pending.result().complete(offset);
+                    pending.complete(offset, null);
                     offset += pending.values().size();
                 }
             } catch (Throwable e) {
@@ -172,9 +163,9 @@ public final class GroupCommitMessageLog implements MessageLog {
             GroupCommitState before = state.get();
             if (state.compareAndSet(before, new GroupCommitState(null, 0, 0, before.closing(), failure))) {
                 for (GroupCommitEntry entry = active; entry != null; entry = entry.next())
-                    entry.pending().result().completeExceptionally(failure);
+                    entry.pending().complete(0, failure);
                 for (GroupCommitEntry entry = before.head(); entry != null; entry = entry.next())
-                    entry.pending().result().completeExceptionally(failure);
+                    entry.pending().complete(0, failure);
                 return;
             }
         }

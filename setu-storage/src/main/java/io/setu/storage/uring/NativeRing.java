@@ -138,7 +138,9 @@ final class NativeRing implements UringRing {
                     entry.set(JAVA_INT, 28, 2 | 0x80000); // O_RDWR | O_CLOEXEC, no create/truncate
                 } else if (operation.opcode == UringFileIo.WRITE) {
                     MemorySegment source = MemorySegment.ofBuffer(operation.payload);
-                    if (source.isNative() && UringFileIo.ownsBuffer(source)) {
+                    // UringFile copies unowned/scoped native buffers before admission.
+                    // A native payload here has already passed the ownership check.
+                    if (source.isNative()) {
                         borrowed[slot] = source;
                         data = source;
                     } else {

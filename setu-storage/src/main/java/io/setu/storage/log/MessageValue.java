@@ -1,7 +1,5 @@
 package io.setu.storage.log;
 
-import net.openhft.chronicle.bytes.Bytes;
-
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
@@ -68,12 +66,7 @@ public final class MessageValue {
 
     public void writeTo(DataOutput output) throws IOException { output.write(bytes, offset, length); }
 
-    /** Internal bulk copy without stream adapters or exposing the backing array. */
-    void writeTo(Bytes<?> output) { output.write(bytes, offset, length); }
-
     public byte[] copy() { return Arrays.copyOfRange(bytes, offset, offset + length); }
 
     public void copyTo(ByteBuffer output) { output.put(bytes, offset, length); }
-
-    void updateChecksum(java.util.zip.CRC32C checksum) { checksum.update(bytes, offset, length); }
 }

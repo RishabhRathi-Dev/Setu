@@ -66,6 +66,7 @@ public record BrokerRequest(int correlationId, Command command, String topic, in
     }
 
     public BrokerRequest withTraceContext(TraceContext context) {
+        if (traceContext.equals(context == null ? TraceContext.NONE : context)) return this;
         return new BrokerRequest(correlationId, command, topic, partition, offset, maxBytes, payload,
                 partitionCount, groupId, memberId, payloads, waitMillis, options, context);
     }
