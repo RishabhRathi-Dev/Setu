@@ -32,7 +32,7 @@ class TlsTests {
         List<String> protocols = new ArrayList<>(List.of("TLSv1.3"));
         List<String> cipherSuites = new ArrayList<>(List.of("TLS_AES_128_GCM_SHA256"));
         TlsConfiguration configuration = new TlsConfiguration(
-                true, "TLS", "key", "password", "trust", "password", null, true,
+                true, "TLS", "key", "password", "trust", "password", true,
                 protocols, cipherSuites);
 
         protocols.add("TLSv1.2");
@@ -72,7 +72,7 @@ class TlsTests {
             String keyStorePath,
             String trustStorePath) {
         return new TlsConfiguration(enabled, protocol, keyStorePath, "password",
-                trustStorePath, "password", null, true, null, null);
+                trustStorePath, "password", true, null, null);
     }
 
     private static void writeEmptyStore(Path path) throws Exception {

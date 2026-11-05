@@ -72,7 +72,7 @@ String password = System.getenv("SETU_CERT_PASSWORD");
 var tls = new TlsConfiguration(true, "TLS",
         "certs/generated/broker.p12", password,
         "certs/generated/broker-trust.p12", password,
-        null, true, List.of("TLSv1.3"), List.of());
+        true, List.of("TLSv1.3"), List.of());
 var contexts = new TlsContextFactory(new SetuKeyManagerProvider(), new SetuTrustManagerProvider());
 var acl = new InMemoryAuthorizer();
 acl.grant("setu-client", "broker", Permission.VIEW_METADATA);

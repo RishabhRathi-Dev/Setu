@@ -40,7 +40,7 @@ def render(readme, output, workflow_url):
             path = output / (name + '.svg')
             assets.append((path, svg))
             relative = Path(os.path.relpath(path, readme.parent)).as_posix()
-            links.append(badges.readme_badge(data['label'], data['message'], data['color'], data.get('sourceUrl', workflow_url), relative))
+            links.append(badges.readme_badge(data['label'], data['message'], data.get('sourceUrl', workflow_url), relative))
         source = re.sub(pattern, lambda _: f'<!-- {block}:start -->\n' + '\n'.join(links)
                         + f'\n<!-- {block}:end -->', source, flags=re.S)
     marker = 'benchmark-contributor-pc'

@@ -64,7 +64,7 @@ def assets(document, image_directory, link_directory, fallback_url=None):
                     sourceUrl=url, qualified=False)
         files[image_directory / (name + '.json')] = json.dumps(data, indent=2) + '\n'
         files[image_directory / (name + '.svg')] = badges.badge_svg(label, message, color)
-        links.append(badges.readme_badge(label, message, color, url, link_directory.rstrip('/') + '/' + name + '.svg'))
+        links.append(badges.readme_badge(label, message, url, link_directory.rstrip('/') + '/' + name + '.svg'))
     return files, links
 
 

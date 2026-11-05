@@ -39,6 +39,8 @@ class OwnedRequestFrameTests {
             var expected = assertThrows(ProtocolException.class, () -> ProtocolCodec.decodeRequest(truncated));
             var actual = assertThrows(ProtocolException.class, () -> ProtocolCodec.decodeRequest(frame(truncated)));
             assertEquals(expected.errorCode(), actual.errorCode());
+            assertEquals(length < 11 ? 0 : 7, expected.correlationId());
+            assertEquals(expected.correlationId(), actual.correlationId());
             assertArrayEquals(ProtocolCodec.errorResponse(truncated, actual.errorCode(), actual.getMessage()),
                     ProtocolCodec.errorResponse(frame(truncated), actual.errorCode(), actual.getMessage()));
         }
@@ -49,5 +51,25 @@ class OwnedRequestFrameTests {
             assertEquals(90, budget.usedBytes());
         }
         assertEquals(0, budget.usedBytes());
+    }
+
+    @Test void errorRepliesRecoverCommandAndCorrelationIndependently() throws Exception {
+        var header = java.nio.ByteBuffer.allocate(11).putInt(ProtocolCodec.MAGIC)
+                .put((byte) 99).putShort((short) Command.FETCH.id()).putInt(42);
+        assertErrorHeader(header.array(), Command.FETCH, 42); // unexpected message kind
+        header.putInt(0, 0);
+        assertErrorHeader(header.array(), Command.METADATA, 42);
+        header.putInt(0, ProtocolCodec.MAGIC).putShort(5, (short) 65535);
+        assertErrorHeader(header.array(), Command.METADATA, 42);
+        header.putShort(5, (short) Command.FETCH.id()).putInt(7, -1);
+        assertErrorHeader(header.array(), Command.FETCH, 0);
+        assertErrorHeader(java.util.Arrays.copyOf(header.array(), 10), Command.METADATA, 0);
+    }
+
+    private static void assertErrorHeader(byte[] payload, Command command, int correlation) throws Exception {
+        byte[] encoded = ProtocolCodec.errorResponse(payload, ErrorCode.BAD_REQUEST, "invalid");
+        assertArrayEquals(encoded, ProtocolCodec.errorResponse(frame(payload), ErrorCode.BAD_REQUEST, "invalid"));
+        assertEquals(BrokerResponse.error(correlation, command, ErrorCode.BAD_REQUEST, "invalid"),
+                ProtocolCodec.decodeResponse(encoded));
     }
 }

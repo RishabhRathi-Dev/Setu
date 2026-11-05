@@ -99,10 +99,9 @@ def write_badge(directory: Path, filename: str, label: str, message: str, color:
     write_if_changed((directory / filename).with_suffix(".svg"), svg)
 
 
-def readme_badge(label: str, message: str, color: str, workflow_url: str,
-                 image_path: str | None = None) -> str:
+def readme_badge(label: str, message: str, workflow_url: str, image_path: str) -> str:
     alt_text = f"{label}: {message}".replace("[", "\\[").replace("]", "\\]")
-    image_url = quote(image_path or f"benchmark-badges/{label.replace(' ', '-')}.svg", safe="/-._")
+    image_url = quote(image_path, safe="/-._")
     return f"[![{alt_text}]({image_url})]({workflow_url})"
 
 
@@ -351,7 +350,6 @@ def main() -> None:
             readme_badge(
                 f"{badge_mode} capacity",
                 f"{concurrency} · {friendly_reason(reason)} · peak CPU {cpu}% · {heap} MB · p99 {p99}",
-                capacity_color,
                 workflow_url,
                 f"{badge_directory}/{label}-capacity.svg",
             )
@@ -369,7 +367,6 @@ def main() -> None:
             readme_badge(
                 f"{badge_mode} peak rates",
                 f"{format_rate(peak_produce)} prod/s · {format_rate(peak_consume)} consumed/s",
-                "blue",
                 workflow_url,
                 f"{badge_directory}/{label}-throughput.svg",
             )
@@ -383,7 +380,7 @@ def main() -> None:
         else:
             message, color = "not recorded in latest capture", "lightgrey"
         write_badge(args.output, f"{label}-jfr.json", f"{label} JFR", message, color)
-        badges.append(readme_badge(f"{badge_mode} JFR", message, color, workflow_url,
+        badges.append(readme_badge(f"{badge_mode} JFR", message, workflow_url,
                                   f"{badge_directory}/{label}-jfr.svg"))
 
     update_readme_badges(badges, args.readme, workflow_url, args.visibility,

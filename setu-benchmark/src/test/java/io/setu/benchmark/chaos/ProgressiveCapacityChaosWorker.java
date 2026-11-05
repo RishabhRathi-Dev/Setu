@@ -81,7 +81,6 @@ final class ProgressiveCapacityChaosWorker {
                     Runtime.getRuntime().availableProcessors(), Runtime.getRuntime().maxMemory() / (1024 * 1024),
                     System.getProperty("setu.log.level", "INFO"), System.getProperty("SETU_LOG_DIR", "logs"));
         }
-        AtomicBoolean outOfMemory = new AtomicBoolean();
         Thread.setDefaultUncaughtExceptionHandler((thread, failure) -> {
             if (failure instanceof OutOfMemoryError) stopReporter.heapExhausted();
             else {
@@ -96,12 +95,13 @@ final class ProgressiveCapacityChaosWorker {
                 return;
             }
             int stage = Integer.parseInt(System.getProperty("setu.benchmark.stage.id"));
-            stopReporter.prepareStage(stage, 1 << (stage - 1));
+            int concurrency = 1 << (stage - 1);
+            stopReporter.prepareStage(stage, concurrency);
             if (Boolean.parseBoolean(System.getProperty("setu.benchmark.jfr", "true"))) {
                 Path capture = Path.of(System.getProperty("setu.benchmark.stage.recording"));
                 CapacityJfr.start(capture);
             }
-            runSingleStage(mode, dataRoot, outOfMemory, stage, 1 << (stage - 1));
+            runSingleStage(mode, dataRoot, stage, concurrency);
             CapacityJfr.finish();
         } catch (OutOfMemoryError exhausted) {
             stopReporter.heapExhausted();
@@ -151,8 +151,7 @@ final class ProgressiveCapacityChaosWorker {
         if (exitCode != 0) System.exit(exitCode);
     }
 
-    private static void runSingleStage(StorageMode mode, Path dataRoot, AtomicBoolean outOfMemory,
-                                       int stage, int concurrency) throws Exception {
+    private static void runSingleStage(StorageMode mode, Path dataRoot, int stage, int concurrency) throws Exception {
         Files.createDirectories(dataRoot);
         OperatingSystemMXBean os = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
         Path brokerData = mode == StorageMode.FILE ? dataRoot.resolve("broker-data") : null;
@@ -171,14 +170,10 @@ final class ProgressiveCapacityChaosWorker {
             server.start();
             List<SetuClient> producers = new ArrayList<>();
             List<SetuClient> consumers = new ArrayList<>();
-            stopReporter.prepareStage(stage, concurrency);
             StageResult result;
             try {
-                result = runStage(mode, stage, concurrency, server, producers, consumers, clients, os, outOfMemory,
+                result = runStage(mode, stage, concurrency, server, producers, consumers, clients, os,
                         STAGE_MILLIS, MAX_CONCURRENCY == 0 && stage >= MIN_STAGES, broker);
-            } catch (OutOfMemoryError exhausted) {
-                stopReporter.heapExhausted();
-                return;
             } catch (IOException | RuntimeException resourceFailure) {
                 stopReporter.awaitHeapExhaustionIfReported();
                 resourceFailure.printStackTrace(System.err);
@@ -189,9 +184,6 @@ final class ProgressiveCapacityChaosWorker {
 
             stopReporter.awaitHeapExhaustionIfReported();
             printStage(mode, result, result.cpuHoldStarted ? "CAPACITY_STAGE_TOTAL" : "CAPACITY_STAGE");
-            if (outOfMemory.get() || "JVM_OOM".equals(result.reason)) {
-                stopReporter.heapExhausted();
-            }
             if (result.reason != null) {
                 stop(mode, result.reason, stage, concurrency, result.detail);
                 return;
@@ -213,7 +205,7 @@ final class ProgressiveCapacityChaosWorker {
     private static StageResult runStage(StorageMode mode, int stage, int concurrency, TcpServer server,
                                         List<SetuClient> producers, List<SetuClient> consumers,
                                         List<SetuClient> clients, OperatingSystemMXBean os,
-                                        AtomicBoolean outOfMemory, long durationMillis, boolean observeCpu, DefaultBroker broker) throws Exception {
+                                        long durationMillis, boolean observeCpu, DefaultBroker broker) throws Exception {
         String topic = "capacity-" + stage;
         String group = "capacity-group-" + stage;
         ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
@@ -262,14 +254,14 @@ final class ProgressiveCapacityChaosWorker {
 
             for (int i = 0; i < concurrency; i++) {
                 SetuClient producer = producers.get(i);
-                workers.execute(() -> produceUntilStopped(producer, topic, running, outOfMemory,
+                workers.execute(() -> produceUntilStopped(producer, topic, running,
                         workerFailure, produced, latency, broker, mode, backpressure));
             }
             for (int i = 0; i < concurrency; i++) {
                 SetuClient consumer = consumers.get(i);
                 String member = "member-" + i;
                 workers.execute(() -> consumeUntilStopped(consumer, topic, group, member, running,
-                        outOfMemory, workerFailure, consumed, latency));
+                        workerFailure, consumed, latency));
             }
 
             long warmupStart = System.nanoTime();
@@ -298,10 +290,9 @@ final class ProgressiveCapacityChaosWorker {
             int cpuSamples = 0;
             long deadline = started + durationMillis * 1_000_000L;
             long nextDiagnostic = started + 1_000_000_000L;
-            while (System.nanoTime() < deadline && running.get()) {
+            while (System.nanoTime() < deadline) {
                 Thread.sleep(SAMPLE_MILLIS);
                 stopReporter.awaitHeapExhaustionIfReported();
-                if (outOfMemory.get()) { reason = "JVM_OOM"; break; }
                 Throwable failure = workerFailure.get();
                 if (failure != null) {
                     reason = "BROKER_OR_CLIENT_LIMIT";
@@ -335,7 +326,6 @@ final class ProgressiveCapacityChaosWorker {
                 }
                 if (holdCompleted) {
                     reason = "CPU_SATURATION";
-                    detail = "CPU saturation observed; completed " + CPU_HOLD_MILLIS + " ms at fixed concurrency";
                     break;
                 }
                 MemoryUsage usage = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
@@ -360,12 +350,9 @@ final class ProgressiveCapacityChaosWorker {
             jfrStage.end();
             measuredProduced = produced.sum() - producedBefore;
             measuredConsumed = consumed.sum() - consumedBefore;
-            if (reason == null && cpuHold.isHolding() && cpuHold.sample(System.nanoTime(), lastCpu)) {
+            if (reason == null && cpuHold.isHolding() && cpuHold.sample(System.nanoTime(), lastCpu))
                 reason = "CPU_SATURATION";
-                detail = "CPU saturation observed; completed " + CPU_HOLD_MILLIS + " ms at fixed concurrency";
-            }
             cpuAverage = cpuSamples == 0 ? 0 : cpuTotal / cpuSamples;
-            if (outOfMemory.get()) reason = "JVM_OOM";
             if (workerFailure.get() != null && (reason == null || "CPU_SATURATION".equals(reason))) {
                 reason = "BROKER_OR_CLIENT_LIMIT";
                 detail = workerFailure.get().toString();
@@ -390,23 +377,14 @@ final class ProgressiveCapacityChaosWorker {
             stopReporter.awaitHeapExhaustionIfReported();
             latency.measuring = false;
             running.set(false);
-            if (outOfMemory.get()) {
+            workers.shutdown();
+            if (!workers.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                if (reason == null || "CPU_SATURATION".equals(reason)) {
+                    reason = "CLIENT_STALL";
+                    detail = "in-flight client requests did not drain after the stage stopped";
+                }
                 workers.shutdownNow();
                 workers.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
-            } else {
-                workers.shutdown();
-                if (!workers.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS)) {
-                    if (reason == null || "CPU_SATURATION".equals(reason)) {
-                        reason = "CLIENT_STALL";
-                        detail = "in-flight client requests did not drain after the stage stopped";
-                    }
-                    workers.shutdownNow();
-                    workers.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
-                }
-            }
-            if (outOfMemory.get()) {
-                reason = "JVM_OOM";
-                detail = "JVM heap exhausted during active load";
             }
         }
 
@@ -422,7 +400,7 @@ final class ProgressiveCapacityChaosWorker {
     }
 
     private static void produceUntilStopped(SetuClient client, String topic, AtomicBoolean running,
-                                            AtomicBoolean outOfMemory, AtomicReference<Throwable> failure,
+                                            AtomicReference<Throwable> failure,
                                             LongAdder produced, LatencyHistogram latency, DefaultBroker broker,
                                             StorageMode mode, LongAdder backpressure) {
         try {
@@ -469,7 +447,7 @@ final class ProgressiveCapacityChaosWorker {
     }
 
     private static void consumeUntilStopped(SetuClient client, String topic, String group, String member,
-                                            AtomicBoolean running, AtomicBoolean outOfMemory,
+                                            AtomicBoolean running,
                                             AtomicReference<Throwable> failure, LongAdder consumed,
                                             LatencyHistogram latency) {
         long offset = 0;
