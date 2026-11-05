@@ -241,21 +241,6 @@ def capacity_details(stages: dict[str, list[dict[str, str]]], stop_reasons: dict
     return "\n".join(lines)
 
 
-def update_capacity_details(details: str, readme_path: Path) -> None:
-    readme = readme_path.read_text(encoding="utf-8")
-    pattern = re.compile(
-        r"(?s)(<!-- benchmark-capacity-details:start -->).*?(<!-- benchmark-capacity-details:end -->)"
-    )
-    if len(pattern.findall(readme)) != 1:
-        raise SystemExit("README must contain exactly one capacity details block")
-    updated, count = pattern.subn(
-        lambda match: f"{match.group(1)}\n{details}\n{match.group(2)}", readme, count=1
-    )
-    if count != 1:
-        raise SystemExit("README capacity details block could not be updated")
-    readme_path.write_text(updated, encoding="utf-8")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", type=Path)

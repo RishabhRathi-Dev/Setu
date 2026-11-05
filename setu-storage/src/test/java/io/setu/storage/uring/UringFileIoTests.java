@@ -132,8 +132,11 @@ class UringFileIoTests {
         FakeRing ring = new FakeRing() {
             @Override public void submit(List<UringOperation> batch) {
                 for (var operation : batch) {
-                    if (operation.opcode == UringFileIo.WRITE)
+                    if (operation.opcode == UringFileIo.WRITE) {
                         assertTrue(operation.payload.isDirect(), "Owned buffer must survive dispatch without a heap copy");
+                        assertTrue(UringFileIo.ownsBuffer(MemorySegment.ofBuffer(operation.payload)),
+                                "Only owned native memory may reach the ring");
+                    }
                 }
                 super.submit(batch);
             }
@@ -142,6 +145,27 @@ class UringFileIoTests {
         try (var io = create(ring); var file = io.open(Path.of("owned"))) {
             file.writeFully(owned.asReadOnlyBuffer(), 0);
             assertEquals(List.of((byte) 1, (byte) 2, (byte) 3, (byte) 4), ring.written);
+        }
+    }
+
+    @Test void immediateCompletionsAndInterruptedCommandReuseDoNotLoseWakeups() throws Exception {
+        FakeRing ring = new FakeRing();
+        try (var io = create(ring); var file = io.open(Path.of("reused"));
+             var callers = Executors.newVirtualThreadPerTaskExecutor()) {
+            callers.submit(() -> {
+                for (int i = 0; i < 2048; i++) {
+                    if ((i & 31) == 0) Thread.currentThread().interrupt();
+                    file.writeFully(ByteBuffer.wrap(new byte[]{(byte) i}), i);
+                    file.force(false);
+                    if ((i & 31) == 0) assertTrue(Thread.interrupted(), "Accepted operations must restore interruption");
+                }
+                return null;
+            }).get(10, TimeUnit.SECONDS);
+            assertEquals(2048, ring.written.size());
+            assertEquals(2048, ring.forces.size());
+            assertNull(file.operation.waiter, "An idle file must release its caller reference");
+            assertEquals(0, io.outstandingRequests());
+            assertEquals(0, io.outstandingBytes());
         }
     }
 
@@ -206,6 +230,7 @@ class UringFileIoTests {
             until(() -> io.outstandingBytes() == 16);
             ByteBuffer rejected = ByteBuffer.allocate(1);
             assertThrows(IOException.class, () -> third.writeFully(rejected, 0));
+            assertNull(third.operation.waiter, "Rejected admission must release its caller reference");
             assertEquals(0, rejected.position());
             var c = callers.submit(() -> { fourth.force(false); return null; });
             until(() -> io.outstandingRequests() == 3);

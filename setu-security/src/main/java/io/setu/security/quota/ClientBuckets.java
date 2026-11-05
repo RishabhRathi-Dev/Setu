@@ -2,22 +2,23 @@ package io.setu.security.quota;
 
 final class ClientBuckets {
 
-    private final TokenBucket messageBucket;
-    private final TokenBucket byteBucket;
+    private final long messageCapacity;
+    private final long byteCapacity;
+    private final double messagesPerNano;
+    private final double bytesPerNano;
+    private double messageTokens;
+    private double byteTokens;
+    private long lastRefillTime;
 
     private ClientBuckets(QuotaPolicy policy) {
 
-        this.messageBucket =
-                new TokenBucket(
-                        policy.messageBurstCapacity(),
-                        policy.messagesPerSecond()
-                );
-
-        this.byteBucket =
-                new TokenBucket(
-                        policy.byteBurstCapacity(),
-                        policy.bytesPerSecond()
-                );
+        messageCapacity = policy.messageBurstCapacity();
+        byteCapacity = policy.byteBurstCapacity();
+        messagesPerNano = policy.messagesPerSecond() / 1_000_000_000.0;
+        bytesPerNano = policy.bytesPerSecond() / 1_000_000_000.0;
+        messageTokens = messageCapacity;
+        byteTokens = byteCapacity;
+        lastRefillTime = System.nanoTime();
     }
 
     static ClientBuckets from(QuotaPolicy policy) {
@@ -33,17 +34,16 @@ final class ClientBuckets {
      */
     synchronized boolean tryAcquire(long messageCount, long byteCount) {
 
-        boolean messageCapacity = messageBucket.hasCapacity(messageCount);
-
-        boolean byteCapacity = byteBucket.hasCapacity(byteCount);
-
-        if (!messageCapacity || !byteCapacity) {
-            return false;
+        long now = System.nanoTime();
+        long elapsed = now - lastRefillTime;
+        if (elapsed > 0) {
+            messageTokens = Math.min(messageCapacity, messageTokens + elapsed * messagesPerNano);
+            byteTokens = Math.min(byteCapacity, byteTokens + elapsed * bytesPerNano);
+            lastRefillTime = now;
         }
-
-        messageBucket.consume(messageCount);
-        byteBucket.consume(byteCount);
-
+        if (messageTokens < messageCount || byteTokens < byteCount) return false;
+        messageTokens -= messageCount;
+        byteTokens -= byteCount;
         return true;
     }
 }

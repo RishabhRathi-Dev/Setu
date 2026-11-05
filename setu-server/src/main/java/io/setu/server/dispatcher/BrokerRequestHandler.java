@@ -42,20 +42,36 @@ public final class BrokerRequestHandler implements RequestHandler {
     }
 
     private byte[] handle(byte[] payload, io.setu.storage.log.MessageFrame frame) {
+        return handle(payload, frame, null);
+    }
+
+    /** Dispatch a validated decode of this frame after its authorization checks. */
+    public byte[] handleDecoded(byte[] frame, BrokerRequest request) {
+        return handle(Objects.requireNonNull(frame, "frame"), null, Objects.requireNonNull(request, "request"));
+    }
+
+    /** Dispatch a validated decode without copying its immutable payload slices. */
+    public byte[] handleDecoded(io.setu.storage.log.MessageFrame frame, BrokerRequest request) {
+        return handle(null, Objects.requireNonNull(frame, "frame"), Objects.requireNonNull(request, "request"));
+    }
+
+    private byte[] handle(byte[] payload, io.setu.storage.log.MessageFrame frame, BrokerRequest decoded) {
         try (var telemetry = new io.setu.server.observability.RequestTelemetry(tracer)) {
-            return handle(payload, frame, telemetry);
+            return handle(payload, frame, decoded, telemetry);
         }
     }
 
     private byte[] handle(byte[] payload, io.setu.storage.log.MessageFrame frame,
+                          BrokerRequest decoded,
                           io.setu.server.observability.RequestTelemetry telemetry) {
         int length = frame == null ? payload.length : frame.length();
-        BrokerRequest request = null;
+        BrokerRequest request = decoded;
         long started = LOG.isDebugEnabled() ? System.nanoTime() : 0;
         boolean contextualLogging = LOG.isDebugEnabled();
         String previousCorrelation = contextualLogging ? MDC.get("correlationId") : null;
         try {
-            request = frame == null ? ProtocolCodec.decodeRequest(payload) : ProtocolCodec.decodeRequest(frame);
+            if (request == null)
+                request = frame == null ? ProtocolCodec.decodeRequest(payload) : ProtocolCodec.decodeRequest(frame);
             telemetry.command(request);
             if (LOG.isDebugEnabled()) MDC.put("correlationId", Integer.toString(request.correlationId()));
             if (LOG.isDebugEnabled()) LOG.debug("Request command={} correlation={} topic={} partition={} offset={} group={} member={} frame_bytes={}",

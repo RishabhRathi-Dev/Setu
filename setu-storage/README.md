@@ -1,6 +1,6 @@
 # setu-storage
 
-`setu-storage` owns append-only partition logs, logical offsets and physical storage. `StorageMode.FILE` uses **OpenHFT Chronicle Queue 2026.7** by default. `IN_MEMORY` provides volatile storage behind the same `MessageLog` interface.
+`setu-storage` owns append-only partition logs, logical offsets and physical storage. `StorageMode.FILE` uses **OpenHFT Chronicle Queue 2026.8** by default. `IN_MEMORY` provides volatile storage behind the same `MessageLog` interface.
 
 ## API and runtime
 
@@ -145,7 +145,9 @@ open/write/force failures propagate without retrying through another backend.
 
 One non-daemon platform thread owns the shared ring, mappings and descriptors.
 Existing virtual partition writers submit work and await private completion
-futures. Calls serialize per file; independent files can remain in flight and
+signals. Synchronous operations reuse a per-file completion slot and wake the
+waiting caller directly after the CQE, avoiding a future allocation per operation.
+Calls serialize per file; independent files can remain in flight and
 complete independently. An MPSC queue carries submissions; producers coalesce
 eventfd wakeups, and the owner drains ready work before sleeping. There is no
 SQPOLL, IOPOLL, O_DIRECT or busy idle loop. The last file close drains and joins
@@ -241,7 +243,7 @@ try (var io = UringFileIo.create();
 `force(true)` performs fsync and `force(false)` performs fdatasync. Writes alone
 are not durable. Callers own file creation/directory durability; close adds no
 implicit force. Virtual threads may call this synchronous API directly. Private
-completion futures cannot be cancelled externally. `UringOptions` supports bounded
+completion signals are not exposed for cancellation. `UringOptions` supports bounded
 standalone configuration with a 64 MiB native-scratch ceiling; broker defaults
 are fixed internals, not server properties.
 

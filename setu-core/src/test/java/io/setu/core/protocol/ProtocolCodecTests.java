@@ -4,9 +4,19 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ProtocolCodecTests {
+    @Test void wireIdLookupsPreserveReservedGapsAndRejectOutOfRangeIntegers() throws Exception {
+        for (var command : Command.values()) assertEquals(command, Command.fromId(command.id()));
+        for (var code : ErrorCode.values()) assertEquals(code, ErrorCode.fromId(code.id()));
+        for (int id : new int[]{-1, 0, 16, 65535, Integer.MAX_VALUE})
+            assertEquals(ErrorCode.UNKNOWN_COMMAND, assertThrows(ProtocolException.class, () -> Command.fromId(id)).errorCode());
+        for (int id : new int[]{-1, 2, 16, 65535, Integer.MAX_VALUE})
+            assertEquals(ErrorCode.BAD_REQUEST, assertThrows(ProtocolException.class, () -> ErrorCode.fromId(id)).errorCode());
+    }
+
     @Test
     void reusableBatchFramesHandleChangingLengthsWithoutOverwritingDecodedRecords() throws Exception {
         var encoder = new ProduceBatchEncoder();

@@ -6,15 +6,22 @@ public enum Command {
     JOIN_MANAGED_GROUP(13), GROUP_ASSIGNMENT(14), PRODUCE_CONFIGURED(15);
 
     private final int id;
+    private static final Command[] BY_ID;
+
+    static {
+        Command[] commands = values();
+        int maximum = 0;
+        for (Command command : commands) maximum = Math.max(maximum, command.id);
+        BY_ID = new Command[maximum + 1];
+        for (Command command : commands) BY_ID[command.id] = command;
+    }
 
     Command(int id) { this.id = id; }
 
     public int id() { return id; }
 
     public static Command fromId(int id) throws ProtocolException {
-        for (Command command : values()) {
-            if (command.id == id) return command;
-        }
+        if (id >= 0 && id < BY_ID.length && BY_ID[id] != null) return BY_ID[id];
         throw new ProtocolException(ErrorCode.UNKNOWN_COMMAND, "Unknown command id: " + id);
     }
 }

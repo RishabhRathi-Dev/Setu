@@ -127,10 +127,15 @@ public final class UringFileIo implements AutoCloseable {
             }
             if (shuttingDown) { await(stopped); return 0; }
             try { wakeup(); } catch (IOException problem) { wakeFailure = problem; }
-            int result = await(operation.completion);
+            int result = operation.await();
             if (wakeFailure != null) throw wakeFailure;
             return result;
-        } finally { if (interrupted) Thread.currentThread().interrupt(); }
+        } finally {
+            // The per-file monitor prevents reuse until this caller returns.
+            // Neither an idle command nor rejected admission should retain its thread.
+            operation.waiter = null;
+            if (interrupted) Thread.currentThread().interrupt();
+        }
     }
 
     private void wakeup() throws IOException {
@@ -156,8 +161,7 @@ public final class UringFileIo implements AutoCloseable {
         }
         operation.payload = null;
         operation.path = null;
-        if (failure == null) operation.completion.complete(result);
-        else operation.completion.completeExceptionally(failure);
+        operation.complete(result == null ? 0 : result, failure);
     }
 
     private void run(UringRingFactory factory) {

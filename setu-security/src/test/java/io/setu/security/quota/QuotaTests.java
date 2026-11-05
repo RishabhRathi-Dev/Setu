@@ -60,6 +60,31 @@ class QuotaTests {
     }
 
     @Test
+    void concurrentRequestsConsumeBothDimensionsOnceAndPolicyReplacementResetsBoth() throws Exception {
+        var limiter = new TokenBucketRateLimiter();
+        var policy = new QuotaPolicy(1, 64_000_000, 1, 320_000_000);
+        limiter.registerPolicy("shared", policy);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var accepted = new java.util.concurrent.atomic.AtomicInteger();
+        try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var work = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+            for (int i = 0; i < 256; i++) work.add(workers.submit(() -> {
+                start.await();
+                if (limiter.tryAcquire("shared", 1_000_000, 10_000_000)) accepted.incrementAndGet();
+                return null;
+            }));
+            start.countDown();
+            for (var task : work) task.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertEquals(32, accepted.get());
+        assertTrue(limiter.tryAcquire("shared", 32_000_000, 0), "Rejected byte checks must not consume messages");
+        assertFalse(limiter.tryAcquire("shared", 1_000_000, 0));
+        limiter.registerPolicy("shared", policy);
+        assertTrue(limiter.tryAcquire("shared", 64_000_000, 320_000_000));
+        assertFalse(limiter.tryAcquire("shared", 1_000_000, 10_000_000));
+    }
+
+    @Test
     void quotaManagerReturnsAllowAndDenyDecisions() {
         RateLimiter limiter = (principal, messages, bytes) -> principal.equals("allowed");
         QuotaManager manager = new QuotaManager(limiter);

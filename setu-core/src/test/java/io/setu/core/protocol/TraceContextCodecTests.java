@@ -50,6 +50,29 @@ class TraceContextCodecTests {
         assertArrayEquals(ProtocolCodec.encodeProduceBatch(1, "orders", 0, values), encoder.encode(1, "orders", 0, values));
     }
 
+    @Test void controlFramesPreserveUnicodeIdentifiersOptionalFieldsAndStringBounds() throws Exception {
+        String group = "gr\u00fc\u00dfe", member = "\u96ea";
+        for (var request : List.of(
+                new BrokerRequest(1, Command.FETCH, "orders", 2, 3, 1024, null, 0, group, member).withWaitMillis(7).withGeneration(4),
+                new BrokerRequest(1, Command.FETCH, "orders", 2, 3, 1024, null, 0, null, null).withWaitMillis(7),
+                new BrokerRequest(1, Command.COMMIT_OFFSET, "orders", 2, 3, 0, null, 0, group, member).withGeneration(4),
+                new BrokerRequest(1, Command.FETCH_OFFSET, "orders", 2, 3, 0, null, 0, group, member).withGeneration(4),
+                new BrokerRequest(1, Command.JOIN_GROUP, "orders", -1, -1, -1, null, 0, group, member),
+                new BrokerRequest(1, Command.HEARTBEAT, null, -1, -1, -1, null, 0, group, member))) {
+            byte[] encoded = ProtocolCodec.encodeRequest(request.withTraceContext(TRACE));
+            for (var decoded : List.of(ProtocolCodec.decodeRequest(encoded), ProtocolCodec.decodeRequest(owned(encoded)))) {
+                assertEquals(request.command(), decoded.command());
+                assertEquals(request.groupId(), decoded.groupId());
+                assertEquals(request.memberId(), decoded.memberId());
+                assertArrayEquals(encoded, ProtocolCodec.encodeRequest(decoded));
+            }
+        }
+        var oversized = new BrokerRequest(1, Command.HEARTBEAT, null, -1, -1, -1, null, 0, "x".repeat(4097), member);
+        assertThrows(java.io.IOException.class, () -> ProtocolCodec.encodeRequest(oversized));
+        var multibyte = new BrokerRequest(1, Command.HEARTBEAT, null, -1, -1, -1, null, 0, "\u96ea".repeat(2000), member);
+        assertThrows(java.io.IOException.class, () -> ProtocolCodec.encodeRequest(multibyte));
+    }
+
     @Test void traceLengthsEncodingTruncationAndTrailingDataAreStrictlyBounded() throws Exception {
         var request = new BrokerRequest(1, Command.METADATA, null, 0, 0, 0, null, 0, null, null).withTraceContext(TRACE);
         byte[] encoded = ProtocolCodec.encodeRequest(request);

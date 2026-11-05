@@ -7,11 +7,20 @@ public enum ErrorCode {
     STALE_GENERATION(13), PRODUCER_FENCED(14), OUT_OF_ORDER_SEQUENCE(15);
 
     private final int id;
+    private static final ErrorCode[] BY_ID;
+
+    static {
+        ErrorCode[] codes = values();
+        int maximum = 0;
+        for (ErrorCode code : codes) maximum = Math.max(maximum, code.id);
+        BY_ID = new ErrorCode[maximum + 1];
+        for (ErrorCode code : codes) BY_ID[code.id] = code;
+    }
     ErrorCode(int id) { this.id = id; }
     public int id() { return id; }
 
     public static ErrorCode fromId(int id) throws ProtocolException {
-        for (ErrorCode code : values()) if (code.id == id) return code;
+        if (id >= 0 && id < BY_ID.length && BY_ID[id] != null) return BY_ID[id];
         throw new ProtocolException(BAD_REQUEST, "Unknown error code: " + id);
     }
 }

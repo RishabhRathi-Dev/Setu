@@ -17,7 +17,8 @@ public final class ProtocolRequestAuthorizationMetadataResolver implements Reque
         return resolve(ProtocolCodec.decodeRequest(request));
     }
 
-    private RequestAuthorizationMetadata resolve(BrokerRequest decoded) {
+    /** Maps an already validated protocol request without decoding its payload again. */
+    RequestAuthorizationMetadata resolve(BrokerRequest decoded) {
         return switch (decoded.command()) {
             case PRODUCE, PRODUCE_BATCH, PRODUCE_CONFIGURED -> new RequestAuthorizationMetadata("topic/" + decoded.topic(), Permission.PRODUCE);
             case PRODUCE_IDEMPOTENT, TRANSACT -> {
