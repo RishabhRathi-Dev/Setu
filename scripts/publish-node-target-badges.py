@@ -85,9 +85,9 @@ def publish(documents, readme, output, workflow_url, scope='CI', revision=None, 
     for block, names in (('benchmark-metrics-badges', primary), (diagnostic, diagnostics)):
         links = []
         for name in names:
-            _, label, message, color = lookup[name]
+            _, label, message, _ = lookup[name]
             relative = Path(os.path.relpath(output / (name + '.svg'), readme.parent)).as_posix()
-            links.append(badges.readme_badge(label, message, color, workflow_url, relative))
+            links.append(badges.readme_badge(label, message, workflow_url, relative))
         source = re.sub(f'<!-- {block}:start -->.*?<!-- {block}:end -->',
                         lambda _: f'<!-- {block}:start -->\n' + '\n'.join(links) + f'\n<!-- {block}:end -->', source, flags=re.S)
     source = re.sub('<!-- benchmark-capacity-details:start -->.*?<!-- benchmark-capacity-details:end -->',

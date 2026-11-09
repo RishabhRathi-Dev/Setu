@@ -110,7 +110,7 @@ Consumer maintenance runs every 10 ms. An expired member must rejoin. Heartbeats
 
 When budgets are exhausted, the server returns `QUOTA_EXCEEDED` if it can admit an error response, otherwise it closes the connection. Budget headroom must allow protocol metadata and accounting, as well as payload bytes. See [admission and failure behavior](../setu-server/README.md#admission-and-failure-behavior).
 
-## JVM, logging, and AOT
+## JVM and logging
 
 The [IntelliJ development profiles](intellij.md) provide isolated loopback ports, data directories, metrics, and longer breakpoint deadlines using existing properties. The standard launcher defaults remain unchanged.
 
@@ -121,8 +121,6 @@ The [IntelliJ development profiles](intellij.md) provide isolated loopback ports
 | Heap/direct memory | JVM arguments in embedding/direct launches | Use workload-appropriate headroom; no standalone heap property |
 | Log directory | `SETU_LOG_DIR` | Default `logs`; contains `setu.log` and rolling archives |
 | Application log level | `-Dsetu.log.level` or `SETU_LOG_LEVEL` | System property takes precedence; `io.setu` defaults to `INFO` (DEBUG is opt-in), root to `INFO` |
-| AOT generation | Launcher `--train-aot` | Creates `setu-server/target/setu-server.aot` using training traffic |
-| AOT bypass | Launcher `--no-aot` before broker arguments | Skips an existing strict-mode cache |
 
 The runtime uses [Logback configuration](../config/logback.xml) bundled in the server JAR. Editing that source requires rebuilding the JAR, or supplying an explicit Logback configuration to a direct JVM launch. Archives roll daily or at 100 MB, retain 14 days, and have a 2 GB total cap.
 
@@ -132,7 +130,7 @@ For a direct launch with an explicit heap and log level:
 java '@config/jvm.options' -Xms256m -Xmx1g -Dsetu.log.level=INFO -jar setu-server/target/setu-server-1.0.0-SNAPSHOT.jar --config config/server.properties
 ```
 
-Rebuild AOT caches when JDK, platform, application, or dependency JARs change. [Operations](operations.md) covers launch artifacts and recovery; the [server guide](../setu-server/README.md) covers custom embedded listeners and TLS policy.
+[Operations](operations.md) covers launch artifacts and recovery; the [server guide](../setu-server/README.md) covers custom embedded listeners and TLS policy.
 
 ## Metadata journal
 

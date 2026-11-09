@@ -32,7 +32,7 @@ This also builds and tests required production modules. To select only the integ
 .\mvnw.cmd -pl setu-integration-tests -am '-Dtest=*IntegrationTests' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
-On Linux/macOS, use `bash ./mvnw` instead of `.\mvnw.cmd`. Maven applies the shared [JVM options](../config/jvm.options); AOT caches are not required.
+On Linux/macOS, use `bash ./mvnw` instead of `.\mvnw.cmd`. Maven applies the shared [JVM options](../config/jvm.options).
 
 Tests bind loopback sockets on ephemeral ports. TLS fixtures are short-lived PKCS#12 stores/certificates generated with the JDK `keytool` under temporary directories. No certificate material is checked in. For manual development stores, use [generate-certs.ps1](../scripts/generate-certs.ps1) or [generate-certs.sh](../scripts/generate-certs.sh).
 

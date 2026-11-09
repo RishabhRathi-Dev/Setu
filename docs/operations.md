@@ -97,7 +97,6 @@ The tool builds the benchmark classes, writes a new recording directory under `l
 | `java` missing or compiler release unsupported | Set `JAVA_HOME` and `PATH` to JDK 26; check `java -version` and Maven's JDK |
 | JAR missing / dependency class not found | Rebuild `setu-server` with `-am package`; retain adjacent `lib/` |
 | Chronicle access/native error | Launch with the shared `config/jvm.options` |
-| Existing AOT cache rejected | Launch with `--no-aot`, then regenerate the cache for the current build |
 | Address already in use | Stop the existing listener or select another `bind.port` |
 | Partition lock failure | Verify no other broker owns that data root |
 | Unknown property / invalid enum | Check exact supported keys and case in the [configuration reference](configuration.md) |
@@ -111,18 +110,6 @@ The tool builds the benchmark classes, writes a new recording directory under `l
 | Lost produce response | Treat outcome as uncertain; automatic retry can duplicate records |
 
 If these checks do not resolve the problem, follow [support and issue reporting](../SUPPORT.md) and include the revision, environment, configuration, and a minimal reproduction. Use the [security policy](../SECURITY.md) for suspected vulnerabilities.
-
-## AOT cache lifecycle
-
-```powershell
-.\scripts\start-broker.ps1 --train-aot
-.\scripts\start-broker.ps1 --config config/server.properties
-.\scripts\start-broker.ps1 --no-aot --config config/server.properties
-```
-
-Use the corresponding Bash launcher on Linux/macOS. Training generates `setu-server/target/setu-server.aot` through real plaintext and mTLS exchanges in both storage modes, including deliberate rejection cases. Existing caches are used in strict mode unless bypassed. Generate a new cache after changes to the JDK, platform, application, or dependencies. Caches are local build artifacts and remain untracked.
-
-On the tested JDK, Chronicle's module flags disable AOT class linking; shared application classes still load from the cache. JIT compilation remains responsible for native application code. See [the server guide](../setu-server/README.md#standalone-jar) for training and CI details.
 
 ## Metrics and packaged distributions
 

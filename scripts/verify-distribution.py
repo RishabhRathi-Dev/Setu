@@ -27,7 +27,7 @@ def main():
             if hashlib.sha256((directory / name).read_bytes()).hexdigest() != expected:
                 raise RuntimeError(f"Checksum mismatch: {name}")
         launcher = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/start-broker.ps1"] if os.name == "nt" else ["bash", "scripts/start-broker.sh"]
-        subprocess.run(launcher + ["--no-aot", "--help"], cwd=directory, check=True, timeout=30)
+        subprocess.run(launcher + ["--help"], cwd=directory, check=True, timeout=30)
         # Exercise the manifest classpath and standalone configuration, not just argument parsing.
         (directory / "smoke.properties").write_text("storage.mode=IN_MEMORY\nbind.port=0\noperations.port=0\n", encoding="utf-8")
         java = str(Path(os.environ["JAVA_HOME"]) / "bin" / "java") if os.environ.get("JAVA_HOME") else "java"

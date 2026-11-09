@@ -85,8 +85,11 @@ class ResponseReaderTests {
                 new DataInputStream(new ByteArrayInputStream(new byte[]{0, 0, 0, 3, 1})), LIMIT, Command.METADATA));
         byte[] payload = ProtocolCodec.encodeResponse(BrokerResponse.ok(1, Command.HEARTBEAT));
         var bytes = new ByteArrayOutputStream();
-        FrameCodec.writeFrame(new DataOutputStream(bytes), java.util.Arrays.copyOf(payload, payload.length + 1), LIMIT);
-        assertThrows(ProtocolException.class, () -> reader.readFrom(
-                new DataInputStream(new ByteArrayInputStream(bytes.toByteArray())), LIMIT, Command.HEARTBEAT));
+        var output = new DataOutputStream(bytes);
+        FrameCodec.writeFrame(output, java.util.Arrays.copyOf(payload, payload.length + 1), LIMIT);
+        FrameCodec.writeFrame(output, java.util.Arrays.copyOf(payload, 10), LIMIT);
+        var input = new DataInputStream(new ByteArrayInputStream(bytes.toByteArray()));
+        assertEquals(1, assertThrows(ProtocolException.class, () -> reader.readFrom(input, LIMIT, Command.HEARTBEAT)).correlationId());
+        assertEquals(0, assertThrows(ProtocolException.class, () -> reader.readFrom(input, LIMIT, Command.HEARTBEAT)).correlationId());
     }
 }

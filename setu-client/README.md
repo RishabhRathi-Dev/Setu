@@ -224,4 +224,4 @@ From the repository root with Java 26:
 .\mvnw.cmd -pl setu-integration-tests -am test
 ```
 
-Real TCP/mTLS tests and the server's [AOT training](../setu-server/README.md#standalone-jar) exercise client exchanges. The client module has no separate unit-test source tree. Embedding applications using Chronicle storage need the shared [JVM options](../config/jvm.options); an AOT cache belongs to the application's own entry point and classpath.
+Real TCP/mTLS integration tests exercise client exchanges. The client module has no separate unit-test source tree. Embedding applications using Chronicle storage need the shared [JVM options](../config/jvm.options).

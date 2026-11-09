@@ -27,7 +27,7 @@ def publish(inputs, readme, output, workflow_url):
         message = f'{badges.format_rate(target)}/s target, {badges.format_rate(rates[mode])}/s sustained, {rates[mode] / target:.0%}'
         color = 'green' if rates[mode] >= target else 'yellow'
         image_path = Path(os.path.relpath(output / (label + '-sustained.svg'), readme.parent)).as_posix()
-        images.append(badges.readme_badge(label, message, color, workflow_url, image_path))
+        images.append(badges.readme_badge(label, message, workflow_url, image_path))
         entries.append((label + '-sustained.json', label, message, color))
     details = '\n\n'.join(report.comparison_report(
         [run for run in document['runs'] if int(run['config']['record_bytes']) == 1024], document['resources'])

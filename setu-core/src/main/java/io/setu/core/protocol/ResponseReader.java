@@ -28,8 +28,7 @@ public final class ResponseReader {
         // The copying decoder also handles an unexpected FETCH safely before the client
         // rejects its command: none of its records can reference the scratch buffer.
         ByteBuffer cursor = ByteBuffer.wrap(buffer, 0, length);
-        int correlation = length >= ProtocolCodec.HEADER_BYTES ? cursor.getInt(ProtocolCodec.CORRELATION_OFFSET) : -1;
-        return ProtocolCodec.decodeResponse(cursor, correlation, null);
+        return ProtocolCodec.decodeResponse(cursor, null);
     }
 
     public int frameLength() { return frameLength; }
