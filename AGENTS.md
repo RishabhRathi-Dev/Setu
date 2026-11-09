@@ -30,7 +30,7 @@ Read [README.md](README.md) for setup and supported behavior, [CONTRIBUTING.md](
 | `examples/` | Source-launchable Java programs for clients, embedding, recovery, retention | [Examples guide](examples/README.md) |
 | `scripts/` | Launchers, certificate generation, workload orchestration, reporting, badge publication | [Tooling guide](scripts/README.md) |
 
-Production dependencies: `core → storage`; `client → core + security`; `server → core + security`. Keep security independent of broker protocol and persistence types. Keep sockets and policy enforcement out of core and storage.
+Production dependencies: `core → storage`; `client → core + security`; `server → core + client + security`. The server distribution carries the client for packaged examples and smoke tests. Keep security independent of broker protocol and persistence types. Keep sockets and policy enforcement out of core and storage.
 
 ## Source entry points
 

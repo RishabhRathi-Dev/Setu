@@ -35,6 +35,11 @@
         </dependency>
         <dependency>
             <groupId>org.rishabh</groupId>
+            <artifactId>setu-client</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.rishabh</groupId>
             <artifactId>setu-security</artifactId>
             <version>${project.version}</version>
         </dependency>

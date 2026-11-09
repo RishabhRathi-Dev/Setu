@@ -19,7 +19,7 @@ flowchart TD
     storage --> chronicle[OpenHFT Chronicle Queue]
 ```
 
-`setu-server` depends on core and security to assemble the standalone broker. Core depends on storage because the broker owns partition logs and shares immutable payload types. Security is independent of the broker protocol and persistence. Integration tests and benchmarks exercise the production modules through public APIs and real sockets.
+`setu-server` depends on core, client, and security to assemble the standalone distribution; the client dependency is bundled for packaged examples and smoke tests. Core depends on storage because the broker owns partition logs and shares immutable payload types. Security is independent of the broker protocol and persistence. Integration tests and benchmarks exercise the production modules through public APIs and real sockets.
 
 | Layer | Main types | Owns |
 | --- | --- | --- |
