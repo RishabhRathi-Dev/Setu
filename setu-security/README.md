@@ -67,4 +67,4 @@ From the repository root with Java 26:
 .\mvnw.cmd -pl setu-integration-tests -am '-Dtest=*IntegrationTests' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
-Unit tests cover certificate validation/identity, ACL decisions, quotas and TLS material/context loading. Integration and [AOT training](../setu-server/README.md#standalone-jar) exercise real mTLS, missing-certificate rejection, ACL/quota denials and both storage modes. A `certificate_required` alert during the deliberate missing-certificate check is expected.
+Unit tests cover certificate validation/identity, ACL decisions, quotas and TLS material/context loading. Integration tests exercise real mTLS, missing-certificate rejection, ACL/quota denials and both storage modes. A `certificate_required` alert during the deliberate missing-certificate check is expected.

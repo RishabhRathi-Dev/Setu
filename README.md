@@ -72,7 +72,7 @@ bash ./scripts/start-broker.sh --config config/server.properties
 
 Wait for `Setu listening on` in the console. Defaults are plaintext **127.0.0.1:9092**, durable data in `data/`, and rolling logs in `logs/`. Ctrl+C closes connections and drains accepted storage writes. Keep the JAR and its adjacent `setu-server/target/lib/` dependencies together.
 
-Both launchers load [config/jvm.options](config/jvm.options), including ZGC, string deduplication, and Chronicle's module/native access. [Operations](docs/operations.md) covers direct JAR launches, logging, shutdown, recovery, and optional AOT training.
+Both launchers load [config/jvm.options](config/jvm.options), including ZGC, string deduplication, and Chronicle's module/native access. [Operations](docs/operations.md) covers direct JAR launches, logging, shutdown, and recovery.
 
 ### 2. Produce and consume records
 
@@ -189,7 +189,7 @@ On Linux/macOS, substitute `bash ./mvnw`. Python 3.10+ is required for the bench
 python -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-CI also runs Windows functional tests and [a source security gate](.github/workflows/security.yml). Benchmark-helper tests, bounded chaos, load checks, baseline/target measurements, and AOT validation are covered by [CI](.github/workflows/ci.yml). The root Maven reactor includes benchmark workloads; use the commands above for ordinary functional verification. [Contributing](CONTRIBUTING.md) documents the broader verification matrix and repository conventions.
+CI also runs Windows functional tests and [a source security gate](.github/workflows/security.yml). Benchmark-helper tests, bounded chaos, load checks, and baseline/target measurements are covered by [CI](.github/workflows/ci.yml). The root Maven reactor includes benchmark workloads; use the commands above for ordinary functional verification. [Contributing](CONTRIBUTING.md) documents the broader verification matrix and repository conventions.
 
 ## Repository guide
 
@@ -197,7 +197,7 @@ CI also runs Windows functional tests and [a source security gate](.github/workf
 | --- | --- |
 | [setu-core/](setu-core/README.md) | Broker API, topics, partitions, membership, and protocol codec |
 | [setu-storage/](setu-storage/README.md) | Partition logs, group commit, recovery, and migration |
-| [setu-server/](setu-server/README.md) | TCP transports, secure dispatch, standalone launcher, and AOT |
+| [setu-server/](setu-server/README.md) | TCP transports, secure dispatch, and standalone launcher |
 | [setu-client/](setu-client/README.md) | Synchronous and bounded async Java clients, plaintext and TLS |
 | [setu-security/](setu-security/README.md) | Authentication, exact ACLs, certificates, and quotas |
 | [setu-integration-tests/](setu-integration-tests/README.md) | Functional verification over real sockets |

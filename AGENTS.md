@@ -22,7 +22,7 @@ Read [README.md](README.md) for setup and supported behavior, [CONTRIBUTING.md](
 | `setu-storage/` | Log API, payload ownership, memory budget, Chronicle persistence, group commit, retention, migration | [Storage guide](setu-storage/README.md), `MessageLog`, `MessageLogs`, `MessageValue` |
 | `setu-core/` | Broker semantics, topics, partitions, membership, offsets, long polling, wire codec | [Core guide](setu-core/README.md), `DefaultBroker`, `ProtocolCodec` |
 | `setu-security/` | TLS material, DNS SAN identities, exact ACL grants, principal quotas | [Security guide](setu-security/README.md), `TlsContextFactory`, `InMemoryAuthorizer`, `QuotaManager` |
-| `setu-server/` | TCP transports, framing/admission, dispatch, secure composition, standalone main, AOT training | [Server guide](setu-server/README.md), `SetuServerMain`, `SecureServerFactory` |
+| `setu-server/` | TCP transports, framing/admission, dispatch, secure composition, standalone main | [Server guide](setu-server/README.md), `SetuServerMain`, `SecureServerFactory` |
 | `setu-client/` | Per-connection synchronous exchanges, bounded async pooling/routing/retries, correlation checking, TLS hostname verification | [Client guide](setu-client/README.md#choosing-a-client), `SetuClient`, `AsyncSetuClient` |
 | `setu-integration-tests/` | Public API checks through real TCP and mTLS sockets | [Integration guide](setu-integration-tests/README.md) |
 | `setu-benchmark/` | Throughput, latency, resource/JFR evidence, crash/chaos workloads | [Benchmark guide](setu-benchmark/README.md) |
@@ -30,7 +30,7 @@ Read [README.md](README.md) for setup and supported behavior, [CONTRIBUTING.md](
 | `examples/` | Source-launchable Java programs for clients, embedding, recovery, retention | [Examples guide](examples/README.md) |
 | `scripts/` | Launchers, certificate generation, workload orchestration, reporting, badge publication | [Tooling guide](scripts/README.md) |
 
-Production dependencies: `core → storage`; `client → core + security`; `server → core + client + security`. The server's client dependency supports AOT training. Keep security independent of broker protocol and persistence types. Keep sockets and policy enforcement out of core and storage.
+Production dependencies: `core → storage`; `client → core + security`; `server → core + security`. Keep security independent of broker protocol and persistence types. Keep sockets and policy enforcement out of core and storage.
 
 ## Source entry points
 
@@ -109,6 +109,6 @@ Maven's own JVM flags are in [.mvn/jvm.config](.mvn/jvm.config). Surefire and th
 
 Follow the existing Java/package style and [.editorconfig](.editorconfig). Keep changes focused and avoid unrelated reformatting or new dependencies without a concrete need.
 
-Do not commit runtime data, generated keys/stores, passwords, logs, JFR recordings, heap dumps, AOT caches, build outputs, or IDE state. Respect [.gitignore](.gitignore). Leave local data and credentials intact. Follow [SECURITY.md](SECURITY.md) for vulnerability reports.
+Do not commit runtime data, generated keys/stores, passwords, logs, JFR recordings, heap dumps, build outputs, or IDE state. Respect [.gitignore](.gitignore). Leave local data and credentials intact. Follow [SECURITY.md](SECURITY.md) for vulnerability reports.
 
 Replication, failover, multi-output-partition transactions, distributed security administration are not implemented. FILE metadata journals support checksummed checkpoints and atomic generation publication; see docs/journal-checkpoints.md for compatibility and failure boundaries. See docs/transactions.md for managed groups, scoped producer fencing, transaction recovery, acknowledgement modes and bounds. Async clients retry reads and explicitly identified idempotent/transactional writes, never ordinary uncertain writes. New file documents carry CRC32C; legacy documents remain unchecked. Do not document additional capabilities without implementing and verifying them.

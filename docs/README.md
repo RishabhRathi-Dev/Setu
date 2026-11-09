@@ -40,7 +40,7 @@ Start with the [project README](../README.md) for a runnable quickstart and supp
 | --- | --- |
 | Core | [Broker semantics and protocol](../setu-core/README.md) |
 | Storage | [Durability, ownership, recovery, and legacy migration](../setu-storage/README.md) |
-| Server | [Transports, secure embedding, admission, and AOT](../setu-server/README.md) |
+| Server | [Transports, secure embedding, and admission](../setu-server/README.md) |
 | Client | [Synchronous and async Java APIs, errors, TLS, and consumer progress](../setu-client/README.md) |
 | Security | [Certificate identities, exact ACLs, and quotas](../setu-security/README.md) |
 | Integration tests | [Functional socket and mTLS coverage](../setu-integration-tests/README.md) |

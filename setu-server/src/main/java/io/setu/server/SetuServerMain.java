@@ -24,18 +24,14 @@ public final class SetuServerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length == 1 && args[0].equals("--help")) {
-            System.out.println("Usage: java @config/jvm.options -jar setu-server-1.0.0-SNAPSHOT.jar [--config <properties-file> | --aot-train]");
+            System.out.println("Usage: java @config/jvm.options -jar setu-server-1.0.0-SNAPSHOT.jar [--config <properties-file>]");
             System.out.println("Default: plaintext 127.0.0.1:9092, file storage in ./data, rolling logs in ./logs.");
             System.out.println("FILE selects io_uring automatically on supported Linux; unavailable setup uses the portable backend.");
             System.out.println("Consumer limits separately bound active memberships and retained FILE managed groups/offsets.");
             return;
         }
-        if (args.length == 1 && args[0].equals("--aot-train")) {
-            BrokerAotTraining.run();
-            return;
-        }
         if (args.length != 0 && (args.length != 2 || !args[0].equals("--config")))
-            throw new IllegalArgumentException("Expected --config <properties-file>, --aot-train, or --help");
+            throw new IllegalArgumentException("Expected --config <properties-file> or --help");
         Properties properties = new Properties();
         if (args.length == 2) {
             try (var input = Files.newInputStream(Path.of(args[1]))) { properties.load(input); }

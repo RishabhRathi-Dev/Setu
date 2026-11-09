@@ -25,16 +25,6 @@ Distribute the JAR with its adjacent `lib/` runtime dependencies and `config/jvm
 
 FILE admission is configurable with `file.write.queue.max.bytes` (default 32 MiB) and `file.write.queue.max.requests` (default 1,024). Each accepts zero to disable that limit independently, including on recovered partitions. See [configuration](../docs/configuration.md#storage-and-retention) for a larger-queue example and the embedding `FileWriteQueueOptions` API. Force-before-ack durability and draining accepted writes on close are preserved.
 
-Optional AOT training:
-
-```powershell
-.\scripts\start-broker.ps1 --train-aot
-```
-
-Training uses real clients through plaintext and mTLS in both storage modes, including ACL/quota denial, missing-certificate rejection and memory backpressure. The expected missing-certificate test can log `certificate_required`. Each path verifies 16,385 records across four partitions. CI checks all paths, active runtime options and cached classes from all five production modules, with JVM diagnostics separate from application markers.
-
-The generated `target/setu-server.aot` is used automatically in strict mode. Regenerate it after changing JDK, platform, application or dependency JARs; `--no-aot` bypasses it. Tests do not require a cache. On the tested JDK, Chronicle's module options disable AOT class linking; shared application classes still load from the cache. JIT compilation remains responsible for native application code.
-
 ## Transports and lifecycle
 
 The [container guide](../docs/containers.md) covers the source-built JDK 26 image, persistent FILE broker service, health checks and a Compose override for the LGTM stack. The image runs Java as a non-root user and loads the same JVM options as direct launches.

@@ -10,7 +10,7 @@ Wrapper metadata declares the `script` distribution type because the launchers d
 
 | Tool | Purpose |
 | --- | --- |
-| [start-broker.ps1](start-broker.ps1) / [start-broker.sh](start-broker.sh) | Launch the packaged broker with shared JVM flags; support `--train-aot` and `--no-aot` |
+| [start-broker.ps1](start-broker.ps1) / [start-broker.sh](start-broker.sh) | Launch the packaged broker with shared JVM flags |
 | [generate-certs.ps1](generate-certs.ps1) / [generate-certs.sh](generate-certs.sh) | Generate local development certificate/key stores for the [secure embedding example](../setu-server/README.md#secure-broker-wiring-example) |
 
 Build the server with `-pl setu-server -am package` before launching. Set `SETU_CERT_PASSWORD` before generating development credentials. See [operations](../docs/operations.md) for packaging and startup.

@@ -14,7 +14,7 @@ docker compose logs -f setu
 
 The image builds the server and its reactor dependencies with the Maven Wrapper and JDK 26, then copies the server JAR beside its `lib/` dependencies into a separate runtime stage. Build dependencies use a BuildKit cache; local `target/`, data, credentials and Git state are excluded from the build context by an allowlist. Docker build skips tests; the [container workflow](../.github/workflows/container.yml) runs functional tests before building and exercises the image before publication.
 
-The runtime uses Eclipse Temurin **26.0.2.1+1** on Ubuntu Noble, runs as UID/GID **10001**, loads all shared `config/jvm.options`, and starts Java directly as PID 1. The JDK remains available for diagnostics. There is no AOT cache in the image. Build an image separately with `docker build -t setu:local .`; `JAVA_IMAGE` is a build argument for another compatible JDK 26 image.
+The runtime uses Eclipse Temurin **26.0.2.1+1** on Ubuntu Noble, runs as UID/GID **10001**, loads all shared `config/jvm.options`, and starts Java directly as PID 1. The JDK remains available for diagnostics. Build an image separately with `docker build -t setu:local .`; `JAVA_IMAGE` is a build argument for another compatible JDK 26 image.
 
 The default [container properties](../docker/server.properties) select FILE storage, broker port 9092 on all container interfaces, and operations port 9093 on container loopback. Compose publishes only plaintext **127.0.0.1:9092** on the host. TLS/mTLS remains an embedding API feature; the properties launcher does not configure it. To accept remote clients, deliberately change the published host address in your deployment configuration.
 

@@ -38,9 +38,6 @@ buildNumber.properties
 *.log.gz
 *.jfr
 *.hprof
-*.aot
-*.aotconf
-*.aot.training
 hs_err_pid*
 replay_pid*
 
