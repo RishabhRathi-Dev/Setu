@@ -10,6 +10,7 @@
 !.mvn/jvm.config
 !.mvn/wrapper/
 .mvn/wrapper/**
+!.mvn/wrapper/maven-wrapper.jar
 !.mvn/wrapper/maven-wrapper.properties
 !setu-*/
 setu-*/**
