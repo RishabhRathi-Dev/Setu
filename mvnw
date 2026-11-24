@@ -214,7 +214,7 @@ trim() {
 # This allows using the maven wrapper in projects that prohibit checking in binary data.
 ##########################################################################################
 wrapperJarPath="$MAVEN_PROJECTBASEDIR/.mvn/wrapper/maven-wrapper.jar"
-if [ -s "$wrapperJarPath" ]; then
+if [ -r "$wrapperJarPath" ]; then
   log "Found $wrapperJarPath"
 else
   log "Couldn't find $wrapperJarPath, downloading it ..."
@@ -233,25 +233,25 @@ else
   done <"$MAVEN_PROJECTBASEDIR/.mvn/wrapper/maven-wrapper.properties"
   log "Downloading from: $wrapperUrl"
 
-  wrapperTemporary=$(mktemp "${wrapperJarPath}.tmp.XXXXXX") || exit 1
-  trap 'rm -f "$wrapperTemporary"' 0
-  downloaded=false
+  if $cygwin; then
+    wrapperJarPath=$(cygpath --path --windows "$wrapperJarPath")
+  fi
 
   if command -v wget >/dev/null; then
     log "Found wget ... using wget"
     [ "$MVNW_VERBOSE" = true ] && QUIET="" || QUIET="--quiet"
     if [ -z "$MVNW_USERNAME" ] || [ -z "$MVNW_PASSWORD" ]; then
-      if wget ${QUIET:+"$QUIET"} --tries=5 --waitretry=1 --timeout=60 --retry-on-http-error=429,500,502,503,504 "$wrapperUrl" -O "$wrapperTemporary"; then downloaded=true; fi
+      wget ${QUIET:+"$QUIET"} "$wrapperUrl" -O "$wrapperJarPath" || rm -f "$wrapperJarPath"
     else
-      if wget ${QUIET:+"$QUIET"} --tries=5 --waitretry=1 --timeout=60 --retry-on-http-error=429,500,502,503,504 --http-user="$MVNW_USERNAME" --http-password="$MVNW_PASSWORD" "$wrapperUrl" -O "$wrapperTemporary"; then downloaded=true; fi
+      wget ${QUIET:+"$QUIET"} --http-user="$MVNW_USERNAME" --http-password="$MVNW_PASSWORD" "$wrapperUrl" -O "$wrapperJarPath" || rm -f "$wrapperJarPath"
     fi
   elif command -v curl >/dev/null; then
     log "Found curl ... using curl"
     [ "$MVNW_VERBOSE" = true ] && QUIET="" || QUIET="--silent"
     if [ -z "$MVNW_USERNAME" ] || [ -z "$MVNW_PASSWORD" ]; then
-      if curl ${QUIET:+"$QUIET"} --retry 4 --retry-delay 1 --retry-max-time 90 --connect-timeout 10 --max-time 60 -o "$wrapperTemporary" "$wrapperUrl" -f -L; then downloaded=true; fi
+      curl ${QUIET:+"$QUIET"} -o "$wrapperJarPath" "$wrapperUrl" -f -L || rm -f "$wrapperJarPath"
     else
-      if curl ${QUIET:+"$QUIET"} --retry 4 --retry-delay 1 --retry-max-time 90 --connect-timeout 10 --max-time 60 --user "$MVNW_USERNAME:$MVNW_PASSWORD" -o "$wrapperTemporary" "$wrapperUrl" -f -L; then downloaded=true; fi
+      curl ${QUIET:+"$QUIET"} --user "$MVNW_USERNAME:$MVNW_PASSWORD" -o "$wrapperJarPath" "$wrapperUrl" -f -L || rm -f "$wrapperJarPath"
     fi
   else
     log "Falling back to using Java to download"
@@ -262,8 +262,6 @@ else
       javaSource=$(cygpath --path --windows "$javaSource")
       javaClass=$(cygpath --path --windows "$javaClass")
     fi
-    javaTarget="$wrapperTemporary"
-    if $cygwin; then javaTarget=$(cygpath --path --windows "$javaTarget"); fi
     if [ -e "$javaSource" ]; then
       if [ ! -e "$javaClass" ]; then
         log " - Compiling MavenWrapperDownloader.java ..."
@@ -271,16 +269,10 @@ else
       fi
       if [ -e "$javaClass" ]; then
         log " - Running MavenWrapperDownloader.java ..."
-        if ("$JAVA_HOME/bin/java" -cp .mvn/wrapper MavenWrapperDownloader "$wrapperUrl" "$javaTarget"); then downloaded=true; fi
+        ("$JAVA_HOME/bin/java" -cp .mvn/wrapper MavenWrapperDownloader "$wrapperUrl" "$wrapperJarPath") || rm -f "$wrapperJarPath"
       fi
     fi
   fi
-  if [ "$downloaded" != true ] || [ ! -s "$wrapperTemporary" ]; then
-    echo "Maven wrapper download failed. Maven was not started." >&2
-    exit 1
-  fi
-  mv -f "$wrapperTemporary" "$wrapperJarPath" || exit 1
-  trap - 0
 fi
 ##########################################################################################
 # End of extension
