@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import http.server
 import os
 from pathlib import Path
@@ -11,6 +12,15 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class BundledWrapperTests(unittest.TestCase):
+    def test_bundled_jar_matches_configured_checksum(self):
+        wrapper = ROOT / '.mvn/wrapper'
+        properties = (wrapper / 'maven-wrapper.properties').read_text(encoding='utf-8').splitlines()
+        checksums = [line.removeprefix('wrapperSha256Sum=') for line in properties
+                     if line.startswith('wrapperSha256Sum=')]
+        self.assertEqual([hashlib.sha256((wrapper / 'maven-wrapper.jar').read_bytes()).hexdigest()], checksums)
 
 
 class MavenWrapperTests(unittest.TestCase):
@@ -86,7 +96,9 @@ public class MavenWrapperMain {
             project = Path(temporary)
             wrapper = project / '.mvn/wrapper'
             wrapper.mkdir(parents=True)
-            (wrapper / 'maven-wrapper.properties').write_text('wrapperUrl=' + url + '\n', encoding='utf-8')
+            checksum = hashlib.sha256(self.payload).hexdigest()
+            (wrapper / 'maven-wrapper.properties').write_text(
+                f'wrapperUrl={url}\nwrapperSha256Sum={checksum}\n', encoding='utf-8')
             environment = os.environ.copy()
             for name in ('MVNW_USERNAME', 'MVNW_PASSWORD', 'MVNW_REPOURL', 'MAVEN_BASEDIR',
                          'WRAPPER_URL', 'WRAPPER_JAR', 'JAVACMD'):
@@ -100,7 +112,8 @@ public class MavenWrapperMain {
                 shutil.copy2(ROOT / 'mvnw', project / 'mvnw')
                 tools = project / 'tools'
                 tools.mkdir()
-                for name in ('uname', 'dirname', 'tr', 'mktemp', 'mv', 'rm', downloader):
+                checksum_tool = 'sha256sum' if shutil.which('sha256sum') else 'shasum'
+                for name in ('uname', 'dirname', 'tr', 'mktemp', 'mv', 'rm', checksum_tool, downloader):
                     executable = shutil.which(name)
                     if not executable:
                         self.skipTest(f'{name} is required')
@@ -162,6 +175,17 @@ public class MavenWrapperMain {
                         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                         self.assertEqual(self.payload, artifact.read_bytes())
                     self.assertEqual(1, state['requests'])
+
+    def test_corrupted_cached_jar_fails_checksum_before_launch(self):
+        downloader = self.downloaders()[0]
+        with self.server([200]) as (url, state):
+            with self.project(url, downloader) as (project, artifact, command, environment):
+                artifact.write_bytes(self.payload + b'corrupted')
+                result = self.run_wrapper(project, command, environment)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn('Failed to validate Maven wrapper SHA-256', result.stdout + result.stderr)
+                self.assertNotIn('WRAPPER_LAUNCHED', result.stdout)
+                self.assertEqual(0, state['requests'])
 
 
 if __name__ == '__main__':

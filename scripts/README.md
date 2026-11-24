@@ -2,9 +2,9 @@
 
 Run tools from the repository root unless a guide specifies otherwise. Java tools require JDK 26. Python tools use Python 3.10+ and the standard library. Generated evidence belongs under ignored `logs/`; certificates belong under `certs/generated/`.
 
-The Maven entry points retry wrapper-JAR bootstrap downloads on HTTP 429 and transient server errors, with at most five attempts. Downloads use temporary sibling files and publish only after a successful nonempty response; exhausted retries stop before Java launches. Windows uses `.mvn/wrapper/download-wrapper.ps1`; Bash uses curl or wget. Existing nonempty wrapper caches avoid that request, and empty cached files are downloaded again. `test_maven_wrapper.py` exercises rate limits, permanent failures, retry exhaustion and cache handling through a local HTTP server. Windows tests need `JAVA_HOME`; Linux tests exercise each available curl/wget path. This does not add retries to Maven's separate dependency-resolution or distribution-download stages.
+Fresh checkouts and Docker builds include Apache's Maven Wrapper JAR in `.mvn/wrapper/`. Both launchers verify its SHA-256 against `wrapperSha256Sum` before running it. The first build still downloads the pinned Maven distribution and any missing dependencies.
 
-Wrapper metadata declares the `script` distribution type because the launchers download and run `maven-wrapper.jar`. When upgrading Maven, update `distributionUrl` in `.mvn/wrapper/maven-wrapper.properties` and preserve the customized `mvnw` and `mvnw.cmd` bootstrap logic. Regenerating stock launchers can remove the retry handling; run the wrapper tests on Windows and Linux after wrapper changes.
+If the wrapper JAR is missing or empty, the launchers download it to a temporary file and retry transient HTTP failures up to five times. Windows uses `.mvn/wrapper/download-wrapper.ps1` and Bash uses curl or wget. When upgrading Maven, change `distributionUrl` in `.mvn/wrapper/maven-wrapper.properties` and preserve the customized launchers. When upgrading the wrapper itself, update the bundled JAR and its checksum together. Run `scripts/test_maven_wrapper.py` on Windows and Linux to exercise the bootstrap paths.
 
 ## Launch and credentials
 

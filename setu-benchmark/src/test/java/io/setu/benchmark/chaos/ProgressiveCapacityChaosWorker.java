@@ -184,6 +184,8 @@ final class ProgressiveCapacityChaosWorker {
 
             stopReporter.awaitHeapExhaustionIfReported();
             printStage(mode, result, result.cpuHoldStarted ? "CAPACITY_STAGE_TOTAL" : "CAPACITY_STAGE");
+            if ("WORKER_FAILURE".equals(result.reason))
+                throw new IllegalStateException("Missing measured progress: " + result.detail);
             if (result.reason != null) {
                 stop(mode, result.reason, stage, concurrency, result.detail);
                 return;
@@ -395,8 +397,24 @@ final class ProgressiveCapacityChaosWorker {
                 mode, stage, backpressure.sum(), broker.retainedInMemoryBytes());
         // CPU holds are observations. Keep doubling load until a real runtime boundary is reached.
         if ("CPU_SATURATION".equals(reason)) reason = null;
+        if (reason == null) {
+            long drainedProduced = produced.sum() - producedBefore - measuredProduced;
+            long drainedConsumed = consumed.sum() - consumedBefore - measuredConsumed;
+            reason = progressStopReason(measuredProduced, measuredConsumed, drainedProduced, drainedConsumed);
+            if (reason != null)
+                detail = "measured_produced=" + measuredProduced + " measured_consumed=" + measuredConsumed
+                        + " drain_produced=" + drainedProduced + " drain_consumed=" + drainedConsumed;
+        }
         return new StageResult(stage, concurrency, elapsedNanos, measuredProduced, measuredConsumed,
                 cpuAverage, cpuMaximum, heapUsed, latency.p99Nanos(), reason, detail, cpuHold.isHolding());
+    }
+
+    static String progressStopReason(long measuredProduced, long measuredConsumed, long drainedProduced, long drainedConsumed) {
+        if (measuredProduced > 0 && measuredConsumed > 0) return null;
+        if ((measuredProduced == 0 && measuredConsumed > 0 && drainedProduced > 0)
+                || (measuredConsumed == 0 && measuredProduced > 0 && drainedConsumed > 0))
+            return "CLIENT_STALL";
+        return "WORKER_FAILURE";
     }
 
     private static void produceUntilStopped(SetuClient client, String topic, AtomicBoolean running,

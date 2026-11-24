@@ -197,10 +197,17 @@ jobs:
 
       - name: Set up Java 26
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        with:
+        with: &benchmark-java
           distribution: temurin
           java-version: '26'
           cache: maven
+          # Unit tests resolve the benchmark reactor before the matrix starts.
+          # Include this workflow's Maven goals in the key so smaller builds cannot claim it.
+          cache-dependency-path: |
+            **/pom.xml
+            **/.mvn/wrapper/maven-wrapper.properties
+            **/.mvn/extensions.xml
+            .github/workflows/ci.yml
 
       - name: Build and test production modules
         run: bash ./mvnw --batch-mode --no-transfer-progress -pl setu-benchmark -am '-Dtest=*Tests,!*ChaosTests,!*BenchmarkTests' -Dsurefire.failIfNoSpecifiedTests=false test
@@ -278,10 +285,7 @@ jobs:
 
       - name: Set up Java 26
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
+        with: *benchmark-java
 
       - name: Run bounded broker chaos tests
         shell: bash
@@ -337,10 +341,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
+        with: *benchmark-java
       - name: Ramp to the runtime limit under an enforced resource budget
         env:
           BENCHMARK_MODE: ${{ matrix.mode }}
@@ -379,10 +380,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
+        with: *benchmark-java
       - name: Measure independent full repetitions
         env:
           BENCHMARK_FRACTION: ${{ inputs.resource_fraction || vars.SETU_BENCHMARK_FRACTION || '0.8' }}
@@ -420,10 +418,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
+        with: *benchmark-java
       - name: Measure CI baseline and warn on unmet expectations under a fixed resource budget
         env:
           BENCHMARK_MODE: ${{ matrix.mode }}
@@ -460,10 +455,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
+        with: *benchmark-java
       - name: Measure one independent node-target repetition with a fresh JVM per stage
         env:
           BENCHMARK_MODE: ${{ matrix.mode }}
